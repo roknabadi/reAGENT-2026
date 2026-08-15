@@ -29,10 +29,15 @@ from pathlib import Path
 from typing import Any
 
 from .models import TraceEvent, TraceManifest
-from .store import RunStore, redact, sha256_file, utc_now
+from .store import _SECRET_VALUE_RE, RunStore, redact, sha256_file, utc_now
 
 OPENTRACES_SCHEMA_VERSION = "0.3"
 TRACE_FORMAT = "opentraces"
+# The frozen BenchFlow task's own identity. These two strings, the fallback task
+# prompt, and the task tags below name that task, not this pipeline's subject
+# matter: the task is frozen and agent runs are compared against it by id, so
+# generalising the names here would silently split the comparison. Everything
+# else in this package is target-agnostic; this boundary keeps its names.
 DEFAULT_TASK_ID = "reagent/tf-mediator-hero"
 AGENT_NAME = "reagent-tf-mediator-workflow"
 
@@ -301,9 +306,17 @@ def validate_record(record: dict[str, Any], index: int) -> list[str]:
         errors.append(f"{prefix}: outcome must be an object")
 
     blob = json.dumps(record, default=str)
-    for marker in ("hf_", "sk-", "ghp_", "BEGIN PRIVATE KEY"):
-        if marker in blob and "[REDACTED]" not in blob:
-            errors.append(f"{prefix}: possible credential material ({marker})")
+    if "[REDACTED]" not in blob:
+        # Shaped patterns, not bare prefixes: a bare "sk-" substring match
+        # false-positives on ordinary words like "risk-" or "task-" (a run_id
+        # containing "biorisk" tripped exactly this before the fix). Reuse the
+        # same key-shaped pattern store.redact() uses, so a real credential is
+        # still caught but an English word never is.
+        match = _SECRET_VALUE_RE.search(blob)
+        if match:
+            errors.append(f"{prefix}: possible credential material ({match.group()[:8]}...)")
+        elif "BEGIN PRIVATE KEY" in blob:
+            errors.append(f"{prefix}: possible credential material (BEGIN PRIVATE KEY)")
     return errors
 
 

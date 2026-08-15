@@ -35,7 +35,11 @@ class GateThresholds(BaseModel):
     """target minus other median effect; must be at least this negative."""
 
     min_mediator_support: float = 0.3
-    """Below this the TF-Mediator connection is treated as unsupported."""
+    """Below this the target-partner interaction is treated as unsupported.
+
+    The field name is a schema-1.0 spelling. Renaming it would change every
+    run's ``config_hash``, so it is left alone deliberately; the rule it encodes
+    is the general interaction-support floor."""
 
     require_mapped_interacting_region: bool = True
     """PROJECT.md names a whole-protein pull-down with no mapped interacting
@@ -53,6 +57,10 @@ class ScoringWeights(BaseModel):
     disease_specificity: float = Field(default=0.25, ge=0, le=1)
     normal_cell_completeness: float = Field(default=0.10, ge=0, le=1)
     mediator_evidence_quality: float = Field(default=0.15, ge=0, le=1)
+    """Weight of the general target-partner interaction evidence component.
+
+    Schema-1.0 spelling, kept for the same ``config_hash`` reason as
+    ``GateThresholds.min_mediator_support``."""
     structural_tractability: float = Field(default=0.10, ge=0, le=1)
 
     @model_validator(mode="after")

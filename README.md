@@ -11,6 +11,25 @@ and the human sign-off gates are in [`team/`](team/README.md).
 Reproducible agent comparisons and trace publication are documented in
 [`benchflow/README.md`](benchflow/README.md).
 
+## What this is
+
+An agentic pipeline for target discovery and drug prioritization, general
+across diseases and target classes:
+
+```text
+disease / biological state → candidate target discovery → quantitative ranking
+→ specificity and therapeutic window → druggable site or mechanism
+→ structural evaluation → small-molecule screening → next validation experiment
+```
+
+A candidate is a **target** and its **interaction partner**. Gates, scoring,
+structural modelling, and the experiment generator operate on that pair and use
+free-text class labels only to phrase their output, so changing target class
+means supplying different evidence, not editing the agent. TF–Mediator is one
+worked example — the first case the workflow was exercised on — and ELK1–MED23
+is the calibration control. Neither is the scope. The pipeline as a product is
+stated in [`docs/PIPELINE.md`](docs/PIPELINE.md).
+
 ## Collaborating
 
 After cloning, run the setup script, configure your own Tamarind key, and start
@@ -124,13 +143,36 @@ files; the included fixture only tests behavior.
 `src/reagent_workflow` is the orchestrated agent. It runs
 
 ```text
-INGEST → GATE → SCORE → HERO_CHECKPOINT → STRUCTURE → NEXT_EXPERIMENT → COMPLETE
+BIORISK → INGEST → GATE → SCORE → HERO_CHECKPOINT → STRUCTURE
+→ NEXT_EXPERIMENT → COMPLETE
 ```
 
 and stops at the hero checkpoint until a named human approves. The filesystem is
 the source of truth: every run lives in `runs/<run_id>/` and resumes from disk
 with no conversation history. The agent's constitution is [`SOUL.md`](SOUL.md);
 each stage loads only the rules it needs.
+
+### Biosecurity gateway
+
+Every run is screened before any other stage. Requests that would create
+hazardous capability — increasing transmissibility, virulence, host range,
+immune escape, or therapeutic resistance; producing select agents; weaponization
+— are **refused before `INGEST`**, and no candidate or evidence is written.
+Dual-use and non-medical requests stop at a human checkpoint instead.
+
+Countermeasure development is explicitly permitted: antivirals, antibacterials,
+and host-directed therapy are the medical use this pipeline serves, and a gate
+that blocked them would be broken rather than cautious.
+
+```bash
+reagent-agent biorisk check --text "..."   # 0 permitted, 6 review, 7 refused
+reagent-agent biorisk show <run_id>        # the recorded assessment
+```
+
+A refused run still leaves `biosafety/assessment.json` with the reason and the
+matched text — a refusal is an accountability record, not a silence. The policy
+is hashed so the agent cannot weaken its own gate. It is a first-pass screen,
+not a substitute for institutional biosafety review; see `skills/biorisk/`.
 
 ### Demo
 
@@ -176,13 +218,15 @@ accepted shape is `InputBundle` in `src/reagent_workflow/ingest.py`.
 
 ### What it does and does not claim
 
-- Boltz2 predicts the TF–Mediator complex; ESMFold2 checks monomers only and is
-  never used as an interface predictor.
+- Boltz2 predicts the target–partner complex; ESMFold2 checks monomers only and
+  is never used as an interface predictor.
 - Model agreement is recorded as agreement, not as validation.
 - Missing evidence scores zero and lowers completeness; its weight is never
   redistributed.
-- Broadly essential genes and unsupported Mediator links are rejected, with the
-  reason written to `decisions/rejections.jsonl`.
+- Broadly essential genes are rejected, and so is any target–partner link with
+  no supporting assay (`interaction_support`) or no mapped interacting region
+  (`interface_region_mapped`), with the reason written to
+  `decisions/rejections.jsonl`.
 - Live Modal dispatch is off by default and needs both an approved checkpoint
   and an explicit `--allow-live-modal`.
 - The bundled fixtures are synthetic test data, labelled as such in every
@@ -190,3 +234,18 @@ accepted shape is `InputBundle` in `src/reagent_workflow/ingest.py`.
 
 Traces are written locally and never uploaded; publication needs explicit
 approval per [`benchflow/README.md`](benchflow/README.md).
+
+### Why `transcription_factor` still appears in some artifacts
+
+Two boundaries keep the older TF–Mediator field names on purpose:
+
+- the **frozen BenchFlow task** `reagent/tf-mediator-hero` — its verifier reads
+  `hero.transcription_factor` and `hero.mediator_subunit`, and we are scored on
+  that task, so its schema does not get renamed under it. The task id is
+  recorded in every `runs/<run_id>/traces/trace_manifest.json`. See
+  [`benchflow/README.md`](benchflow/README.md).
+- **`demo.json`**, which dual-emits `transcription_factor` / `mediator_subunit`
+  as *deprecated aliases* beside `target_gene` / `partner_gene` while the UI is
+  being built against them. See [`docs/DEMO_JSON.md`](docs/DEMO_JSON.md).
+
+Everywhere else the vocabulary is target and partner.

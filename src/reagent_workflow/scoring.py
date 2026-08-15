@@ -26,9 +26,7 @@ def _linear(value: float, low: float, high: float) -> float:
 
 def score_candidate(candidate: CandidateHypothesis, config: RunConfig) -> CandidateScorecard:
     dependency = candidate.dependency
-    # ``candidate.mediator`` is the attribute name; what it holds is general
-    # interaction evidence between the target gene and its partner.
-    interaction = candidate.mediator
+    interaction = candidate.interaction
     tractability = candidate.tractability
     weights = config.weights
     components: list[ScoreComponent] = []
@@ -139,8 +137,9 @@ def score_candidate(candidate: CandidateHypothesis, config: RunConfig) -> Candid
         unit="support_fraction" if interaction_supported else None,
         normalization="support value multiplied by the assay-type factor, clamped to [0,1]",
         normalized=interaction_value,
-        # TODO: the weight field is still named ``mediator_evidence_quality`` in
-        # config.ScoringWeights; the component it weights is now general.
+        # The weight field keeps its schema-1.0 name in config.ScoringWeights
+        # because renaming it would change every run's ``config_hash``; the
+        # component it weights is the general interaction one scored above.
         weight=weights.mediator_evidence_quality,
         missing=not interaction_supported,
         uncertainty=(

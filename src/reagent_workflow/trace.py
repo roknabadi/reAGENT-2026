@@ -21,6 +21,9 @@ class EventType:
     """Stable event-type vocabulary. Traces are compared across runs."""
 
     RUN_STARTED = "run.started"
+    BIORISK_SCREENED = "biorisk.screened"
+    BIORISK_REFUSED = "biorisk.refused"
+    BIORISK_ESCALATED = "biorisk.escalated"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
     RUN_ABSTAINED = "run.abstained"
