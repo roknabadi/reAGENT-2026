@@ -51,6 +51,23 @@ from reagent_workflow.structure import build_requests, compare_models, validate_
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = REPO_ROOT / "src" / "reagent_workflow" / "fixtures" / "candidates.fixture.json"
 
+# Optional integrations. A teammate who has not run scripts/setup.sh has neither,
+# and these must skip rather than fail: a red suite nobody can explain means
+# nobody can tell a real regression from a missing checkout.
+from reagent_workflow.benchflow_export import find_benchflow_python  # noqa: E402
+
+HAS_BENCHFLOW = find_benchflow_python(REPO_ROOT) is not None
+try:
+    import proto_tools  # noqa: F401
+    HAS_PROTO = True
+except ImportError:
+    HAS_PROTO = False
+
+needs_benchflow = unittest.skipUnless(
+    HAS_BENCHFLOW, "BenchFlow interpreter not installed (run scripts/setup.sh or set BENCHFLOW_PYTHON)")
+needs_proto = unittest.skipUnless(
+    HAS_PROTO, "proto_tools not installed (run scripts/setup.sh)")
+
 
 def load_fixture() -> InputBundle:
     return InputBundle.model_validate(json.loads(FIXTURE.read_text(encoding="utf-8")))
@@ -384,6 +401,7 @@ class StructureTests(TempRunCase):
         self.candidates = {c.candidate_id: c for c in self.bundle.candidates}
         self.config = RunConfig()
 
+    @needs_proto
     def test_requests_use_the_installed_proto_contracts(self):
         requests = build_requests(self.candidates["CAND-SELECTIVE"], self.config)
         self.assertEqual(len(requests), 3)
@@ -672,6 +690,7 @@ class WorkflowTests(TempRunCase):
         assert record is not None
         self.assertFalse(record.supports)
 
+    @needs_proto
     def test_internal_trace_reconstructs_every_decision(self):
         orchestrator = self.make_orchestrator("trace")
         orchestrator.init_run(self.bundle)
@@ -790,6 +809,7 @@ class BenchFlowExportTests(TempRunCase):
             record["internal_trace"]["path"], "traces/internal_trace.jsonl"
         )
 
+    @needs_benchflow
     def test_benchflow_itself_parses_the_trace(self):
         orchestrator = self._completed_run("bf-real")
         export_trace(orchestrator.store)
@@ -801,6 +821,7 @@ class BenchFlowExportTests(TempRunCase):
         self.assertIsNotNone(result.benchflow_version)
         self.assertGreater(result.parsed_steps or 0, 0)
 
+    @needs_benchflow
     def test_trace_manifest_carries_hashes_and_run_metadata(self):
         orchestrator = self._completed_run("bf-manifest")
         export_trace(orchestrator.store)
@@ -917,6 +938,7 @@ class CliTests(TempRunCase):
             code = main(["--runs-root", str(self.runs_root), *argv])
         return code, buffer.getvalue()
 
+    @needs_benchflow
     def test_demo_command_runs_end_to_end(self):
         code, output = self._run("demo", "cli-demo", "--by", "tester")
         self.assertEqual(code, 0, msg=output)
@@ -943,6 +965,7 @@ class CliTests(TempRunCase):
         code, _ = self._run("structure", "run", "cli-block")
         self.assertEqual(code, 4)
 
+    @needs_benchflow
     def test_validate_benchflow_exit_code_reflects_validity(self):
         self._run("demo", "cli-valid", "--by", "tester")
         code, output = self._run("trace", "validate-benchflow", "cli-valid")
