@@ -2,8 +2,12 @@ import unittest
 from pathlib import Path
 from dependency_scout.depmap import analyze_gene_effects
 from dependency_scout.models import ProtoScreenSpec
-from dependency_scout.proto_bridge import validate_proto_spec
 from dependency_scout.ranking import rank_all
+
+try:
+    from dependency_scout.proto_bridge import validate_proto_spec
+except ImportError:
+    validate_proto_spec = None
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -23,6 +27,7 @@ class PipelineTests(unittest.TestCase):
                 structure_source="pdb", pdb_id="1ABC", tools=["vina-docking"],
                 public_evidence_urls=["https://example.org/public"])
 
+    @unittest.skipUnless(validate_proto_spec, "optional Proto packages are not installed")
     def test_bundled_public_proto_smoke_spec_compiles_natively(self):
         spec_path = Path("examples/proto_screen_spec.smoke.json")
         spec = ProtoScreenSpec.model_validate_json(spec_path.read_text())

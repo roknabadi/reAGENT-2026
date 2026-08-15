@@ -5,13 +5,16 @@ public sources, public models, event-provided services, and code written for the
 hackathon.
 
 The project definition and scientific endpoint are in [`PROJECT.md`](PROJECT.md).
+Setup, branching, testing, and pull-request instructions are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Collaborating
 
-After cloning, configure your own Tamarind key and start Claude Code:
+After cloning, run the setup script, configure your own Tamarind key, and start
+Claude Code:
 
 ```bash
-cp .env.example .env
+./scripts/setup.sh
 # Add your personal TAMARIND_API_KEY to .env
 source ./activate.sh
 claude
