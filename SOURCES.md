@@ -24,6 +24,13 @@ moved. The claims it does **not** independently verify — that 9F6Y is the MED2
 complex, its resolution, the interface residues, and the Kd — are second-hand
 from the row below and are not used as model inputs.
 
+**Verified at source 2026-08-15** via Paperclip against PMC12015215: the motif
+and its HR2/HR3 binding site (L23), the MED23 interface residues surrounding
+F378-Elk-1 (L23 — note these are MED23 residues; MED23's own 383 is distinct
+from the ELK1 S383 phosphosite), PDB 9F6Y as the complex at 3.0 Å and 9F76 as
+apo MED23 (Table 1, L19), and the SPR Kd of 81 nM (L614, technique at L342).
+Every transcribed value held.
+
 | Claim used | Source | Identifier | Retrieved |
 |---|---|---|---|
 | ELK1–MED23 contact: cryo-EM structure, MED23-binding motif at ELK1 residues 374–384, pocket residues, Kd 81 nM, MED23 G382F loss of function | Monté et al. "Structural basis of human Mediator recruitment by the phosphorylated transcription factor Elk-1." *Nat. Commun.* (2025) | doi:10.1038/s41467-025-59014-8 · PMC12015215 · PDB 9F6Y (complex), 9F76 (apo MED23) | 2026-08-15 |

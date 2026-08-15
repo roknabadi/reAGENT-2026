@@ -53,26 +53,34 @@ from reagent_workflow.structure import (  # noqa: E402
 # handoff has already had one transcription error corrected (a helix
 # mis-assignment), so the constants below were re-checked rather than trusted.
 #
-# VERIFIED independently against UniProt at build time:
+# VERIFIED against UniProt at run time, on every invocation:
 #   - ELK1 P19419 residues 374-384 are literally PSIHFWSTLSP, matching the
-#     motif the handoff names (checked by `verify_motif` below, which runs on
-#     every invocation and refuses to continue if the sequence has moved).
+#     motif the handoff names (`verify_motif` refuses to continue otherwise).
 #   - PDB 9F6Y appears in UniProt's own cross-references for P19419.
 #
-# NOT verified here, because it needs the primary paper and Paperclip is not
-# authenticated in this environment (`paperclip login` opens a browser):
-#   - that 9F6Y is specifically the MED23-ELK1 complex, and its 3.0 A resolution
-#   - the MED23 interface residues (I339, L343, F379, G382, S383, V533, M537)
-#   - the reported SPR Kd of 81 nM
-# Those remain second-hand. They are not used as inputs to the model — only the
-# motif position is — but do not cite them from this file.
+# VERIFIED against the primary paper via Paperclip (Monté et al., Nat. Commun.
+# 2025, PMC12015215) on 2026-08-15. Every transcribed value held:
+#   - L23: the motif is "PSIHFWSTLS p P ... MED23 Binding Motif", bound "on the
+#     concave face of MED23, within the MED23 core, at the interface between HR2
+#     and HR3"; Fig. 2 caption gives the interface as "MED23-Elk-1 (374-384)".
+#   - L23: "F378-Elk-1 is surrounded in MED23 by side chains from residues I339,
+#     L343 (H19), F379, G382, S383 (H21), and V533 and M537 (H28)". These are
+#     MED23 residues. MED23 has its own residue 383, distinct from the ELK1
+#     S383 phosphosite — the coincidence is real and the handoff got it right.
+#   - Table 1 (L19): "MED23 Elk-1 (EMD-50242) (PDB 9F6Y)" at map resolution 3.0 A
+#     (FSC 0.143). 9F76 is apo MED23, not the complex.
+#   - L614: "Elk-1 [S383p] binds to MED23 with a Kd of 81 nM", by surface plasmon
+#     resonance (L342).
+#
+# Only the motif position is used as a model input. The rest is recorded so the
+# calibration can be judged against what the structure actually shows.
 ELK1 = "P19419"
 MED23 = "O75448"
 ELK1_MOTIF = (374, 384)          # PSIHFWSTLS(p)P, the mapped MED23-binding motif
 ELK1_MOTIF_SEQ = "PSIHFWSTLSP"   # asserted against the fetched sequence
 ELK1_CONTEXT = (330, 428)        # motif plus flanking TAD, kept modelling tractable
 STRUCTURE_PDB = "9F6Y"
-CITATION = "doi:10.1038/s41467-025-59014-8 (PMC12015215) — second-hand, unverified here"
+CITATION = "doi:10.1038/s41467-025-59014-8 (PMC12015215) — verified at source 2026-08-15"
 
 
 def verify_motif(elk1_seq: str, pdb_crossrefs: list[str]) -> list[str]:
@@ -229,9 +237,9 @@ def main() -> int:
             print(f"  - {problem}", file=sys.stderr)
         return 2
     print("  both constants confirmed against UniProt.")
-    print("  NOT confirmed here (needs the primary paper; paperclip is not "
-          "authenticated): that 9F6Y is the MED23 complex, its resolution, the "
-          "interface residues, and the reported Kd.")
+    print("  primary paper verified via Paperclip (PMC12015215): 9F6Y is the "
+          "MED23-Elk-1 complex at 3.0 A, interface residues and Kd 81 nM (SPR) "
+          "all confirmed. See the header for line-pinned quotes.")
 
     candidate = build_candidate(
         full_partner=not args.truncate_partner,
