@@ -24,6 +24,10 @@ outputs/
 benchflow/jobs/
 benchflow/artifacts/
 benchflow/matrix.yaml
+
+# Agent run state and large structural artifacts stay out of Git.
+# Runs are reproducible from the input bundle plus the recorded config hash.
+runs/
 __pycache__/
 *.pyc
 *.egg-info/

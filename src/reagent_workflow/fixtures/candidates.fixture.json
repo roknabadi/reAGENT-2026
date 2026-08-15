@@ -1,0 +1,375 @@
+{
+  "schema_version": "1.0",
+  "fixture": true,
+  "fixture_note": "SYNTHETIC TEST FIXTURE. Invented genes, invented diseases, invented sequences and numbers. Exists to exercise the workflow's gates, scoring, checkpoint, and structural comparison. It is not scientific evidence and must never be cited as a finding.",
+  "sources": [
+    {
+      "source_id": "SRC-FIX-DEP",
+      "name": "Synthetic dependency fixture",
+      "url": "synthetic://fixtures/dependency",
+      "tier": "synthetic",
+      "version": "fixture-1.0",
+      "notes": "Invented gene-effect values for testing gate and scoring behaviour."
+    },
+    {
+      "source_id": "SRC-FIX-INT",
+      "name": "Synthetic interaction fixture",
+      "url": "synthetic://fixtures/interaction",
+      "tier": "synthetic",
+      "version": "fixture-1.0",
+      "notes": "Invented TF-Mediator interaction records."
+    },
+    {
+      "source_id": "SRC-FIX-NORM",
+      "name": "Synthetic normal-tissue fixture",
+      "url": "synthetic://fixtures/normal-tissue",
+      "tier": "synthetic",
+      "version": "fixture-1.0",
+      "notes": "Invented normal-cell expression and dependency proxies."
+    },
+    {
+      "source_id": "SRC-FIX-STRUCT",
+      "name": "Synthetic structural fixture",
+      "url": "synthetic://fixtures/structure",
+      "tier": "synthetic",
+      "version": "fixture-1.0",
+      "notes": "Invented sequences and domain boundaries for structural testing."
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "EV-DEP-A1",
+      "evidence_type": "dependency",
+      "interpretation": "computed",
+      "claim": "TFDEMOA shows a strong selective dependency in synthetic epithelial carcinoma models (median gene effect -1.05) relative to all other lineages (-0.12).",
+      "subject": "TFDEMOA",
+      "value": -1.05,
+      "unit": "gene_effect_score",
+      "supports": true,
+      "source_id": "SRC-FIX-DEP",
+      "limitations": [
+        "Synthetic values; no experimental measurement underlies them.",
+        "Gene-effect scores are computed from a screen model, not observed phenotypes."
+      ]
+    },
+    {
+      "evidence_id": "EV-DEP-A2",
+      "evidence_type": "dependency",
+      "interpretation": "computed",
+      "claim": "83% of synthetic epithelial carcinoma models are dependent on TFDEMOA, versus 6% of other models.",
+      "subject": "TFDEMOA",
+      "value": 0.83,
+      "unit": "fraction",
+      "supports": true,
+      "source_id": "SRC-FIX-DEP",
+      "limitations": ["Synthetic values."]
+    },
+    {
+      "evidence_id": "EV-INT-A1",
+      "evidence_type": "interaction",
+      "interpretation": "observed",
+      "claim": "TFDEMOA co-precipitates with the Mediator subunit MEDDEMO1 in a synthetic pulldown fixture, mapped to the TFDEMOA activation domain.",
+      "subject": "TFDEMOA-MEDDEMO1",
+      "value": 0.82,
+      "unit": "support_fraction",
+      "supports": true,
+      "source_id": "SRC-FIX-INT",
+      "limitations": [
+        "Synthetic record.",
+        "Co-precipitation reports association, not direct contact."
+      ]
+    },
+    {
+      "evidence_id": "EV-NORM-A1",
+      "evidence_type": "normal_tissue",
+      "interpretation": "observed",
+      "claim": "TFDEMOA expression is low in synthetic normal epithelial tissue panels.",
+      "subject": "TFDEMOA",
+      "value": 1.4,
+      "unit": "log2_tpm",
+      "supports": true,
+      "source_id": "SRC-FIX-NORM",
+      "limitations": ["Synthetic values.", "Expression is not a safety measurement."]
+    },
+    {
+      "evidence_id": "EV-NORM-A2",
+      "evidence_type": "normal_tissue",
+      "interpretation": "computed",
+      "claim": "Synthetic normal-cell proxy models show no dependency on TFDEMOA (median gene effect -0.04).",
+      "subject": "TFDEMOA",
+      "value": -0.04,
+      "unit": "gene_effect_score",
+      "supports": true,
+      "source_id": "SRC-FIX-NORM",
+      "limitations": ["Synthetic values.", "Proxy models are not normal tissue."]
+    },
+    {
+      "evidence_id": "EV-CONTRA-A1",
+      "evidence_type": "dependency",
+      "interpretation": "computed",
+      "claim": "Two of the eighteen synthetic epithelial carcinoma models show no TFDEMOA dependency despite high TFDEMOA expression, so expression does not predict dependency within the context.",
+      "subject": "TFDEMOA",
+      "value": 2.0,
+      "unit": "models",
+      "supports": false,
+      "source_id": "SRC-FIX-DEP",
+      "contradicts": ["EV-DEP-A2"],
+      "limitations": ["Synthetic values.", "Small subgroup; no mechanism is implied."]
+    },
+    {
+      "evidence_id": "EV-STRUCT-A1",
+      "evidence_type": "structure",
+      "interpretation": "observed",
+      "claim": "The TFDEMOA activation domain and the MEDDEMO1 binding domain are each defined as bounded synthetic sequence regions suitable for complex modelling.",
+      "subject": "TFDEMOA-MEDDEMO1",
+      "supports": true,
+      "source_id": "SRC-FIX-STRUCT",
+      "limitations": ["Synthetic sequences; no experimental structure exists."]
+    },
+    {
+      "evidence_id": "EV-DEP-B1",
+      "evidence_type": "dependency",
+      "interpretation": "computed",
+      "claim": "TFDEMOB is required in 91% of all models across every lineage tested, consistent with a broadly essential gene rather than a selective dependency.",
+      "subject": "TFDEMOB",
+      "value": 0.91,
+      "unit": "fraction",
+      "supports": true,
+      "source_id": "SRC-FIX-DEP",
+      "limitations": ["Synthetic values."]
+    },
+    {
+      "evidence_id": "EV-INT-B1",
+      "evidence_type": "interaction",
+      "interpretation": "observed",
+      "claim": "TFDEMOB associates with MEDDEMO1 in a synthetic pulldown fixture.",
+      "subject": "TFDEMOB-MEDDEMO1",
+      "value": 0.75,
+      "unit": "support_fraction",
+      "supports": true,
+      "source_id": "SRC-FIX-INT",
+      "limitations": ["Synthetic record."]
+    },
+    {
+      "evidence_id": "EV-DEP-C1",
+      "evidence_type": "dependency",
+      "interpretation": "computed",
+      "claim": "TFDEMOC shows a selective dependency in synthetic neuroendocrine models (median gene effect -0.88 versus -0.21 elsewhere).",
+      "subject": "TFDEMOC",
+      "value": -0.88,
+      "unit": "gene_effect_score",
+      "supports": true,
+      "source_id": "SRC-FIX-DEP",
+      "limitations": ["Synthetic values."]
+    },
+    {
+      "evidence_id": "EV-INT-C1",
+      "evidence_type": "interaction",
+      "interpretation": "inference",
+      "claim": "TFDEMOC is speculated to contact MEDDEMO2 because both appear in a synthetic transcriptional module, with no assay and no primary record supporting a physical interaction.",
+      "subject": "TFDEMOC-MEDDEMO2",
+      "supports": false,
+      "source_id": "SRC-FIX-INT",
+      "limitations": [
+        "Synthetic record.",
+        "Co-membership in a module is not evidence of a physical interaction."
+      ]
+    },
+    {
+      "evidence_id": "EV-DEP-D1",
+      "evidence_type": "dependency",
+      "interpretation": "computed",
+      "claim": "TFDEMOD shows a moderate selective dependency in synthetic sarcoma models (median gene effect -0.72 versus -0.19 elsewhere).",
+      "subject": "TFDEMOD",
+      "value": -0.72,
+      "unit": "gene_effect_score",
+      "supports": true,
+      "source_id": "SRC-FIX-DEP",
+      "limitations": ["Synthetic values.", "Only seven models in context."]
+    },
+    {
+      "evidence_id": "EV-INT-D1",
+      "evidence_type": "interaction",
+      "interpretation": "inference",
+      "claim": "TFDEMOD is reported to associate with MEDDEMO1 in a synthetic genetic-interaction fixture.",
+      "subject": "TFDEMOD-MEDDEMO1",
+      "value": 0.45,
+      "unit": "support_fraction",
+      "supports": true,
+      "source_id": "SRC-FIX-INT",
+      "limitations": [
+        "Synthetic record.",
+        "A genetic interaction does not establish a physical contact."
+      ]
+    }
+  ],
+  "candidates": [
+    {
+      "schema_version": "1.0",
+      "candidate_id": "CAND-SELECTIVE",
+      "disease_context": "Synthetic epithelial carcinoma (fixture)",
+      "transcription_factor": "TFDEMOA",
+      "mediator_subunit": "MEDDEMO1",
+      "hypothesis": "In synthetic epithelial carcinoma models, the selective dependency on TFDEMOA is carried by its interaction with the Mediator subunit MEDDEMO1, making that interface a candidate point of intervention. FIXTURE HYPOTHESIS: synthetic data, no scientific claim.",
+      "dependency": {
+        "gene": "TFDEMOA",
+        "disease_context": "Synthetic epithelial carcinoma (fixture)",
+        "n_target_models": 18,
+        "n_other_models": 420,
+        "median_target_effect": -1.05,
+        "median_other_effect": -0.12,
+        "target_dependent_fraction": 0.83,
+        "other_dependent_fraction": 0.06,
+        "selectivity_delta": -0.93,
+        "mann_whitney_p": 1e-09,
+        "evidence_ids": ["EV-DEP-A1", "EV-DEP-A2"],
+        "source_id": "SRC-FIX-DEP"
+      },
+      "mediator": {
+        "transcription_factor": "TFDEMOA",
+        "mediator_subunit": "MEDDEMO1",
+        "interaction_support": 0.82,
+        "interaction_type": "direct_binding",
+        "assay": "synthetic co-immunoprecipitation fixture",
+        "interpretation": "observed",
+        "evidence_ids": ["EV-INT-A1"],
+        "source_id": "SRC-FIX-INT",
+        "limitations": ["Synthetic record; association is not direct contact."]
+      },
+      "tractability": {
+        "tf_uniprot": "SYNTH-TFDEMOA",
+        "mediator_uniprot": "SYNTH-MEDDEMO1",
+        "tf_sequence": "MSDLQTPVSEAKALLQRLEEAGHSVTWQFLLELLQSPQNAHLIRWTSGDGEFKLLDAEEVARLWG",
+        "mediator_sequence": "MAQVSTLLDRLNQAGDKVAQQLLAEHGLSPEQVTRLAEELGLSGELAAWLQAHGCTPEQVLAWA",
+        "domain_bounded": true,
+        "notes": [
+          "Synthetic sequences created for this fixture.",
+          "No experimental structure exists for an invented protein."
+        ]
+      },
+      "normal_cell_evidence_ids": ["EV-NORM-A1", "EV-NORM-A2"],
+      "contradicting_evidence_ids": ["EV-CONTRA-A1"],
+      "evidence_ids": [
+        "EV-DEP-A1", "EV-DEP-A2", "EV-INT-A1", "EV-NORM-A1",
+        "EV-NORM-A2", "EV-CONTRA-A1", "EV-STRUCT-A1"
+      ]
+    },
+    {
+      "schema_version": "1.0",
+      "candidate_id": "CAND-BROAD",
+      "disease_context": "Synthetic epithelial carcinoma (fixture)",
+      "transcription_factor": "TFDEMOB",
+      "mediator_subunit": "MEDDEMO1",
+      "hypothesis": "TFDEMOB is required in synthetic epithelial carcinoma models. FIXTURE HYPOTHESIS: included to confirm that broadly essential genes are rejected.",
+      "dependency": {
+        "gene": "TFDEMOB",
+        "disease_context": "Synthetic epithelial carcinoma (fixture)",
+        "n_target_models": 18,
+        "n_other_models": 420,
+        "median_target_effect": -1.35,
+        "median_other_effect": -1.22,
+        "target_dependent_fraction": 0.94,
+        "other_dependent_fraction": 0.91,
+        "selectivity_delta": -0.13,
+        "mann_whitney_p": 0.21,
+        "evidence_ids": ["EV-DEP-B1"],
+        "source_id": "SRC-FIX-DEP"
+      },
+      "mediator": {
+        "transcription_factor": "TFDEMOB",
+        "mediator_subunit": "MEDDEMO1",
+        "interaction_support": 0.75,
+        "interaction_type": "direct_binding",
+        "assay": "synthetic co-immunoprecipitation fixture",
+        "interpretation": "observed",
+        "evidence_ids": ["EV-INT-B1"],
+        "source_id": "SRC-FIX-INT"
+      },
+      "tractability": {
+        "notes": ["Not assessed; the candidate fails the dependency gates."]
+      },
+      "normal_cell_evidence_ids": [],
+      "contradicting_evidence_ids": [],
+      "evidence_ids": ["EV-DEP-B1", "EV-INT-B1"]
+    },
+    {
+      "schema_version": "1.0",
+      "candidate_id": "CAND-UNSUPPORTED-MEDIATOR",
+      "disease_context": "Synthetic neuroendocrine tumour (fixture)",
+      "transcription_factor": "TFDEMOC",
+      "mediator_subunit": "MEDDEMO2",
+      "hypothesis": "TFDEMOC may act through MEDDEMO2 in synthetic neuroendocrine models. FIXTURE HYPOTHESIS: included to confirm that an unsupported Mediator link cannot advance.",
+      "dependency": {
+        "gene": "TFDEMOC",
+        "disease_context": "Synthetic neuroendocrine tumour (fixture)",
+        "n_target_models": 11,
+        "n_other_models": 427,
+        "median_target_effect": -0.88,
+        "median_other_effect": -0.21,
+        "target_dependent_fraction": 0.72,
+        "other_dependent_fraction": 0.08,
+        "selectivity_delta": -0.67,
+        "mann_whitney_p": 4e-06,
+        "evidence_ids": ["EV-DEP-C1"],
+        "source_id": "SRC-FIX-DEP"
+      },
+      "mediator": {
+        "transcription_factor": "TFDEMOC",
+        "mediator_subunit": "MEDDEMO2",
+        "interaction_support": null,
+        "interaction_type": "inferred",
+        "assay": null,
+        "interpretation": "inference",
+        "evidence_ids": ["EV-INT-C1"],
+        "source_id": null,
+        "limitations": ["No assay, no primary record, no support value."]
+      },
+      "tractability": {
+        "tf_uniprot": "SYNTH-TFDEMOC",
+        "notes": ["Mediator partner sequence unknown."]
+      },
+      "normal_cell_evidence_ids": [],
+      "contradicting_evidence_ids": ["EV-INT-C1"],
+      "evidence_ids": ["EV-DEP-C1", "EV-INT-C1"]
+    },
+    {
+      "schema_version": "1.0",
+      "candidate_id": "CAND-INCOMPLETE-EVIDENCE",
+      "disease_context": "Synthetic sarcoma (fixture)",
+      "transcription_factor": "TFDEMOD",
+      "mediator_subunit": "MEDDEMO1",
+      "hypothesis": "TFDEMOD may depend on MEDDEMO1 in synthetic sarcoma models. FIXTURE HYPOTHESIS: included to confirm that missing evidence lowers completeness without being scored favourably.",
+      "dependency": {
+        "gene": "TFDEMOD",
+        "disease_context": "Synthetic sarcoma (fixture)",
+        "n_target_models": 7,
+        "n_other_models": 431,
+        "median_target_effect": -0.72,
+        "median_other_effect": -0.19,
+        "target_dependent_fraction": 0.57,
+        "other_dependent_fraction": 0.09,
+        "selectivity_delta": -0.53,
+        "mann_whitney_p": null,
+        "evidence_ids": ["EV-DEP-D1"],
+        "source_id": "SRC-FIX-DEP"
+      },
+      "mediator": {
+        "transcription_factor": "TFDEMOD",
+        "mediator_subunit": "MEDDEMO1",
+        "interaction_support": 0.45,
+        "interaction_type": "genetic",
+        "assay": "synthetic genetic-interaction fixture",
+        "interpretation": "inference",
+        "evidence_ids": ["EV-INT-D1"],
+        "source_id": "SRC-FIX-INT",
+        "limitations": ["A genetic interaction does not establish physical contact."]
+      },
+      "tractability": {
+        "notes": ["No sequences supplied; structural tractability is unassessed."]
+      },
+      "normal_cell_evidence_ids": [],
+      "contradicting_evidence_ids": [],
+      "evidence_ids": ["EV-DEP-D1", "EV-INT-D1"]
+    }
+  ]
+}
