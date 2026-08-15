@@ -2,6 +2,74 @@
 
 Newest on top. Format: ../README.md
 
+## 2026-08-15 (4) — Kevin
+Did: the subtype-dilution gate fix from round 3 is now **built and verified**,
+not just proposed — and the pipeline is simplified per team direction (dropped
+composite scoring, went back to a plain evidence table). All in
+`~/coding/re-agent_discovery`.
+
+**Gate fix, verified on the real target case.** Two changes to
+`stage1_depmap.py`:
+1. Added a specificity-first pass alongside the existing median test — a
+   candidate now clears the gate if EITHER the group median is dependent
+   (unchanged, still what rejects GTF2B/CTCF/MYC/AHCTF1 unprompted) OR
+   `target_dependent_fraction >= 0.10` and `other_dependent_fraction <= 0.05`
+   regardless of median (new — catches a subpopulation-restricted dependency
+   a pooled-group median dilutes below every threshold).
+2. Found a second bug while verifying the first fix actually worked: the old
+   two-pass design only drilled into subtypes within lineages that already
+   showed **lineage-level** significance. That structurally excludes a
+   dependency diluted at *both* levels — Lung-lineage pooling (NSCLC + every
+   other lung cancer type) dilutes an already SCLC-subtype-restricted signal
+   even further; ASCL1 fell to 9.5% target-dependent fraction at Lung level,
+   just under the new 10% threshold, so it would still never have reached a
+   subtype-level test. Fixed by making Pass 2 unconditional — every TF x
+   every `OncotreeSubtype`, not gated behind Pass-1 lineage signal. Costs
+   more compute (132,677 rows now vs. 38,666 before; full re-run is 77s, not
+   a real constraint), not more code — this is simpler than the old
+   contingent two-stage logic, not more complex.
+
+**Re-ran the full universe. Confirmed on the actual example from the
+findings doc**, at `Small Cell Lung Cancer` (real DepMap 24Q4 data, n=25):
+ASCL1 (44% dependent in-context / 1.2% outside), POU2F3 (16% / 0%), INSM1
+(32% / 0.3%), NEUROD1 (12% / 0.5%) all now clear `dependency_flag=True` via
+the specificity path. Real SCLC lineage biology surfaces around them too —
+MYCL, NKX2-1, FOXA1/FOXA2, SOX2/SOX4 — none of which showed up under the old
+gate. Statistical significance after BH correction is a separate, harder bar
+that this doesn't solve on its own: only INSM1 clears q<0.05 (q=0.009);
+ASCL1 is borderline (q=0.06); POU2F3/NEUROD1 don't clear it (q=0.15, 0.56).
+That's expected and correctly visible — the gate now *sees* these candidates
+instead of structurally excluding them, which is a different claim than
+"these are statistically confirmed," and the table keeps both facts visible
+rather than collapsing them into one pass/fail number.
+
+**Also caught a real trap while building the output table**: a context can
+have a deceptively low q-value with `dependency_flag=False` — e.g. POU2F3 in
+Head and Neck, q=0.004, but both group medians are *positive* (a growth
+*advantage* from knockout, not a dependency). Mann-Whitney only tests
+"are these two distributions different," not "is this essential." Sorting by
+q-value alone would surface this as if it were a strong hit; keeping
+`dependency_gate` as an explicit separate column is what stops that.
+
+**Composite scoring dropped, per team direction.** `ranking.py`'s
+gate/discovery_score/enrichment_score/tier-ceiling machinery and
+`agent_tools.py`'s orchestrator are left in place but no longer the active
+path — retired in place, not deleted, in case anything still references them.
+New entry point is `discover(tf=None, disease_context=None) ->
+pd.DataFrame` in `discover.py`: given a TF and/or an exact disease-context
+string, returns one flat table — dependency stats, every Mediator/STRING
+lead (or the honest reason there's none), literature status per lead — no
+score, no rank. Disease-context resolution (matching a user's loose phrasing
+to the exact stored string, including judgment calls like "SCLC pools
+molecular subtypes DepMap doesn't itself split") is left to whichever LLM is
+driving the call rather than a fuzzy-match heuristic inside the function.
+
+Next: HPA/UniProt/ENCODE (Stages 2/3) still stubbed — building those next,
+UniProt via Paperclip's `/proteins/` corpus rather than a second REST client
+since Paperclip already indexes it.
+
+Blocked: none.
+
 ## 2026-08-15 (3) — Kevin
 Did: closing out the two Band-1 items blocking on me in `TASKS.md`, plus the
 literature pass `FINDINGS_DEPMAP_ROUND01.md` §5 flagged as the critical next
