@@ -52,8 +52,27 @@ so in `DECISIONS.md` if the change affects who owns a checkpoint.
 
 ## Judging goal
 
+**Track A — Build an AI Scientist.** Carry a defined scientific workflow end to
+end: gather evidence, use real tools and databases, generate and test
+hypotheses, emit a structured output, and make the reasoning easy to inspect.
+
 - **Closing the loop:** the agent proposes the next experiment.
-- **Inspectability:** show why it made each decision.
+- **Inspectability:** show why it made each decision — including the ones where
+  it said no.
 - **Validation:** compare against known cases such as ELK1–MED23 / ELF3–MED23.
 - **Sponsor tools:** Paperclip + Proto as core tools; Modal if extra compute is
   needed.
+
+**Sunday outcome:** disease/target hypothesis → structural model → shortlist of
+compounds worth testing.
+
+## Deadlines
+
+| When | What |
+|---|---|
+| Sat 9:45–10:15 PM | Overnight experiment checkpoint — long runs must be queued |
+| **Sun 10:45 AM** | **Final submission. Hard stop.** |
+| Sun 12:30–2:00 PM | Demos and live judging |
+
+Work backwards from Sunday 10:45. Anything not demoable by Sunday 9:00 AM is
+not in the demo.

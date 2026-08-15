@@ -71,20 +71,34 @@ shared type is a `DECISIONS.md` entry.
 
 ## Git
 
-Full workflow is in [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — branch off
-`main`, pull before you push, run the tests, open a PR. It applies to these
-files too.
-
-The one shortcut: a `team/` status or decision entry may go straight to `main`
-on its own commit, because it touches nobody else's lines.
+**Branch only. Never push to `main`** — not for code, not for a status entry,
+not for a one-line typo fix. `main` moves only through a reviewed pull request,
+and only when someone asks for it. Full workflow is in
+[`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ```bash
-git pull --ff-only
-# edit your file
+git fetch origin
+git switch -c feature/short-description origin/main
+# work
 git add team/status/vraj.md
 git commit -m "status: vraj 2026-08-15"
-git push
+git push -u origin HEAD
 ```
 
-If that push is rejected, someone else posted first: `git pull --rebase` and
-push again. Never force-push `main`.
+### Stay in sync — do this often
+
+Six people on one repo drift apart in hours. Fetch before you start, and again
+every time you sit back down:
+
+```bash
+git fetch origin
+git log --oneline HEAD..origin/main    # what landed while you were heads-down
+git merge origin/main                  # take it now, not at 2am
+python -m unittest discover -s tests
+```
+
+Merging `origin/main` early and often turns one painful end-of-day conflict
+into several trivial ones. If `git log HEAD..origin/main` is empty you are
+current.
+
+Never force-push `main` or a branch someone else is on.
