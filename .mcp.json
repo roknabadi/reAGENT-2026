@@ -1,12 +1,11 @@
 {
   "mcpServers": {
-    "paperclip": {
+    "tamarind": {
       "type": "http",
-      "url": "https://paperclip.gxl.ai/mcp"
-    },
-    "benchling": {
-      "type": "http",
-      "url": "https://hackathon.mcp.bnchdev.org/mcp"
+      "url": "https://mcp.tamarind.bio/mcp",
+      "headers": {
+        "x-api-key": "${TAMARIND_API_KEY}"
+      }
     }
   }
 }

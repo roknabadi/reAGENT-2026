@@ -4,6 +4,28 @@ This directory is intentionally isolated from Therna and BioReasonRNA. Use only
 public sources, public models, event-provided services, and code written for the
 hackathon.
 
+The project definition and scientific endpoint are in [`PROJECT.md`](PROJECT.md).
+
+## Collaborating
+
+The repository deliberately does not assign directories or tasks to specific
+people. Work from small branches, keep changes focused, and integrate through
+typed file or Python interfaces. Shared Claude instructions live in
+`CLAUDE.md`.
+
+After cloning:
+
+```bash
+cp .env.example .env
+# Add your personal TAMARIND_API_KEY to .env
+source ./activate.sh
+claude
+```
+
+Claude Code reads the project-scoped Tamarind MCP configuration from
+`.mcp.json`. Each collaborator supplies their own key; no credential is stored
+in Git. On first use, approve the project MCP server and verify it with `/mcp`.
+
 ## Start a shell
 
 ```bash
