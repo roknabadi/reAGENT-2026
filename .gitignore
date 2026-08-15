@@ -21,6 +21,9 @@ downloads/
 apps/
 vendor/
 outputs/
+benchflow/jobs/
+benchflow/artifacts/
+benchflow/matrix.yaml
 __pycache__/
 *.pyc
 *.egg-info/

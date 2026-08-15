@@ -40,6 +40,8 @@ python -m unittest discover -s tests -v
 git diff --check
 ```
 
+For comparable agent runs and trace publication, follow `benchflow/README.md`.
+
 Optional services or models may skip their own integration tests when they are
 not installed. A pull request must state which checks actually ran.
 

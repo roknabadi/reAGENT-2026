@@ -7,6 +7,8 @@ hackathon.
 The project definition and scientific endpoint are in [`PROJECT.md`](PROJECT.md).
 Setup, branching, testing, and pull-request instructions are in
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Reproducible agent comparisons and trace publication are documented in
+[`benchflow/README.md`](benchflow/README.md).
 
 ## Collaborating
 

@@ -19,10 +19,14 @@ fi
 
 "$UV_COMMAND" pip install --python "$PROJECT_ROOT/.venv/bin/python" -e "$PROJECT_ROOT"
 
+UV_TOOL_DIR="$PROJECT_ROOT/tools" UV_TOOL_BIN_DIR="$PROJECT_ROOT/bin" \
+  "$UV_COMMAND" tool install --python 3.12 --upgrade benchflow
+
 if [[ ! -f "$PROJECT_ROOT/.env" ]]; then
   cp "$PROJECT_ROOT/.env.example" "$PROJECT_ROOT/.env"
   echo "Created .env; add your personal TAMARIND_API_KEY."
 fi
 
 "$PROJECT_ROOT/.venv/bin/python" -m unittest discover -s tests -v
+"$PROJECT_ROOT/bin/bench" tasks check "$PROJECT_ROOT/benchflow/tasks/tf-mediator-hero" --level structural
 echo "Setup complete. Run: source ./activate.sh"

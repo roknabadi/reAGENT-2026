@@ -13,4 +13,6 @@
   computational results.
 - Validate Tamarind inputs before submitting jobs. Ask before paid,
   long-running, batch, or destructive operations.
+- Use the frozen BenchFlow task for agent comparisons; do not present ad hoc
+  logs as comparable evaluations. Ask before publishing trace artifacts.
 - Never commit secrets. Run relevant tests before handoff.

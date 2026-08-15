@@ -1,0 +1,7 @@
+models:
+  baseline:
+    agent: claude-agent-acp
+    model: REPLACE_WITH_BASELINE_MODEL
+  candidate:
+    agent: claude-agent-acp
+    model: REPLACE_WITH_CANDIDATE_MODEL
