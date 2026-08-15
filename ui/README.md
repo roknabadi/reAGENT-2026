@@ -3,7 +3,8 @@
 One page, no server, no build step. Open `index.html` over any static server:
 
 ```bash
-python -m http.server 8931 --directory ui
+python ui/serve.py       # live: real Paperclip searches stream in
+python -m http.server 8931 --directory ui   # static: recorded run, labelled as such
 ```
 
 `data.json` is committed, so the interface works without the 382 MB DepMap
