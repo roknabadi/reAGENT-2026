@@ -1,5 +1,7 @@
 {
   "partner_gene": "MED23",
+  "tractability": "short_linear_motif",
+  "calibration_only": true,
   "interacting_region_mapped": true,
   "tf_region": "ELK1 transactivation domain, MED23-binding motif (MBM) residues 374-384, sequence PSIHFWSTLS(p)P",
   "claims": [
@@ -15,28 +17,20 @@
     {
       "statement": "ELK1 I376, F378 and L382 form the hydrophobic contacts with MED23. F378 binds deeply and is buried, sheltered by adjacent H377 and W379, and is surrounded in MED23 by I339 and L343 (H19), F379, G382 and S383 (H21), and V533 and M537 (H28).",
       "support": "direct_experimental",
-      "citations": [
-        "https://doi.org/10.1038/s41467-025-59014-8"
-      ],
+      "citations": ["https://doi.org/10.1038/s41467-025-59014-8"],
       "note": "These MED23 residues define the pocket a small molecule would have to occupy. Helix assignment corrected 2026-08-15: V533 and M537 are in H28, not H30, verified against PMC12015215 L23."
     },
     {
       "statement": "ELK1 phosphorylated at S383 binds MED23 with a Kd of 81 nM by SPR, while only minimal interaction is detected by pull-down without phosphorylation. Mutation of the central FW motif abolishes the interaction.",
       "support": "direct_experimental",
-      "citations": [
-        "https://doi.org/10.1038/s41467-025-59014-8"
-      ],
+      "citations": ["https://doi.org/10.1038/s41467-025-59014-8"],
       "note": "Binding is phosphorylation-dependent; any screen against this site inherits that condition."
     },
     {
       "statement": "The designed MED23 G382F mutation disrupts ELK1 binding and impairs ELK1-dependent serum-induced activation of target genes in MED23-null MEFs.",
       "support": "genetic_functional",
-      "citations": [
-        "https://doi.org/10.1038/s41467-025-59014-8"
-      ],
+      "citations": ["https://doi.org/10.1038/s41467-025-59014-8"],
       "note": "Point mutation in the pocket produces the expected loss of function, so occupancy of this site is coupled to transcriptional output."
     }
-  ],
-  "tractability": "short_linear_motif",
-  "calibration_only": true
+  ]
 }

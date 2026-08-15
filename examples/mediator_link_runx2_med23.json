@@ -1,32 +1,26 @@
 {
   "partner_gene": "MED23",
+  "tractability": "folded_domain",
   "interacting_region_mapped": true,
   "tf_region": "RUNX2 Runt and PST domains (folded domains, not a short linear motif)",
   "claims": [
     {
       "statement": "MED23 physically associates with RUNX2 by co-immunoprecipitation in transfected 293T cells and by endogenous co-immunoprecipitation in differentiated MC3T3E1 osteoblastic cells. The two proteins largely colocalize in the nucleus.",
       "support": "direct_experimental",
-      "citations": [
-        "https://doi.org/10.1038/ncomms11149"
-      ],
+      "citations": ["https://doi.org/10.1038/ncomms11149"],
       "note": "PMC4821994 L23. Endogenous co-IP, not only a co-transfection artifact."
     },
     {
       "statement": "The interaction with MED23 is mediated via the Runt and PST domains of RUNX2. A GST pull-down assay using GST-RUNX2 from E. coli against His-Flag-MED23 purified from baculovirus implied the interaction is likely direct.",
       "support": "direct_experimental",
-      "citations": [
-        "https://doi.org/10.1038/ncomms11149"
-      ],
+      "citations": ["https://doi.org/10.1038/ncomms11149"],
       "note": "PMC4821994 L23, verified against source text 2026-08-15. This is the mapped interacting region required by the contact rule in CLAUDE.md. The source hedges: it says the pull-down 'implied' the interaction was 'likely' direct. Recorded at the source's own confidence, not upgraded."
     },
     {
       "statement": "Med23 deletion in mesenchymal stem cells or osteoblast precursors produces bone defects resembling Runx2 heterozygous mice; Med23 deficiency reduces Runx2-target-gene activity without changing Runx2 expression; combined Runx2 +/- and Med23 MSC-/- mice show aggravated defects.",
       "support": "genetic_functional",
-      "citations": [
-        "https://doi.org/10.1038/ncomms11149"
-      ],
-      "note": "PMC4821994 L6, L25. Establishes the MED23-RUNX2 axis in NORMAL osteogenic development. This is a safety liability, not a cancer dependency \u2014 RUNX2 haploinsufficiency causes cleidocranial dysplasia."
+      "citations": ["https://doi.org/10.1038/ncomms11149"],
+      "note": "PMC4821994 L6, L25. Establishes the MED23-RUNX2 axis in NORMAL osteogenic development. This is a safety liability, not a cancer dependency — RUNX2 haploinsufficiency causes cleidocranial dysplasia."
     }
-  ],
-  "tractability": "folded_domain"
+  ]
 }

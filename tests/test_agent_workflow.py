@@ -37,6 +37,7 @@ from reagent_workflow.improvement import (
 from reagent_workflow.ingest import InputBundle, ingest
 from reagent_workflow.models import (
     ChainSpec,
+    MediatorEvidence,
     RunState,
     Stage,
     StructuralModelRequest,
@@ -926,6 +927,66 @@ class FrozenBenchFlowTaskTests(TempRunCase):
         self.assertIn('schema_version: "1.3"', text)
         self.assertIn("name: reagent/tf-mediator-hero", text)
         self.assertTrue(self.VERIFIER.exists())
+
+
+class MediatorContractParityTests(unittest.TestCase):
+    """The workflow and `dependency_scout` must mean the same thing by "direct".
+
+    `MediatorEvidence.ready_for_structural_modeling` and
+    `MediatorLink.ready_for_structural_modeling` are separate implementations of
+    one rule. This checks them against Andrey's round-01 typed examples, which
+    carry verified sources and human classifications: ELK1 and RUNX2 have mapped
+    regions, CEBPB is the whole-protein pull-down rejected in DECISIONS.md, and
+    ETV1 is computational only. If these two ever disagree, one half of the repo
+    is advancing a contact the other half rejects.
+    """
+
+    EXAMPLES = sorted((REPO_ROOT / "examples").glob("mediator_link_*_med23.json"))
+
+    def test_examples_are_present(self):
+        self.assertGreaterEqual(len(self.EXAMPLES), 4)
+
+    def test_both_contracts_agree_on_every_verified_example(self):
+        from dependency_scout.models import MediatorLink  # noqa: PLC0415
+
+        expected = {
+            "cebpb": False,  # whole-protein pull-down, no region mapped
+            "elk1": True,    # positive control, 3.0 A structure, motif mapped
+            "etv1": False,   # computational prediction only
+            "runx2": True,   # mapped domains, direct experimental
+        }
+        seen = {}
+        for path in self.EXAMPLES:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            link = MediatorLink.model_validate(payload)
+            tf = path.stem.split("_")[2]
+            mirrored = MediatorEvidence(
+                transcription_factor=tf.upper(),
+                mediator_subunit=payload.get("partner_gene", "MED23"),
+                interaction_support=0.8,
+                interaction_type=(
+                    "direct_binding" if link.interacting_region_mapped else "complex_member"
+                ),
+                assay="see claims",
+                interacting_region_mapped=link.interacting_region_mapped,
+                tf_region=payload.get("tf_region"),
+                evidence_ids=["e1"],
+                source_id="s1",
+            )
+            with self.subTest(candidate=tf):
+                self.assertEqual(
+                    mirrored.ready_for_structural_modeling,
+                    link.ready_for_structural_modeling,
+                    msg=f"{tf}: the two contracts disagree on structural readiness",
+                )
+                if tf in expected:
+                    self.assertEqual(
+                        link.ready_for_structural_modeling, expected[tf],
+                        msg=f"{tf}: classification drifted from the round-01 handoff",
+                    )
+            seen[tf] = link.ready_for_structural_modeling
+
+        self.assertTrue(set(expected) <= set(seen), f"missing examples: {set(expected) - set(seen)}")
 
 
 class CliTests(TempRunCase):
