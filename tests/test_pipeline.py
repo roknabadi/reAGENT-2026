@@ -76,6 +76,16 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("no mapped interacting region", text)  # blocker is stated, not hidden
         self.assertIn("stops before structural_modeling", text.lower())
 
+    def test_elk1_med23_positive_control_classifies_as_direct(self):
+        """The known-good case must come out 'direct'. If this breaks, the gate is
+        miscalibrated and would reject a real structurally mapped contact."""
+        link = MediatorLink.model_validate_json(
+            Path("examples/mediator_link_elk1_med23.json").read_text(encoding="utf-8"))
+        self.assertIs(link.involvement, Involvement.DIRECT)
+        self.assertTrue(link.ready_for_structural_modeling)
+        self.assertIn("374-384", link.tf_region)
+        self.assertTrue(all(c.citations for c in link.claims))
+
     @unittest.skipUnless(validate_proto_spec, "optional Proto packages are not installed")
     def test_bundled_public_proto_smoke_spec_compiles_natively(self):
         spec_path = Path("examples/proto_screen_spec.smoke.json")
