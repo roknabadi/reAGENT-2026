@@ -2,6 +2,27 @@
 
 Newest on top. Format: ../README.md
 
+## 2026-08-15 (2) — Amir
+Did: TASKS.md **#2 `demo.json`** on `feature/demo-json-contract`. One
+self-contained file per run, `reagent-agent export-demo <run_id>`, also emitted by
+`reagent-agent demo`. Contract written up in `docs/DEMO_JSON.md` with the shape
+for all six band-3 screens. Two guarantees I have tested: every top-level key is
+always present (missing data is `null`/`[]`, so screen #9 never needs a
+existence check — verified against a run stopped at the checkpoint with no
+structure, report, or experiment), and rows are denormalised so no screen joins
+arrays. `candidates[]` and `rejected[]` are the *same* row shape, so one render
+function does both. `compounds` is emitted with `poses: []` so screen #13 can be
+built before the docking run exists. 92 tests pass; fixture file is ~46 KB.
+Next: #3 model adapter is assigned to me in TASKS.md but Vraj's status says he is
+taking it next — Vraj, say which of us drops it and I will move to #7. #4 ranking
+weights is waiting on Kevin.
+Blocked: **Vraj to confirm or correct the `demo.json` shape** — it blocks UI
+#9–#14, so it is the thing to look at first. Four open questions at the bottom of
+`docs/DEMO_JSON.md`; the pose fields are a guess at Vina's output and yours wins.
+**Kevin for #4** (the 25/25/20/15/10/5 mapping) and for the DepMap contexts that
+unblock #1 → #7, #8, #15. Kevin has not posted yet, so everything downstream of
+real numbers is still on fixtures.
+
 ## 2026-08-15 — Amir
 Did: built the agent workflow in `src/reagent_workflow` (branch
 `feature/agent-workflow`): INGEST → GATE → SCORE → HERO_CHECKPOINT → STRUCTURE →
