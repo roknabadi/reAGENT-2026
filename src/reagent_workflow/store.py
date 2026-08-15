@@ -161,12 +161,28 @@ class RunStore:
         return self.state_path.exists()
 
     def create(self, *, force: bool = False) -> None:
-        """Lay out the run directory. Refuses to clobber an existing run."""
+        """Lay out the run directory. Refuses to clobber an existing run.
+
+        ``force`` clears the previous run's artifacts. It used to leave them in
+        place, so a re-inited run inherited the old decisions, traces and
+        reports: append-only JSONL logs carried both runs' records, and a run
+        that now rejects a candidate still showed the previous run's approval.
+        """
         if self.exists() and not force:
             raise RunExistsError(
                 f"run {self.run_id!r} already exists at {self.run_dir}; "
                 "choose another run id or pass force"
             )
+        if self.exists() and force:
+            import shutil  # noqa: PLC0415
+
+            for child in self.run_dir.iterdir():
+                if child.name == ".lock":
+                    continue  # held by this process; removing it drops the guard
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
         self.run_dir.mkdir(parents=True, exist_ok=True)
         for sub in RUN_SUBDIRS:
             (self.run_dir / sub).mkdir(parents=True, exist_ok=True)

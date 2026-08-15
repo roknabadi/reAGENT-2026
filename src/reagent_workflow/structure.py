@@ -23,6 +23,7 @@ checkpoint and explicitly enabled live execution.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,8 @@ from .models import (
     StructuralModelResult,
 )
 from .store import canonical_json, content_hash, sha256_text
+
+_logger = logging.getLogger(__name__)
 
 BOLTZ2_TOOL_KEY = "boltz2-prediction"
 ESMFOLD2_TOOL_KEY = "esmfold2-prediction"
@@ -287,6 +290,12 @@ def _result_from_cached(
             "SYNTHETIC TEST FIXTURE: these confidence values are demo data for "
             "exercising the workflow, not a real structure prediction."
         ))
+    # A live result cached and replayed lost this line, because _dispatch_live
+    # attaches it to the returned object but writes only metrics to the cache.
+    # A replayed prediction is still a prediction.
+    prediction_caveat = "Computational prediction. Not experimental evidence."
+    if source != "fixture" and prediction_caveat not in limitations:
+        limitations.append(prediction_caveat)
     return StructuralModelResult(
         request_id=request.request_id,
         candidate_id=request.candidate_id,
@@ -427,12 +436,33 @@ def _dispatch_live(
         runtime_ms = int((time.monotonic() - started) * 1000)
         payload = output.model_dump(mode="json")
         confidence = _extract_confidence(payload)
+        # A billed GPU prediction used to survive as four scalars: the structure
+        # itself was dropped, so the coordinates could never be inspected,
+        # re-scored, or handed to the docking stage, and a replay could not
+        # reproduce anything but the numbers. Persist the full tool output
+        # alongside the metrics, and keep the caveats with it.
+        artifact_paths: list[str] = []
+        if caches:
+            artifact_path = caches[0].root / f"{request.input_hash}.output.json"
+            try:
+                artifact_path.parent.mkdir(parents=True, exist_ok=True)
+                artifact_path.write_text(canonical_json(payload) + "\n", encoding="utf-8")
+                artifact_paths.append(str(artifact_path))
+            except OSError as exc:  # disk full, permissions - do not lose the run
+                _logger.warning("could not persist structural output: %s", exc)
+
         cache_payload = {
             "confidence": confidence,
             "model_version": request.model,
             "proto_tools_version": proto_tool_versions().get("proto_tools"),
             "runtime_ms": runtime_ms,
             "output_hash": content_hash(payload),
+            "artifact_paths": artifact_paths,
+            "limitations": ["Computational prediction. Not experimental evidence."],
+            "unresolved_questions": [
+                "Interface residue identity is not resolved well enough to define "
+                "a pocket without further evidence.",
+            ],
         }
         if caches:
             caches[0].put(request.input_hash, cache_payload)
@@ -455,16 +485,49 @@ def _dispatch_live(
     )
 
 
+# The two tools do not name the same quantity the same way. ESMFold2 emits
+# `plddt`; Boltz2 emits `complex_plddt` (and `complex_iplddt`) and never a bare
+# `plddt` — see proto_tools/tools/structure_prediction/boltz2/boltz2.py. Looking
+# only for `plddt` meant every live Boltz2 result had no pLDDT, the whole
+# comparison block was skipped, and `compare_models` reported "consistent"
+# without having compared anything. Aliases are ordered: first match wins.
+_CONFIDENCE_ALIASES: dict[str, tuple[str, ...]] = {
+    "plddt": ("plddt", "complex_plddt", "mean_plddt"),
+    "iplddt": ("iplddt", "complex_iplddt"),
+    "ptm": ("ptm", "complex_ptm"),
+    "iptm": ("iptm", "protein_iptm", "complex_iptm"),
+    "avg_pae": ("avg_pae", "mean_pae", "pae_mean"),
+}
+
+
 def _extract_confidence(payload: dict[str, Any]) -> dict[str, float]:
-    """Pull plddt/ptm/iptm/avg_pae out of a structure-prediction output payload."""
-    wanted = ("plddt", "ptm", "iptm", "avg_pae")
+    """Pull plddt/ptm/iptm/avg_pae out of a structure-prediction output payload.
+
+    Normalises each tool's spelling onto one canonical name so the comparison
+    sees both models' numbers.
+    """
+    lookup = {
+        alias: canonical
+        for canonical, aliases in _CONFIDENCE_ALIASES.items()
+        for alias in aliases
+    }
+    ranks = {
+        alias: index
+        for _, aliases in _CONFIDENCE_ALIASES.items()
+        for index, alias in enumerate(aliases)
+    }
     found: dict[str, float] = {}
+    found_rank: dict[str, int] = {}
 
     def walk(node: Any) -> None:
         if isinstance(node, dict):
             for key, value in node.items():
-                if key in wanted and isinstance(value, int | float) and key not in found:
-                    found[key] = float(value)
+                canonical = lookup.get(key)
+                if canonical is not None and isinstance(value, int | float):
+                    rank = ranks[key]
+                    if canonical not in found or rank < found_rank[canonical]:
+                        found[canonical] = float(value)
+                        found_rank[canonical] = rank
                 else:
                     walk(value)
         elif isinstance(node, list):
@@ -549,7 +612,20 @@ def compare_models(
     else:
         agreements.append(f"Boltz2 reports interface confidence ipTM {iptm:.2f}.")
 
-    verdict = "consistent" if not disagreements else "inconsistent"
+    # "consistent" must mean a comparison happened and agreed — not that nothing
+    # could be compared. With no pLDDT on either side and no ipTM, the old code
+    # fell through to "consistent" on an empty agreements list, reporting model
+    # agreement it never computed.
+    if disagreements:
+        verdict = "inconsistent"
+    elif agreements:
+        verdict = "consistent"
+    else:
+        verdict = "insufficient"
+        limitations.append(
+            "No comparable confidence metric was present on both models, so no "
+            "agreement or disagreement could be established."
+        )
     return ModelComparison(
         candidate_id=candidate_id,
         boltz2_request_id=boltz.request_id,

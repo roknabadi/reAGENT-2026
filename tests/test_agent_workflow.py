@@ -535,6 +535,214 @@ class BioriskTests(TempRunCase):
         self.assertEqual(assessment.policy_hash, policy_hash())
 
 
+class AdversarialReviewRegressionTests(TempRunCase):
+    """Defects found by the adversarial review. Each test is the probe that
+    reproduced the bug before it was fixed."""
+
+    # ------------------------------------------------ gate enforcement
+    def test_report_refuses_while_the_hero_gate_is_open(self):
+        """`agent report` used to write status "completed" on a run whose own
+        human_decisions field said the gate was still open — and the BenchFlow
+        exporter maps "completed" to outcome "success"."""
+        orchestrator = self.make_orchestrator("gate-open")
+        orchestrator.init_run(self.bundle)
+        orchestrator.run_until_checkpoint()
+        with self.assertRaises(CheckpointBlocked):
+            orchestrator.run_complete()
+        state = orchestrator.store.load_state()
+        self.assertEqual(state.status, "awaiting_human")
+
+    def test_next_experiment_refuses_while_the_hero_gate_is_open(self):
+        orchestrator = self.make_orchestrator("gate-open-exp")
+        orchestrator.init_run(self.bundle)
+        orchestrator.run_until_checkpoint()
+        with self.assertRaises(CheckpointBlocked):
+            orchestrator.run_next_experiment()
+
+    def test_biorisk_escalation_stops_the_pipeline(self):
+        """An unresolved biorisk review used to be walked straight past, and its
+        open_checkpoint_id overwritten by the hero checkpoint."""
+        payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        payload["candidates"][0]["disease_context"] = "Ebola virus disease (fixture)"
+        orchestrator = self.make_orchestrator("biorisk-stop")
+        orchestrator.init_run(InputBundle.model_validate(payload))
+        with self.assertRaises(CheckpointBlocked):
+            orchestrator.run_until_checkpoint()
+        state = orchestrator.store.load_state()
+        self.assertEqual(state.open_checkpoint_id, "biorisk-stop-biorisk")
+
+    def test_approving_biorisk_enters_the_pipeline_at_the_start(self):
+        """It used to jump straight to STRUCTURE with hero_candidate_id None,
+        skipping INGEST/GATE/SCORE and bricking the run."""
+        payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        payload["candidates"][0]["disease_context"] = "Ebola virus disease (fixture)"
+        orchestrator = self.make_orchestrator("biorisk-approve")
+        orchestrator.init_run(InputBundle.model_validate(payload))
+        orchestrator.resolve_checkpoint(
+            "biorisk-approve-biorisk", "approve", resolved_by="reviewer"
+        )
+        state = orchestrator.store.load_state()
+        self.assertEqual(state.stage, Stage.INGEST)
+        self.assertIsNone(state.open_checkpoint_id)
+        # And the run now completes normally from there.
+        checkpoint = orchestrator.run_until_checkpoint()
+        self.assertIsNotNone(checkpoint.recommended_candidate_id)
+
+    def test_revise_does_not_deadlock_the_run(self):
+        """A revise decision reopened the SAME checkpoint id, which
+        resolve_checkpoint then refuses because it is no longer open."""
+        orchestrator = self.make_orchestrator("revise")
+        orchestrator.init_run(self.bundle)
+        checkpoint = orchestrator.run_until_checkpoint()
+        orchestrator.resolve_checkpoint(
+            checkpoint.checkpoint_id, "revise", resolved_by="tester", note="rescore"
+        )
+        state = orchestrator.store.load_state()
+        self.assertEqual(state.stage, Stage.SCORE)
+        self.assertIsNone(state.open_checkpoint_id)
+        # A fresh checkpoint can be minted and resolved.
+        again = orchestrator.run_hero_checkpoint()
+        orchestrator.resolve_checkpoint(
+            again.checkpoint_id, "approve", resolved_by="tester"
+        )
+        self.assertEqual(orchestrator.store.load_state().hero_candidate_id,
+                         again.recommended_candidate_id)
+
+    # ------------------------------------------------ structural comparison
+    def test_boltz2_metric_names_are_normalised(self):
+        """Boltz2 emits complex_plddt, never a bare plddt. Looking only for
+        `plddt` meant the whole comparison block was skipped on live data."""
+        from reagent_workflow.structure import _extract_confidence  # noqa: PLC0415
+
+        payload = {"metrics": {"complex_plddt": 0.81, "ptm": 0.74,
+                               "protein_iptm": 0.66, "avg_pae": 8.4}}
+        found = _extract_confidence(payload)
+        self.assertEqual(found["plddt"], 0.81)
+        self.assertEqual(found["iptm"], 0.66)
+
+    def test_comparison_says_insufficient_when_nothing_was_compared(self):
+        """It used to fall through to "consistent" on an empty agreements list,
+        reporting model agreement it never computed."""
+        boltz = StructuralModelResult(
+            request_id="b", candidate_id="c", model="boltz2", status="cached",
+            source="fixture", confidence={"ptm": 0.7}, input_hash="h", output_hash="o",
+        )
+        esm = StructuralModelResult(
+            request_id="e", candidate_id="c", model="esmfold2", status="cached",
+            source="fixture", confidence={"ptm": 0.6}, input_hash="h2", output_hash="o2",
+        )
+        comparison = compare_models("c", boltz, [esm])
+        self.assertEqual(comparison.verdict, "insufficient")
+
+    def test_replayed_live_prediction_keeps_its_caveat(self):
+        """A live result cached and replayed dropped "not experimental evidence"."""
+        from reagent_workflow.structure import _result_from_cached  # noqa: PLC0415
+
+        request = StructuralModelRequest(
+            request_id="r", candidate_id="c", model="boltz2",
+            proto_tool_key="boltz2-prediction", purpose="complex_interface",
+            chains=[
+                ChainSpec(chain_id="A", role="target", sequence="MKAL"),
+                ChainSpec(chain_id="B", role="partner", sequence="MQVL"),
+            ],
+            input_hash="h",
+        )
+        result = _result_from_cached(
+            request, {"confidence": {"plddt": 0.8}, "output_hash": "o"}, source="cache"
+        )
+        self.assertTrue(
+            any("Not experimental evidence" in x for x in result.limitations)
+        )
+
+    # ------------------------------------------------ data integrity
+    def test_tractability_label_is_not_inverted(self):
+        """domain_bounded is True for BOTH a SLiM and a folded domain, so mapping
+        it to "folded_domain" reported the tractable case as the untractable one."""
+        from reagent_workflow.adapters import TRACTABILITY_NOTE_PREFIX  # noqa: PLC0415
+        from reagent_workflow.demo_export import _interface_tractability  # noqa: PLC0415
+        from reagent_workflow.models import StructuralTractability  # noqa: PLC0415
+
+        slim = StructuralTractability(
+            domain_bounded=True,
+            notes=[f"{TRACTABILITY_NOTE_PREFIX}short_linear_motif"],
+        )
+        self.assertEqual(_interface_tractability(slim), "short_linear_motif")
+        folded = StructuralTractability(
+            domain_bounded=True, notes=[f"{TRACTABILITY_NOTE_PREFIX}folded_domain"]
+        )
+        self.assertEqual(_interface_tractability(folded), "folded_domain")
+
+    def test_evidence_ids_do_not_collide_across_candidates(self):
+        """Ids hashed only (statement, support), so two candidates sharing
+        boilerplate claim text minted the same id and one record was dropped."""
+        from reagent_workflow.adapters import mint_evidence_id  # noqa: PLC0415
+
+        shared = "Co-immunoprecipitation confirms the interaction."
+        self.assertNotEqual(
+            mint_evidence_id(shared, "direct_experimental", "GENE1-PARTNER"),
+            mint_evidence_id(shared, "direct_experimental", "GENE2-PARTNER"),
+        )
+
+    def test_contradicting_normal_cell_evidence_does_not_raise_completeness(self):
+        candidates = {c.candidate_id: c for c in self.bundle.candidates}
+        hero = candidates["CAND-SELECTIVE"]
+        poisoned = hero.model_copy(update={
+            "contradicting_evidence_ids": list(hero.normal_cell_evidence_ids),
+        })
+        card = score_candidate(poisoned, RunConfig())
+        component = next(
+            c for c in card.components if c.name == "normal_cell_completeness"
+        )
+        self.assertTrue(component.missing)
+        self.assertEqual(component.normalized, 0.0)
+
+    def test_force_init_clears_the_previous_run(self):
+        """--force left the old decisions, traces and reports in place, so a
+        re-inited run inherited the previous run's records."""
+        orchestrator = self.make_orchestrator("forced")
+        orchestrator.init_run(self.bundle)
+        orchestrator.run_until_checkpoint()
+        self.assertTrue(orchestrator.rejections_path.exists())
+        stale = len(orchestrator.store.read_jsonl(orchestrator.rejections_path))
+        self.assertGreater(stale, 0)
+
+        orchestrator.init_run(self.bundle, force=True)
+        self.assertFalse(orchestrator.rejections_path.exists())
+        self.assertEqual(orchestrator.store.load_state().stage, Stage.INGEST)
+
+    # ------------------------------------------------ tamper resistance
+    def test_rubric_hash_covers_the_scoring_functions(self):
+        """The anti-tamper hash omitted `check`, so swapping every scoring
+        function for `lambda a: 1.0` left the hash unchanged."""
+        import reagent_workflow.improvement as improvement  # noqa: PLC0415
+
+        original = improvement.RUBRICS[Stage.NEXT_EXPERIMENT]
+        before = improvement.rubric_hash(Stage.NEXT_EXPERIMENT)
+        try:
+            improvement.RUBRICS[Stage.NEXT_EXPERIMENT] = tuple(
+                improvement.Criterion(
+                    c.name, c.weight, c.description, (lambda a: 1.0),
+                    c.remedy, c.revision_target,
+                )
+                for c in original
+            )
+            self.assertNotEqual(before, improvement.rubric_hash(Stage.NEXT_EXPERIMENT))
+        finally:
+            improvement.RUBRICS[Stage.NEXT_EXPERIMENT] = original
+
+    def test_credential_scan_is_not_disabled_by_an_unrelated_redaction(self):
+        """One redacted field used to switch the scan off for the whole record."""
+        record = {
+            "schema_version": "0.3", "trace_id": "t", "agent": {"name": "a"},
+            "task": {}, "outcome": {"status": "success"},
+            "steps": [{"step_id": 1, "internal_event_id": "e"}],
+            "safe_field": "[REDACTED]",
+            "leaked": "sk-abcdefghijklmnopqrstuvwxyz",
+        }
+        errors = validate_record(record, 1)
+        self.assertTrue(any("credential" in e for e in errors))
+
+
 class SoulTests(unittest.TestCase):
     def test_screening_policy_is_loaded_not_just_documented(self):
         """The screening constraints must travel with the agent.
@@ -852,13 +1060,36 @@ class WorkflowTests(TempRunCase):
             self.assertFalse(orchestrator.config.allow_live_modal)
             self.assertTrue(any("SYNTHETIC" in x for x in result["limitations"]))
 
-    def test_validation_only_mode_runs_nothing(self):
+    def test_validation_only_needs_a_human_selected_candidate(self):
+        """Validation must not pick a candidate for itself.
+
+        It used to fall through to rank()[0], compile a request, serve cached
+        results and write comparison.json — real-looking predictions for a
+        candidate nobody approved, from a command documented as "run nothing".
+        """
         orchestrator = self.make_orchestrator("validate-only")
         orchestrator.init_run(self.bundle)
         orchestrator.run_until_checkpoint()
+        with self.assertRaises(CheckpointBlocked):
+            orchestrator.run_structure(validation_only=True)
+        self.assertFalse(orchestrator.store.path("structure", "request.json").exists())
+
+    def test_validation_only_does_not_advance_the_state_machine(self):
+        orchestrator = self.make_orchestrator("validate-only-approved")
+        orchestrator.init_run(self.bundle)
+        checkpoint = orchestrator.run_until_checkpoint()
+        orchestrator.resolve_checkpoint(
+            checkpoint.checkpoint_id, "approve", resolved_by="tester"
+        )
+        before = orchestrator.store.load_state()
         comparison = orchestrator.run_structure(validation_only=True)
+        after = orchestrator.store.load_state()
+
         self.assertIsNotNone(comparison)
         self.assertTrue(orchestrator.store.path("structure", "request.json").exists())
+        # Validation compiles inputs; it is not the stage running.
+        self.assertEqual(after.stage, before.stage)
+        self.assertNotIn(Stage.STRUCTURE, after.completed_stages)
 
     def test_context_artifacts_support_rehydration(self):
         orchestrator = self.make_orchestrator("context")
