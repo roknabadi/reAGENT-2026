@@ -14,11 +14,14 @@ matching the pattern in `structure.py`.
 
 Three things this gets right and one it refuses:
 
-1. **`selectivity_delta` is negated, not copied.** `dependency_scout` computes
-   `other.median - target.median` (positive means selective); `reagent_workflow`
-   uses `target - other` (negative means selective), and `ingest` rejects a
-   candidate outright when the delta disagrees with the medians by more than
-   0.02. A copied value fails ingest with a confusing message.
+1. **`selectivity_delta` is recomputed from the medians, never copied or
+   negated.** Three components in this repo define it and they do not agree:
+   `dependency_scout.depmap` computes `other - target` (positive means
+   selective), while `reagent_workflow` and Kevin's `stage1_depmap` both compute
+   `target - other` (negative means selective). A blanket negation is right for
+   one source and silently inverts another. The medians are unambiguous, so the
+   delta is derived from them and any supplied value is only used to detect
+   disagreement.
 2. `SupportType` and the mapped region together decide `interaction_type`, via
    one table below.
 3. `Claim.citations[]` become `SourceRecord`s; a public source needs a `version`
@@ -224,9 +227,19 @@ def to_dependency_evidence(
 ) -> DependencyEvidence:
     """`dependency_scout.DependencyEvidence` → the workflow's.
 
-    Negates `selectivity_delta`: the two packages define it with opposite signs,
-    and `ingest` rejects a candidate whose delta disagrees with its medians.
+    The delta is **recomputed from the medians**, not copied and not negated.
+
+    Three components in this repo define `selectivity_delta` and they do not
+    agree: `dependency_scout.depmap` computes `other - target` (positive means
+    selective), while `reagent_workflow` and Kevin's `stage1_depmap` both compute
+    `target - other` (negative means selective). A blanket negation is correct
+    for one source and silently wrong for another — it would turn an already
+    correct value into its opposite and invert the science.
+
+    The medians carry no such ambiguity, so the delta is derived from them and
+    the supplied value is only used to detect a disagreement worth reporting.
     """
+    implied = dep.median_target_effect - dep.median_other_effect
     return DependencyEvidence(
         gene=dep.gene,
         disease_context=dep.disease_context,
@@ -236,7 +249,7 @@ def to_dependency_evidence(
         median_other_effect=dep.median_other_effect,
         target_dependent_fraction=dep.target_dependent_fraction,
         other_dependent_fraction=dep.other_dependent_fraction,
-        selectivity_delta=-dep.selectivity_delta,
+        selectivity_delta=implied,
         mann_whitney_p=dep.mann_whitney_p,
         evidence_ids=list(evidence_ids),
         source_id=source_id,

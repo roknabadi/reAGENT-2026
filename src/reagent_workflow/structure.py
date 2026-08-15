@@ -145,7 +145,13 @@ def build_requests(
     checkpoint_id: str | None = None,
     seed: int = 7,
 ) -> list[StructuralModelRequest]:
-    """Build the Boltz2 complex job plus one ESMFold2 monomer check per chain.
+    """Build the structural jobs for one candidate.
+
+    By default that is a single Boltz2 complex prediction: Proto prefers Boltz2
+    for complexes because it explicitly predicts them, and one good model beats
+    a chorus of correlated ones. ``enable_alphafold2`` adds a second interface
+    opinion and ``enable_esmfold2_monomer`` adds per-chain folding checks; both
+    are off by default and cost a GPU job each per replicate.
 
     Returns an empty list when sequences are missing, or when the target-partner
     contact has no mapped interacting region. Modelling an unmapped association
@@ -213,7 +219,7 @@ def build_requests(
             ),
             human_approval_checkpoint_id=checkpoint_id,
         ))
-    for chain in (target_chain, partner_chain):
+    for chain in (target_chain, partner_chain) if config.enable_esmfold2_monomer else ():
         # Request ids stay derived from the role, so they remain deterministic
         # for a given candidate: "-esmfold2-target" and "-esmfold2-partner".
         requests.append(StructuralModelRequest(
@@ -710,11 +716,9 @@ def compare_models(
     stochastic model differ; the interval is what separates a real disagreement
     from replicate noise.
     """
-    limitations = [
-        "Boltz2 and AlphaFold2 predict the complex; ESMFold2 checks monomers only.",
-        "ESMFold2 is not used as an interface predictor and does not vote on the "
-        "interface.",
-    ]
+    # Describe only what actually ran. Naming models that were never dispatched
+    # reads as if their opinion was sought and reported.
+    limitations: list[str] = []
 
     interface_results = {
         name: result
@@ -728,6 +732,17 @@ def compare_models(
     ]
 
     models_compared = sorted([*interface_results, *(["esmfold2"] if usable_esm else [])])
+    if len(interface_results) > 1:
+        limitations.append(
+            "Interface predictions come from "
+            f"{', '.join(sorted(interface_results))}; they share PDB-derived "
+            "training data, so agreement between them is correlated."
+        )
+    if usable_esm:
+        limitations.append(
+            "ESMFold2 checks whether each chain folds in isolation and does not "
+            "vote on the interface."
+        )
     confidence_ci = {
         name: dict(result.confidence_ci) for name, result in interface_results.items()
     }

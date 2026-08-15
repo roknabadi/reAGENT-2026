@@ -25,6 +25,14 @@ benchflow/jobs/
 benchflow/artifacts/
 benchflow/matrix.yaml
 
+# Kevin's discovery pipeline regenerates these locally (stage0 -> stage1).
+# 400MB+ of DepMap bulk files and a 28MB dependency table; per his handoff and
+# DECISIONS.md, generated artifacts stay out of Git.
+tests/re-agent_discovery/data/
+
+# proto-tools deploy logs
+logs/
+
 # Agent run state and large structural artifacts stay out of Git.
 # Runs are reproducible from the input bundle plus the recorded config hash.
 runs/

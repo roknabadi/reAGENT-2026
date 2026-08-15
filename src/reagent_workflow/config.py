@@ -86,11 +86,25 @@ class RunConfig(BaseModel):
 
     max_improvement_iterations: int = Field(default=2, ge=0, le=2)
 
-    enable_alphafold2: bool = True
-    """Second independent interface predictor alongside Boltz2.
+    enable_alphafold2: bool = False
+    """Optional second interface predictor alongside Boltz2.
 
-    Both take the whole complex and pair heterocomplex MSAs, so both can vote on
-    the interface. ESMFold2 stays monomer-only and never votes.
+    Off by default: the pipeline runs Boltz2 only, which is the model Proto
+    prefers for complexes because it explicitly predicts them. Turning this on
+    adds a second opinion on the interface, but note that agreement between the
+    two is weak evidence — they share PDB-derived training data and fail
+    together on the same kinds of interface.
+
+    With this off there is exactly one interface model, so there is no consensus
+    to report and ``compare_models`` does not claim one.
+    """
+
+    enable_esmfold2_monomer: bool = False
+    """Optional per-chain monomer sanity check.
+
+    Off by default. It answers a different question from the interface — whether
+    each chain folds in isolation — and costs one GPU job per chain. It never
+    votes on the interface whether it runs or not.
     """
 
     structure_replicates: int = Field(default=3, ge=1, le=10)

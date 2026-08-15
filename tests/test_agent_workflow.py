@@ -265,7 +265,7 @@ class ScoringTests(TempRunCase):
     def setUp(self) -> None:
         super().setUp()
         self.candidates = {c.candidate_id: c for c in self.bundle.candidates}
-        self.config = RunConfig()
+        self.config = RunConfig(enable_alphafold2=True, enable_esmfold2_monomer=True)
 
     def test_missing_evidence_lowers_completeness_and_never_scores(self):
         complete = score_candidate(self.candidates["CAND-SELECTIVE"], self.config)
@@ -637,7 +637,9 @@ class ThreeModelConsensusTests(TempRunCase):
 
     def test_both_interface_models_are_requested(self):
         candidates = {c.candidate_id: c for c in self.bundle.candidates}
-        requests = build_requests(candidates["CAND-SELECTIVE"], RunConfig())
+        # Multi-model is opt-in now; the default is Boltz2 alone.
+        multi = RunConfig(enable_alphafold2=True, enable_esmfold2_monomer=True)
+        requests = build_requests(candidates["CAND-SELECTIVE"], multi)
         models = sorted(r.model for r in requests)
         self.assertEqual(models, ["alphafold2", "boltz2", "esmfold2", "esmfold2"])
         for request in requests:
@@ -728,7 +730,9 @@ class ThreeModelConsensusTests(TempRunCase):
             )
 
     def test_fixture_run_produces_a_three_model_comparison(self):
-        orchestrator = self.make_orchestrator("three-model")
+        orchestrator = self.make_orchestrator(
+            "three-model", enable_alphafold2=True, enable_esmfold2_monomer=True
+        )
         orchestrator.init_run(self.bundle)
         checkpoint = orchestrator.run_until_checkpoint()
         orchestrator.resolve_checkpoint(
@@ -1000,7 +1004,7 @@ class StructureTests(TempRunCase):
     def setUp(self) -> None:
         super().setUp()
         self.candidates = {c.candidate_id: c for c in self.bundle.candidates}
-        self.config = RunConfig()
+        self.config = RunConfig(enable_alphafold2=True, enable_esmfold2_monomer=True)
 
     @needs_proto
     def test_requests_use_the_installed_proto_contracts(self):
@@ -1267,7 +1271,8 @@ class WorkflowTests(TempRunCase):
             for p in orchestrator.store.path("structure").rglob("*.json")
             if p.name.startswith("CAND-")
         ]
-        self.assertEqual(len(results), 4)
+        # Boltz2 alone by default; the other models are opt-in.
+        self.assertEqual(len(results), 1)
         for result in results:
             self.assertEqual(result["status"], "cached")
             self.assertEqual(result["source"], "fixture")
@@ -1339,7 +1344,7 @@ class WorkflowTests(TempRunCase):
             "evidence.accepted", "candidate.gated", "candidate.rejected",
             "candidate.scored", "checkpoint.created", "checkpoint.resolved",
             "proto.request_validated", "structure.cache_hit",
-            "structure.boltz2_output", "structure.esmfold2_output",
+            "structure.boltz2_output",
             "structure.model_comparison", "improvement.iteration",
             "experiment.proposed", "report.written", "run.completed",
         ):
