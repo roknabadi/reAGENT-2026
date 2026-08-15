@@ -16,7 +16,12 @@ The CSVs are gitignored. Commands to fetch them are in `team/TASKS.md`.
 
 ---
 
-## 1. Zero TFs pass the gates at lineage level
+## 1. Zero TFs pass the gates **in Lung** — corrected
+
+> **Correction, same day.** The heading originally read "at lineage level". That
+> overgeneralised from a single lineage. Kevin's independent all-lineage scan
+> found real selective dependencies elsewhere, and re-running this repo's own
+> gates confirms eight of them (§5). **Lung is the negative case, not the rule.**
 
 1588 TFs screened in Lung. **0 eligible.** Failure counts:
 
@@ -140,3 +145,65 @@ Whichever is chosen, both sides must move together and it needs a
 §7 locks **25/25/20/15/10/5**. Neither matches `dependency_scout/ranking.py`,
 which uses a flat 80/20 discovery-vs-enrichment split. Three scoring schemes,
 one pipeline.
+
+---
+
+## 5. Round 02 — the two halves of the pipeline meet
+
+Kevin ran an independent all-lineage scan (DepMap 24Q4, separate scratch repo,
+different code). Re-running his named TFs through **this** repo's gates on 24Q2
+reproduces his result — eight gate-eligible candidates at n ≥ 15:
+
+| TF | Context | n | median | selectivity | dep. in context | dep. elsewhere | score |
+|---|---|---|---|---|---|---|---|
+| IRF4 | Lymphoid | 81 | −1.15 | +1.03 | 62% | **3%** | 0.593 |
+| PAX8 | Kidney | 37 | −0.90 | +0.77 | 57% | 6% | 0.470 |
+| ISL1 | Peripheral Nervous System | 41 | −0.67 | +0.60 | 61% | **0%** | 0.397 |
+| TP63 | Head and Neck | 72 | −0.64 | +0.63 | 60% | 6% | 0.387 |
+| EBF1 | Lymphoid | 81 | −0.69 | +0.56 | 51% | 1% | 0.374 |
+| PAX8 | Ovary/Fallopian Tube | 59 | −0.67 | +0.55 | 58% | 5% | 0.374 |
+| MYCN | Peripheral Nervous System | 41 | −0.65 | +0.56 | 56% | 2% | 0.374 |
+| ZNF217 | Lymphoid | 81 | −0.68 | +0.38 | 68% | 26% | 0.341 |
+
+Two independent implementations, two DepMap releases, same answers. These are
+also independently known biology — IRF4 in myeloma, TP63 in oral SCC, ISL1 and
+MYCN in neuroblastoma. The pipeline rediscovered them without being told.
+
+Reproduce: `python scripts/build_round02_shortlist.py` →
+`outputs/round02_shortlist.{json,md}`.
+
+### The finding that should drive the next literature pass
+
+Joining the two halves shows the project's central gap in one table:
+
+- **Candidates with real dependencies have no Mediator evidence.** IRF4, PAX8,
+  ISL1, TP63, EBF1, MYCN, ZNF217 all sit at `involvement: unknown`.
+- **Candidates with Mediator evidence have no dependencies.** RUNX2, CEBPB and
+  ETV1 show no selective DepMap dependency in any lineage — independently
+  confirmed by Kevin. ELK1 and ELF3 likewise, as expected: their value is
+  structural, not fitness-based.
+
+The intersection is currently **empty**. That is the honest state of the
+hypothesis, and it is a result worth showing.
+
+It also says where to look next: run the Mediator-contact literature pass
+against **IRF4 and PAX8**, which already clear the hardest bar. Kevin reached
+the same conclusion independently. Continuing to push RUNX2/CEBPB/ETV1 spends
+the remaining time on candidates that fail the dependency gate on real data.
+
+## 6. Open schema-mapping task from Kevin
+
+Kevin's scan emits `n_in`, `n_out`, `in_median`, `out_median`, `cohens_d`,
+`pvalue`, `qvalue`. `DependencyEvidence` wants `n_target_models`,
+`n_other_models`, `median_target_effect`, `median_other_effect`,
+`target_dependent_fraction`, `other_dependent_fraction`, `selectivity_delta`,
+`mann_whitney_p`. Mapping is mechanical except two points:
+
+1. `target_dependent_fraction` / `other_dependent_fraction` are not in his
+   output. `depmap.py` already computes both from the raw matrix, so the
+   simplest resolution is to run the mapping through `analyze_gene_effects`
+   rather than converting his table — which is what §5 does.
+2. `selectivity_delta` as median gap or Cohen's d. Currently the median gap
+   (`other.median() − target.median()`). Changing it is a `DECISIONS.md` entry.
+   Cohen's d would be variance-aware and arguably better, but the gate threshold
+   0.35 is calibrated to the median gap and would have to move with it.
