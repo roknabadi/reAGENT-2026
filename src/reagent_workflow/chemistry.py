@@ -1,0 +1,309 @@
+"""Approved-drug library: provenance, cleanup, descriptors, enrichment (§17–23).
+
+The enrichment hypothesis is stated so it can be refuted. A molecule that
+competes for a hydrophobic groove may benefit from presenting a hydrophobic face
+to the surface while keeping polar groups toward solvent — motivated by the ELK1
+site, where three hydrophobic residues dominate and the phosphorylated serine
+points outward. That is the **amphiphilic compatibility hypothesis**, not a
+validated pharmacophore.
+
+Which is why the library is not simply the top-scoring molecules. Taking only
+enriched compounds would make any later "amphiphilic compounds did well" finding
+circular. Three arms ship together — enriched, diverse controls, and deliberate
+counter-hypothesis compounds — so the screen can answer whether the enrichment
+actually helped, and can come back saying it did not.
+
+Requires RDKit. Every function fails loudly if a compound lacks provenance;
+a compound with no public source never reaches a screen.
+"""
+from __future__ import annotations
+
+import math
+import statistics
+from enum import StrEnum
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from .discovery_config import ChemistryConfig
+
+
+class LibraryArm(StrEnum):
+    ENRICHED = "enriched"                      # fits the hypothesis
+    DIVERSE_CONTROL = "diverse_control"        # chemically spread, hypothesis-agnostic
+    COUNTER_HYPOTHESIS = "counter_hypothesis"  # deliberately poor fit
+
+
+class Compound(BaseModel):
+    """One approved drug. Provenance is required, not optional (§17)."""
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    smiles: str                                  # as supplied by the source
+    parent_smiles: str | None = None             # after salt/mixture stripping
+    source: str                                  # DrugCentral | ChEMBL
+    source_id: str
+    source_version: str
+    retrieved: str
+    approval_status: str | None = None
+    known_target: str | None = None
+    indication: str | None = None
+
+    # descriptors (§18) — features, never a hard Rule-of-Five gate
+    mw: float | None = None
+    clogp: float | None = None
+    tpsa: float | None = None
+    hbd: int | None = None
+    hba: int | None = None
+    rotatable_bonds: int | None = None
+    heavy_atoms: int | None = None
+    formal_charge: int | None = None
+
+    amphiphilicity_proxy: float | None = None
+    amphiphilicity_caveat: str = ("heuristic chemical enrichment metric; "
+                                  "not an experimentally validated descriptor")
+    arm: LibraryArm | None = None
+    rejected_reason: str | None = None
+
+    @property
+    def has_provenance(self) -> bool:
+        return bool(self.source and self.source_id and self.source_version
+                    and self.retrieved)
+
+
+# ── cleanup (§18) ───────────────────────────────────────────────────────────
+
+_METALS = {"Fe", "Pt", "Gd", "Tc", "Ru", "Au", "Ag", "As", "Sb", "Bi", "Hg",
+           "Al", "Zn", "Cu", "Mn", "Co", "Cr", "Ni", "Ti", "Zr", "La", "Sm"}
+
+
+def standardize(smiles: str, *, max_heavy_atoms: int = 150) -> tuple[str | None, str | None]:
+    """Return (parent_smiles, rejection_reason). Stereochemistry is preserved.
+
+    Salts and counterions are stripped to the parent; genuine mixtures, biologics
+    and unsupported metal complexes are rejected rather than silently mangled.
+    """
+    from rdkit import Chem, RDLogger
+    RDLogger.DisableLog("rdApp.*")
+
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None, "unparseable SMILES"
+
+    frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=False)
+    if frags:
+        organic = [f for f in frags
+                   if sum(1 for a in f.GetAtoms() if a.GetSymbol() == "C") >= 3]
+        if not organic:
+            return None, "no organic parent fragment (salt or inorganic only)"
+        organic.sort(key=lambda m: m.GetNumHeavyAtoms(), reverse=True)
+        # A second comparably sized organic fragment is a real mixture, not a salt.
+        if len(organic) > 1 and organic[1].GetNumHeavyAtoms() > 0.5 * organic[0].GetNumHeavyAtoms():
+            return None, "disconnected mixture of comparable components"
+        mol = organic[0]
+
+    if any(a.GetSymbol() in _METALS for a in mol.GetAtoms()):
+        return None, "metal-containing structure unsupported by the docking workflow"
+    n_heavy = mol.GetNumHeavyAtoms()
+    if n_heavy < 6:
+        return None, "too small to dock meaningfully"
+    if n_heavy > max_heavy_atoms:
+        return None, f"biologic or oversized ({n_heavy} heavy atoms)"
+    try:
+        Chem.SanitizeMol(mol)
+    except Exception as e:
+        return None, f"failed sanitization: {type(e).__name__}"
+    return Chem.MolToSmiles(mol), None
+
+
+def describe(parent_smiles: str) -> dict:
+    """Standard 2D descriptors (§18). Soft features, not a filter."""
+    from rdkit import Chem
+    from rdkit.Chem import Crippen, Descriptors, rdMolDescriptors
+    m = Chem.MolFromSmiles(parent_smiles)
+    if m is None:
+        return {}
+    return {
+        "mw": round(Descriptors.MolWt(m), 2),
+        "clogp": round(Crippen.MolLogP(m), 3),
+        "tpsa": round(rdMolDescriptors.CalcTPSA(m), 2),
+        "hbd": rdMolDescriptors.CalcNumHBD(m),
+        "hba": rdMolDescriptors.CalcNumHBA(m),
+        "rotatable_bonds": rdMolDescriptors.CalcNumRotatableBonds(m),
+        "heavy_atoms": m.GetNumHeavyAtoms(),
+        "formal_charge": Chem.GetFormalCharge(m),
+    }
+
+
+# ── amphiphilicity proxy (§20) ──────────────────────────────────────────────
+
+_HYDROPHOBIC = {"Hydrophobe", "LumpedHydrophobe"}
+_POLAR = {"Donor", "Acceptor", "PosIonizable", "NegIonizable"}
+
+
+def amphiphilicity_proxy(parent_smiles: str, cfg: ChemistryConfig | None = None
+                         ) -> float | None:
+    """Median spatial separation of hydrophobic and polar centroids.
+
+    Median across conformers, not the best one: picking the best conformer would
+    reward any molecule flexible enough to eventually look amphiphilic. The
+    balance term stops a near-entirely hydrophobic molecule scoring highly on the
+    strength of one distant oxygen.
+
+    Deterministic — ETKDG runs from a fixed seed, so the same SMILES always gives
+    the same number.
+    """
+    cfg = cfg or ChemistryConfig()
+    from rdkit import Chem, RDConfig
+    from rdkit.Chem import AllChem, ChemicalFeatures
+    import os
+
+    m = Chem.MolFromSmiles(parent_smiles)
+    if m is None:
+        return None
+    m = Chem.AddHs(m)
+    params = AllChem.ETKDGv3()
+    params.randomSeed = cfg.conformer_seed
+    params.useRandomCoords = True
+    if AllChem.EmbedMultipleConfs(m, numConfs=cfg.conformers_per_compound,
+                                  params=params) == 0:
+        return None
+
+    factory = ChemicalFeatures.BuildFeatureFactory(
+        os.path.join(RDConfig.RDDataDir, "BaseFeatures.fdef"))
+    feats = factory.GetFeaturesForMol(m)
+    hyd = [f for f in feats if f.GetFamily() in _HYDROPHOBIC]
+    pol = [f for f in feats if f.GetFamily() in _POLAR]
+    if not hyd or not pol:
+        return 0.0            # not amphiphilic; a real answer, not a failure
+    balance = 2 * min(len(hyd), len(pol)) / (len(hyd) + len(pol))
+
+    scores: list[float] = []
+    for conf in m.GetConformers():
+        cid = conf.GetId()
+        def centroid(fs):
+            pts = [f.GetPos(cid) for f in fs]
+            return (sum(p.x for p in pts) / len(pts), sum(p.y for p in pts) / len(pts),
+                    sum(p.z for p in pts) / len(pts))
+        h, p = centroid(hyd), centroid(pol)
+        pos = conf.GetPositions()
+        com = pos.mean(axis=0)
+        rg = math.sqrt(((pos - com) ** 2).sum(axis=1).mean())
+        if rg <= 0:
+            continue
+        scores.append(math.dist(h, p) / rg * balance)
+    return round(statistics.median(scores), 4) if scores else None
+
+
+# ── library assembly (§21) ──────────────────────────────────────────────────
+
+def _fingerprints(smiles: list[str]):
+    from rdkit import Chem
+    from rdkit.Chem import rdFingerprintGenerator
+    gen = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
+    out = []
+    for s in smiles:
+        m = Chem.MolFromSmiles(s)
+        out.append(gen.GetFingerprint(m) if m is not None else None)
+    return out
+
+
+def _maxmin(cands: list[Compound], k: int) -> list[Compound]:
+    """MaxMin diversity pick, so one scaffold family cannot fill an arm."""
+    from rdkit import DataStructs
+    if k >= len(cands):
+        return list(cands)
+    fps = _fingerprints([c.parent_smiles or c.smiles for c in cands])
+    idx = [i for i, f in enumerate(fps) if f is not None]
+    if not idx:
+        return cands[:k]
+    picked = [idx[0]]
+    while len(picked) < k and len(picked) < len(idx):
+        best, best_d = None, -1.0
+        for i in idx:
+            if i in picked:
+                continue
+            d = min(1.0 - DataStructs.TanimotoSimilarity(fps[i], fps[j]) for j in picked)
+            if d > best_d:
+                best, best_d = i, d
+        if best is None:
+            break
+        picked.append(best)
+    return [cands[i] for i in picked]
+
+
+def assemble_library(compounds: list[Compound], n: int,
+                     cfg: ChemistryConfig | None = None) -> list[Compound]:
+    """Three arms, so the enrichment hypothesis stays falsifiable (§21).
+
+    Every compound must carry provenance; anything without it is dropped here
+    rather than appearing in a screen with no traceable source.
+    """
+    cfg = cfg or ChemistryConfig()
+    pool = [c for c in compounds
+            if c.has_provenance and c.amphiphilicity_proxy is not None]
+    if not pool:
+        return []
+    arms = cfg.library_arms(min(n, len(pool)))
+
+    ranked = sorted(pool, key=lambda c: c.amphiphilicity_proxy, reverse=True)
+    # Enriched: diverse pick from the amphiphilic half, not simply the top slice.
+    top_half = ranked[:max(arms["enriched"], len(ranked) // 2)]
+    enriched = _maxmin(top_half, arms["enriched"])
+    taken = {id(c) for c in enriched}
+
+    bottom = [c for c in reversed(ranked) if id(c) not in taken]
+    counter = bottom[:arms["counter_hypothesis"]]
+    taken |= {id(c) for c in counter}
+
+    rest = [c for c in ranked if id(c) not in taken]
+    diverse = _maxmin(rest, arms["diverse_control"])
+
+    for c in enriched:
+        c.arm = LibraryArm.ENRICHED
+    for c in diverse:
+        c.arm = LibraryArm.DIVERSE_CONTROL
+    for c in counter:
+        c.arm = LibraryArm.COUNTER_HYPOTHESIS
+    return enriched + diverse + counter
+
+
+# ── runtime budget (§23) ────────────────────────────────────────────────────
+
+class RuntimeEstimate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    median_seconds_per_ligand: float
+    p90_seconds_per_ligand: float
+    effective_parallel_workers: int
+    remaining_seconds: float
+    estimated_n: int
+    clamped: bool
+    note: str = ""
+
+
+def estimate_screen_size(timings: list[float], remaining_seconds: float,
+                         workers: int, cfg: ChemistryConfig | None = None
+                         ) -> RuntimeEstimate:
+    """Size the screen from measured throughput, never from a guess.
+
+    A finished 180-compound screen beats a 1000-compound screen still running
+    during the demo, so the headroom factor is applied and the result is clamped.
+    """
+    cfg = cfg or ChemistryConfig()
+    if not timings or workers < 1 or remaining_seconds <= 0:
+        return RuntimeEstimate(median_seconds_per_ligand=0.0, p90_seconds_per_ligand=0.0,
+                               effective_parallel_workers=max(workers, 0),
+                               remaining_seconds=max(remaining_seconds, 0.0),
+                               estimated_n=cfg.fast_vina_min_n, clamped=True,
+                               note="no benchmark available; fell back to the configured minimum")
+    ordered = sorted(timings)
+    median = statistics.median(ordered)
+    p90 = ordered[min(len(ordered) - 1, int(math.ceil(0.9 * len(ordered)) - 1))]
+    raw = math.floor(remaining_seconds * workers / median * cfg.runtime_headroom)
+    n = max(cfg.fast_vina_min_n, min(cfg.fast_vina_max_n, raw))
+    return RuntimeEstimate(
+        median_seconds_per_ligand=round(median, 3),
+        p90_seconds_per_ligand=round(p90, 3),
+        effective_parallel_workers=workers,
+        remaining_seconds=round(remaining_seconds, 1),
+        estimated_n=n, clamped=(n != raw),
+        note=(f"benchmark supports {raw}; clamped to [{cfg.fast_vina_min_n}, "
+              f"{cfg.fast_vina_max_n}]" if n != raw else "within configured bounds"))
