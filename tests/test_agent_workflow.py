@@ -1031,6 +1031,35 @@ class BenchFlowExportTests(TempRunCase):
         }, 1)
         self.assertTrue(any("sequential" in e for e in errors))
 
+    def test_credential_scan_does_not_false_positive_on_ordinary_words(self):
+        """A bare "sk-" substring match fires on "risk-", "task-", "desk-".
+
+        Caught in practice: a run named "main-verify-biorisk" produced a trace
+        whose trace_id ("...biorisk-opentraces") contains the literal substring
+        "sk-" inside "risk-opentraces", failing validation on a run that leaked
+        nothing. The check must require a key-shaped tail, not just the prefix.
+        """
+        record = {
+            "schema_version": "0.3", "trace_id": "main-verify-biorisk-opentraces",
+            "agent": {"name": "a"}, "task": {}, "outcome": {"status": "success"},
+            "steps": [{"step_id": 1, "internal_event_id": "e"}],
+        }
+        errors = validate_record(record, 1)
+        self.assertFalse(
+            [e for e in errors if "credential" in e],
+            msg=f"false positive on an ordinary word: {errors}",
+        )
+
+    def test_credential_scan_still_catches_a_real_looking_key(self):
+        record = {
+            "schema_version": "0.3", "trace_id": "t",
+            "agent": {"name": "a"}, "task": {}, "outcome": {"status": "success"},
+            "steps": [{"step_id": 1, "internal_event_id": "e"}],
+            "leak": "token=sk-abcdefghijklmnopqrstuvwxyz",
+        }
+        errors = validate_record(record, 1)
+        self.assertTrue(any("credential" in e for e in errors))
+
     def test_no_credentials_appear_in_the_exported_trace(self):
         orchestrator = self._completed_run("bf-clean")
         path = export_trace(orchestrator.store)
