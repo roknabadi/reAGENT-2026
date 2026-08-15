@@ -1,8 +1,18 @@
-"""Typed contracts for the TF-Mediator agent workflow.
+"""Typed contracts for the target-discovery agent workflow.
 
 Every stage boundary is one of these models. No undocumented dictionaries move
 between stages: the filesystem is the source of truth, and these are the shapes
 written to and read back from it.
+
+The vocabulary here is deliberately target-agnostic: a run reasons about a
+*target* gene and a *partner* gene, and says what kind of thing each one is in
+free text (`target_class` / `partner_class`) rather than in the type system. A
+transcription factor paired with a Mediator subunit is one test case for that
+shape, not its definition; a kinase and its substrate use the same models.
+
+Schema 1.1 renamed the TF/Mediator-specific field names. Every old name is
+still accepted on input (via `AliasChoices`) and still readable as a property,
+so bundles written against schema 1.0 load unchanged.
 """
 
 from __future__ import annotations
@@ -11,9 +21,16 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 
 class Stage(StrEnum):
@@ -67,6 +84,18 @@ class Base(BaseModel):
     """Strict base: unknown keys are an error, not a silent pass-through."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class RenamedBase(Base):
+    """Base for the models whose TF/Mediator field names were generalised.
+
+    `populate_by_name=True` means the new canonical field name constructs the
+    model just as well as the old key does, so `AliasChoices` widens what is
+    accepted without ever narrowing it. `extra="forbid"` is restated rather
+    than inherited so the strictness is visible at the point it applies.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
 class SourceRecord(Base):
@@ -139,8 +168,13 @@ class DependencyEvidence(Base):
     source_id: str
 
 
-class MediatorEvidence(Base):
-    """Support for a TF-Mediator subunit relationship.
+class InteractionEvidence(RenamedBase):
+    """Support for a physical relationship between a target and a partner protein.
+
+    A transcription factor and a Mediator subunit are one such pair; so are a
+    kinase and its substrate. The models say nothing about which, and the
+    optional `target_class` / `partner_class` on `CandidateHypothesis` are where
+    a run records what kind of pair it is looking at.
 
     `interaction_support` is deliberately nullable: an absent value means the
     connection is unsupported, and it is never read as a zero that averages away.
@@ -151,28 +185,36 @@ class MediatorEvidence(Base):
     or screen against. It mirrors `MediatorLink` in
     `src/dependency_scout/models.py` so both halves of the repo mean the same
     thing by "direct".
+
+    Formerly `MediatorEvidence`, which remains as a module-level alias.
     """
 
     schema_version: str = SCHEMA_VERSION
-    transcription_factor: str
-    mediator_subunit: str
+    target_gene: str = Field(
+        validation_alias=AliasChoices("target_gene", "transcription_factor")
+    )
+    partner_gene: str = Field(
+        validation_alias=AliasChoices("partner_gene", "mediator_subunit")
+    )
     interaction_support: float | None = Field(default=None, ge=0, le=1)
     interaction_type: Literal["direct_binding", "complex_member", "genetic", "inferred"] | None = None
     assay: str | None = None
     interpretation: Interpretation | None = None
     interacting_region_mapped: bool = False
-    tf_region: str | None = None
-    """Named region, e.g. "activation domain, residues 374-384"."""
+    target_region: str | None = Field(
+        default=None, validation_alias=AliasChoices("target_region", "tf_region")
+    )
+    """Named region on the target, e.g. "activation domain, residues 374-384"."""
     evidence_ids: list[str] = Field(default_factory=list)
     source_id: str | None = None
     limitations: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def mapped_region_needs_direct_evidence(self) -> MediatorEvidence:
+    def mapped_region_needs_direct_evidence(self) -> InteractionEvidence:
         if self.interacting_region_mapped:
-            if not self.tf_region:
+            if not self.target_region:
                 raise ValueError(
-                    "interacting_region_mapped requires tf_region to name the region"
+                    "interacting_region_mapped requires target_region to name the region"
                 )
             if self.interaction_type != "direct_binding":
                 raise ValueError(
@@ -196,35 +238,115 @@ class MediatorEvidence(Base):
         """Only a supported contact with a mapped region is worth modelling."""
         return self.is_supported and self.interacting_region_mapped
 
+    # Read-only views under the schema-1.0 names. A field and a property cannot
+    # share a name, which is why the fields above were renamed rather than
+    # duplicated; writes must go to the canonical field.
 
-class StructuralTractability(Base):
+    @property
+    def transcription_factor(self) -> str:
+        """Deprecated view of `target_gene`."""
+        return self.target_gene
+
+    @property
+    def mediator_subunit(self) -> str:
+        """Deprecated view of `partner_gene`."""
+        return self.partner_gene
+
+    @property
+    def tf_region(self) -> str | None:
+        """Deprecated view of `target_region`."""
+        return self.target_region
+
+
+#: Schema-1.0 name. Kept so existing imports and isinstance checks keep working.
+MediatorEvidence = InteractionEvidence
+
+
+class StructuralTractability(RenamedBase):
     """What is known about modelling this interface, before any prediction runs."""
 
     schema_version: str = SCHEMA_VERSION
     experimental_structure_id: str | None = None
-    tf_uniprot: str | None = None
-    mediator_uniprot: str | None = None
-    tf_sequence: str | None = None
-    mediator_sequence: str | None = None
+    target_uniprot: str | None = Field(
+        default=None, validation_alias=AliasChoices("target_uniprot", "tf_uniprot")
+    )
+    partner_uniprot: str | None = Field(
+        default=None, validation_alias=AliasChoices("partner_uniprot", "mediator_uniprot")
+    )
+    target_sequence: str | None = Field(
+        default=None, validation_alias=AliasChoices("target_sequence", "tf_sequence")
+    )
+    partner_sequence: str | None = Field(
+        default=None, validation_alias=AliasChoices("partner_sequence", "mediator_sequence")
+    )
     domain_bounded: bool | None = None
     notes: list[str] = Field(default_factory=list)
 
+    # Read-only views under the schema-1.0 names.
 
-class CandidateHypothesis(Base):
-    """A disease-TF-Mediator triple with everything known about it."""
+    @property
+    def tf_uniprot(self) -> str | None:
+        """Deprecated view of `target_uniprot`."""
+        return self.target_uniprot
+
+    @property
+    def mediator_uniprot(self) -> str | None:
+        """Deprecated view of `partner_uniprot`."""
+        return self.partner_uniprot
+
+    @property
+    def tf_sequence(self) -> str | None:
+        """Deprecated view of `target_sequence`."""
+        return self.target_sequence
+
+    @property
+    def mediator_sequence(self) -> str | None:
+        """Deprecated view of `partner_sequence`."""
+        return self.partner_sequence
+
+
+class CandidateHypothesis(RenamedBase):
+    """A disease-target-partner triple with everything known about it.
+
+    `target_class` and `partner_class` are free text ("transcription factor",
+    "Mediator subunit", "kinase") so a run can say what kind of pair it is
+    working on without the code having to know. Nothing branches on them; they
+    are there so a report can be read by a biologist.
+    """
 
     schema_version: str = SCHEMA_VERSION
     candidate_id: str
     disease_context: str
-    transcription_factor: str
-    mediator_subunit: str
+    target_gene: str = Field(
+        validation_alias=AliasChoices("target_gene", "transcription_factor")
+    )
+    partner_gene: str = Field(
+        validation_alias=AliasChoices("partner_gene", "mediator_subunit")
+    )
+    target_class: str | None = None
+    """What kind of target this is, e.g. "transcription factor". Free text."""
+    partner_class: str | None = None
+    """What kind of partner this is, e.g. "Mediator subunit". Free text."""
     hypothesis: str
     dependency: DependencyEvidence
-    mediator: MediatorEvidence
+    mediator: InteractionEvidence
+    """The target-partner interaction evidence. Field name kept from schema 1.0."""
     tractability: StructuralTractability = Field(default_factory=StructuralTractability)
     normal_cell_evidence_ids: list[str] = Field(default_factory=list)
     contradicting_evidence_ids: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
+
+    # Read-only views under the schema-1.0 names.
+
+    @property
+    def transcription_factor(self) -> str:
+        """Deprecated view of `target_gene`."""
+        return self.target_gene
+
+    @property
+    def mediator_subunit(self) -> str:
+        """Deprecated view of `partner_gene`."""
+        return self.partner_gene
 
 
 class ScoreComponent(Base):
@@ -310,14 +432,33 @@ class HumanCheckpoint(Base):
         return self
 
 
+#: Schema-1.0 chain roles, mapped onto their target-agnostic replacements.
+LEGACY_CHAIN_ROLES: dict[str, str] = {
+    "transcription_factor": "target",
+    "mediator_subunit": "partner",
+}
+
+
 class ChainSpec(Base):
-    """One chain handed to a structure predictor."""
+    """One chain handed to a structure predictor.
+
+    The role says which side of the pair a chain is, not what kind of protein
+    it is; the biology lives in `CandidateHypothesis.target_class`.
+    """
 
     chain_id: str
-    role: Literal["transcription_factor", "mediator_subunit"]
+    role: Literal["target", "partner"]
     sequence: str
     uniprot: str | None = None
     region: str | None = None
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def accept_legacy_roles(cls, value: Any) -> Any:
+        """Translate schema-1.0 role names so stored requests still load."""
+        if isinstance(value, str):
+            return LEGACY_CHAIN_ROLES.get(value, value)
+        return value
 
     @model_validator(mode="after")
     def sequence_is_plausible_protein(self) -> ChainSpec:

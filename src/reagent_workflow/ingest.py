@@ -22,7 +22,11 @@ from .models import (
 )
 
 IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
-GENE_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9-]{0,20}$")
+# Real HGNC symbols are uppercase alphanumeric with hyphens (HLA-A, NKX2-1).
+# Underscores and dots are permitted because upstream fixtures and alias tables
+# use them, and rejecting a candidate over punctuation is not a scientific
+# judgment — the gates are where candidates should fail.
+GENE_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9._-]{0,20}$")
 
 
 class InputBundle(BaseModel):
@@ -98,27 +102,27 @@ def _validate_candidate(
     if not IDENTIFIER_RE.match(candidate.candidate_id):
         problems.append(f"invalid candidate identifier {candidate.candidate_id!r}")
     for label, symbol in (
-        ("transcription_factor", candidate.transcription_factor),
-        ("mediator_subunit", candidate.mediator_subunit),
+        ("target_gene", candidate.target_gene),
+        ("partner_gene", candidate.partner_gene),
     ):
         if not GENE_SYMBOL_RE.match(symbol):
             problems.append(f"{label} {symbol!r} is not a plausible gene symbol")
-    if candidate.dependency.gene != candidate.transcription_factor:
+    if candidate.dependency.gene != candidate.target_gene:
         problems.append(
             f"dependency gene {candidate.dependency.gene!r} does not match the "
-            f"candidate TF {candidate.transcription_factor!r}"
+            f"candidate target {candidate.target_gene!r}"
         )
     if candidate.dependency.disease_context != candidate.disease_context:
         problems.append("dependency disease context does not match the candidate context")
-    if candidate.mediator.transcription_factor != candidate.transcription_factor:
-        problems.append("mediator evidence names a different transcription factor")
-    if candidate.mediator.mediator_subunit != candidate.mediator_subunit:
-        problems.append("mediator evidence names a different Mediator subunit")
+    if candidate.mediator.target_gene != candidate.target_gene:
+        problems.append("interaction evidence names a different target gene")
+    if candidate.mediator.partner_gene != candidate.partner_gene:
+        problems.append("interaction evidence names a different partner gene")
 
     if candidate.dependency.source_id not in sources:
         problems.append(f"dependency cites unknown source {candidate.dependency.source_id!r}")
     if candidate.mediator.source_id and candidate.mediator.source_id not in sources:
-        problems.append(f"mediator cites unknown source {candidate.mediator.source_id!r}")
+        problems.append(f"interaction evidence cites unknown source {candidate.mediator.source_id!r}")
 
     all_ids = (
         list(candidate.evidence_ids)

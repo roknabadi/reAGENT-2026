@@ -10,8 +10,12 @@ Contracts used here were read off the installed packages, not guessed:
   ``esmfold2-prediction``
 
 Model roles are enforced by ``StructuralModelRequest``: Boltz2 predicts the
-TF-Mediator complex, ESMFold2 checks monomers or structured domains. ESMFold2 is
-never used as an interface predictor.
+target-partner complex, ESMFold2 checks monomers or structured domains. ESMFold2
+is never used as an interface predictor.
+
+The two chains carry generic roles — ``target`` and ``partner`` — because this
+stage is not specific to any one class of target. A transcription factor bound
+to a Mediator subunit is one test case, not the definition of the pipeline.
 
 Nothing here dispatches a paid job unless a human has both resolved the hero
 checkpoint and explicitly enabled live execution.
@@ -95,6 +99,12 @@ def _request_hash(
 
     Keyed on what changes the answer — model, chain sequences and roles, config,
     seed — so an identical request reuses its cached result.
+
+    ``chain.role`` is part of the key, so changing the role vocabulary changes
+    every address. That is intended: the cache must not serve a payload built
+    under a different chain layout. It does mean the shipped fixture cache in
+    ``fixtures/structure_cache/`` is renamed by
+    ``scripts/build_structure_fixtures.py`` whenever the roles change.
     """
     return content_hash({
         "model": model,
@@ -116,26 +126,26 @@ def build_requests(
 ) -> list[StructuralModelRequest]:
     """Build the Boltz2 complex job plus one ESMFold2 monomer check per chain.
 
-    Returns an empty list when sequences are missing, or when the TF-Mediator
+    Returns an empty list when sequences are missing, or when the target-partner
     contact has no mapped interacting region. Modelling an unmapped association
     would manufacture an interface the evidence does not support, which is the
     failure mode PROJECT.md names.
     """
     tract = candidate.tractability
-    if not (tract.tf_sequence and tract.mediator_sequence):
+    if not (tract.target_sequence and tract.partner_sequence):
         return []
     if config.gates.require_mapped_interacting_region and not (
         candidate.mediator.ready_for_structural_modeling
     ):
         return []
 
-    tf_chain = ChainSpec(
-        chain_id="A", role="transcription_factor",
-        sequence=tract.tf_sequence, uniprot=tract.tf_uniprot,
+    target_chain = ChainSpec(
+        chain_id="A", role="target",
+        sequence=tract.target_sequence, uniprot=tract.target_uniprot,
     )
-    med_chain = ChainSpec(
-        chain_id="B", role="mediator_subunit",
-        sequence=tract.mediator_sequence, uniprot=tract.mediator_uniprot,
+    partner_chain = ChainSpec(
+        chain_id="B", role="partner",
+        sequence=tract.partner_sequence, uniprot=tract.partner_uniprot,
     )
 
     device = "modal" if config.allow_live_modal else "cpu"
@@ -149,15 +159,19 @@ def build_requests(
             model="boltz2",
             proto_tool_key=BOLTZ2_TOOL_KEY,
             purpose="complex_interface",
-            chains=[tf_chain, med_chain],
+            chains=[target_chain, partner_chain],
             config=boltz_config,
             seed=seed,
             device=device,
-            input_hash=_request_hash("boltz2", [tf_chain, med_chain], boltz_config, seed),
+            input_hash=_request_hash(
+                "boltz2", [target_chain, partner_chain], boltz_config, seed
+            ),
             human_approval_checkpoint_id=checkpoint_id,
         )
     ]
-    for chain in (tf_chain, med_chain):
+    for chain in (target_chain, partner_chain):
+        # Request ids stay derived from the role, so they remain deterministic
+        # for a given candidate: "-esmfold2-target" and "-esmfold2-partner".
         requests.append(StructuralModelRequest(
             request_id=f"{candidate.candidate_id}-esmfold2-{chain.role}",
             candidate_id=candidate.candidate_id,

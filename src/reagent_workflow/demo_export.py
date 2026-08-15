@@ -14,6 +14,14 @@ Two rules make it safe to render without defensive code everywhere:
    the pipeline. Denormalised on purpose: a candidate carries its own source
    URLs and claims so the UI never joins tables.
 
+The vocabulary is target-agnostic: a candidate names a `target_gene` and a
+`partner_gene`, not a transcription factor and a Mediator subunit. TF-Mediator
+is the test case the pipeline is being exercised on, not what it is limited to.
+Schema 1.1 renames those fields and keeps the old names as **deprecated
+aliases**, populated with identical values so the UI can migrate on its own
+schedule. The aliases are marked at each declaration and will be dropped once
+the screens read the new names.
+
 The `compounds` block is Vraj's slot (TASKS.md #5, #6). It is emitted with
 `status` and an empty `poses` list so the shape exists before the docking run
 does, and screen #13 can be built against it today.
@@ -24,7 +32,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .models import (
     CandidateScorecard,
@@ -37,7 +45,7 @@ from .models import (
 from .scoring import rank
 from .store import RunStore, sha256_file, utc_now
 
-DEMO_SCHEMA_VERSION = "1.0"
+DEMO_SCHEMA_VERSION = "1.1"
 
 DOCKING_CAVEAT = (
     "A docking score is not a binding affinity. Poses are computational "
@@ -124,8 +132,12 @@ class DemoCandidate(DemoBase):
     candidate_id: str
     rank: int | None = None
     status: str  # "hero" | "eligible" | "rejected"
-    transcription_factor: str
-    mediator_subunit: str
+    target_gene: str
+    partner_gene: str
+    target_class: str | None = None
+    """Free text, e.g. "transcription factor". Absent when uncharacterised."""
+    partner_class: str | None = None
+    """Free text, e.g. "Mediator subunit". Absent when uncharacterised."""
     disease_context: str
     hypothesis: str | None = None
 
@@ -136,7 +148,7 @@ class DemoCandidate(DemoBase):
 
     involvement: str = "unknown"
     interacting_region_mapped: bool = False
-    tf_region: str | None = None
+    target_region: str | None = None
     interface_tractability: str = "unknown"
     screening_concerns: list[str] = Field(default_factory=list)
     calibration_only: bool = False
@@ -148,6 +160,22 @@ class DemoCandidate(DemoBase):
     evidence_ids: list[str] = Field(default_factory=list)
     contradicting_evidence_ids: list[str] = Field(default_factory=list)
     uncertainty: list[str] = Field(default_factory=list)
+
+    # -- deprecated aliases (schema 1.1) ------------------------------------
+    # The UI reads these names today, so they stay in the payload carrying the
+    # same values as the fields above. Never set them by hand: the validator
+    # below mirrors them, so the pair cannot drift. Delete once the screens
+    # read target_gene / partner_gene / target_region.
+    transcription_factor: str = ""
+    mediator_subunit: str = ""
+    tf_region: str | None = None
+
+    @model_validator(mode="after")
+    def _mirror_deprecated_aliases(self) -> DemoCandidate:
+        self.transcription_factor = self.target_gene
+        self.mediator_subunit = self.partner_gene
+        self.tf_region = self.target_region
+        return self
 
 
 class DemoStructureResult(DemoBase):
@@ -167,7 +195,7 @@ class DemoStructure(DemoBase):
 
     status: str = "none"
     candidate_id: str | None = None
-    tf_region: str | None = None
+    target_region: str | None = None
     interface_residues: dict[str, list[int]] = Field(default_factory=dict)
     results: list[DemoStructureResult] = Field(default_factory=list)
     comparison_verdict: str | None = None
@@ -175,6 +203,16 @@ class DemoStructure(DemoBase):
     disagreements: list[str] = Field(default_factory=list)
     confidence_delta: dict[str, float] = Field(default_factory=dict)
     caveats: list[str] = Field(default_factory=lambda: [PREDICTION_CAVEAT])
+
+    # Deprecated alias (schema 1.1) for `target_region`, kept for the UI. This
+    # model is filled in by assignment rather than at construction, so
+    # `set_target_region` writes both instead of a mirroring validator.
+    tf_region: str | None = None
+
+    def set_target_region(self, region: str | None) -> None:
+        """Set the mapped region and its deprecated alias together."""
+        self.target_region = region
+        self.tf_region = region
 
 
 class DemoPose(DemoBase):
@@ -211,7 +249,14 @@ class DemoCheckpoint(DemoBase):
 
 
 class DemoChainLink(DemoBase):
-    """One hop of screen #14: disease → TF → contact → interface → compounds."""
+    """One hop of screen #14: disease → target → contact → interface → compounds.
+
+    `step` is one of "disease", "target", "partner_contact", "interface",
+    "compounds" — five hops, always in that order. Schema 1.1 renamed the second
+    and third steps (from "transcription_factor" and "mediator_contact"); unlike
+    the field renames there is no alias, because a duplicated hop would render
+    as a duplicated row.
+    """
 
     step: str
     value: str
@@ -221,12 +266,22 @@ class DemoChainLink(DemoBase):
 
 class DemoSummary(DemoBase):
     disease_context: str | None = None
-    transcription_factor: str | None = None
-    mediator_subunit: str | None = None
+    target_gene: str | None = None
+    partner_gene: str | None = None
     hypothesis: str | None = None
     confidence: str = "low"
     chain: list[DemoChainLink] = Field(default_factory=list)
     headline_limitation: str | None = None
+
+    # Deprecated aliases (schema 1.1), mirrored below. See DemoCandidate.
+    transcription_factor: str | None = None
+    mediator_subunit: str | None = None
+
+    @model_validator(mode="after")
+    def _mirror_deprecated_aliases(self) -> DemoSummary:
+        self.transcription_factor = self.target_gene
+        self.mediator_subunit = self.partner_gene
+        return self
 
 
 class DemoOutcome(DemoBase):
@@ -342,8 +397,11 @@ def _candidate_row(
         candidate_id=candidate.candidate_id,
         rank=rank_index,
         status=status,
-        transcription_factor=candidate.transcription_factor,
-        mediator_subunit=candidate.mediator_subunit,
+        # The deprecated aliases are filled in by DemoCandidate's validator.
+        target_gene=candidate.target_gene,
+        partner_gene=candidate.partner_gene,
+        target_class=candidate.target_class,
+        partner_class=candidate.partner_class,
         disease_context=candidate.disease_context,
         hypothesis=candidate.hypothesis,
         score=scorecard.total_score if scorecard else None,
@@ -370,7 +428,7 @@ def _candidate_row(
         ),
         involvement=_involvement(mediator),
         interacting_region_mapped=mediator.interacting_region_mapped,
-        tf_region=mediator.tf_region,
+        target_region=mediator.target_region,
         interface_tractability=(
             "folded_domain" if candidate.tractability.domain_bounded
             else "unknown"
@@ -405,7 +463,7 @@ def _build_chain(
             detail="Selective dependency context.",
         ),
         DemoChainLink(
-            step="transcription_factor", value=hero.transcription_factor,
+            step="target", value=hero.target_gene,
             status="established",
             detail=(
                 f"median gene effect {hero.dependency.median_target_effect:.2f} "
@@ -413,11 +471,11 @@ def _build_chain(
             ),
         ),
         DemoChainLink(
-            step="mediator_contact",
-            value=f"{hero.transcription_factor}-{hero.mediator_subunit}",
+            step="partner_contact",
+            value=f"{hero.target_gene}-{hero.partner_gene}",
             status="established" if mediator.interacting_region_mapped else "missing",
             detail=(
-                f"mapped region: {mediator.tf_region}"
+                f"mapped region: {mediator.target_region}"
                 if mediator.interacting_region_mapped
                 else "no interacting region mapped"
             ),
@@ -494,7 +552,7 @@ def build_demo_payload(orchestrator: Any) -> DemoPayload:
         structure.status = "predicted"
     hero = candidates.get(state.hero_candidate_id or "")
     if hero is not None:
-        structure.tf_region = hero.mediator.tf_region
+        structure.set_target_region(hero.mediator.target_region)
 
     # -- compounds: Vraj's slot, shape present before the run exists --------
     compounds = DemoCompounds(
@@ -577,8 +635,9 @@ def build_demo_payload(orchestrator: Any) -> DemoPayload:
 
     summary = DemoSummary(
         disease_context=hero.disease_context if hero else None,
-        transcription_factor=hero.transcription_factor if hero else None,
-        mediator_subunit=hero.mediator_subunit if hero else None,
+        # The deprecated aliases are filled in by DemoSummary's validator.
+        target_gene=hero.target_gene if hero else None,
+        partner_gene=hero.partner_gene if hero else None,
         hypothesis=hero.hypothesis if hero else None,
         confidence=report.confidence if report else "low",
         chain=_build_chain(report, hero, structure, compounds),
