@@ -1,0 +1,21 @@
+{
+  "partner_gene": "CREBBP",
+  "tractability": "short_linear_motif",
+  "calibration_only": true,
+  "interacting_region_mapped": true,
+  "tf_region": "FOXO4 conserved region 3 (CR3), the acidic transactivation domain; engages the MLL and c-Myb sites of the CBP KIX domain",
+  "claims": [
+    {
+      "statement": "The FOXO4 transactivation domain (CR3) binds two hydrophobic pockets in the KIX domain of CBP, at the previously characterised MLL and c-Myb sites. FOXO4-CR3 shows substantially higher affinity for CBP-KIX than its homolog FOXO3a.",
+      "support": "direct_experimental",
+      "citations": ["https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12698673/"],
+      "note": "Retrieved via Paperclip 2026-08-15. The KIX domain reference structure is PDB 2AGH; CBP-KIX is a globular three-helix domain with two short 3-10 helices."
+    },
+    {
+      "statement": "CBP acts as a general coactivator bridging DNA-bound activators to the RNA polymerase II transcription machinery, through multiple specialised interaction domains (RID, two TAZ domains, KIX, HAT, IBiD).",
+      "support": "direct_experimental",
+      "citations": ["https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12698673/"],
+      "note": "Establishes that KIX is a coactivator-bridging module mechanistically analogous to a Mediator Tail subunit, which is why this is a generalisation control."
+    }
+  ]
+}

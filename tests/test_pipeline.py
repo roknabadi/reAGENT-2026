@@ -120,6 +120,22 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("SELECTIVE_TF", picked)
         self.assertIn("calibration control", render_markdown(sl))
 
+    def test_the_contract_is_not_mediator_specific(self):
+        """The pitch claims the pipeline is general across target classes. Sasha's
+        cross-complex validation list (team/VALIDATION_TARGETS.md) tests that.
+        A CBP/KIX contact must type identically to a Mediator one, with no schema
+        change - only the type's *name* is Mediator-specific, not its behaviour."""
+        kix = MediatorLink.model_validate_json(
+            Path("examples/coactivator_link_foxo4_kix.json").read_text(encoding="utf-8"))
+        self.assertEqual(kix.partner_gene, "CREBBP")  # not a Mediator subunit
+        self.assertIs(kix.involvement, Involvement.DIRECT)
+        self.assertIs(kix.tractability, InterfaceTractability.SHORT_LINEAR_MOTIF)
+        self.assertTrue(kix.ready_for_structural_modeling)
+        # It is a generalisation control, so it must never reach a shortlist.
+        ok, reason = RankedCandidate(gene="FOXO4", mediator=kix).shortlistable
+        self.assertFalse(ok)
+        self.assertIn("calibration control", reason)
+
     def test_elk1_med23_positive_control_classifies_as_direct(self):
         """The known-good case must come out 'direct'. If this breaks, the gate is
         miscalibrated and would reject a real structurally mapped contact."""
