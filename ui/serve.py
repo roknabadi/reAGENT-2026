@@ -29,20 +29,18 @@ PAPERCLIP = shutil.which("paperclip") or str(ROOT / ".venv/bin/paperclip")
 DATA = json.loads((UI / "data.json").read_text(encoding="utf-8"))
 
 
-def paperclip_search(query: str, n: int = 6) -> list[dict]:
-    """Real Paperclip call. Returns [] and lets the caller report the failure."""
-    try:
-        out = subprocess.run(
-            [PAPERCLIP, "search", "-s", "pmc", query, "-n", str(n)],
-            capture_output=True, text=True, timeout=90)
-    except Exception:
-        return []
-    # Parse defensively: the CLI's metadata line has already changed shape once
-    # (it now carries the journal where it used to say PMC), and a brittle parser
-    # silently reports "no papers found", which reads as a real null result.
+def _parse_search(stdout: str) -> list[dict]:
+    """Pull papers out of `paperclip search` output.
+
+    Kept separate from the subprocess call so it can be tested without the CLI.
+    Parse defensively: this format has already changed once — the metadata line
+    now carries the journal where it used to read PMC — and the previous parser
+    matched that literal, dropped every paper, and reported "nothing found".
+    On screen that is indistinguishable from a real null result.
+    """
     ID = re.compile(r"\b((?:PMC|bio_|med_|arx_|tri_|fda_)[\w.]+)\b")
     papers, cur = [], None
-    for raw in out.stdout.splitlines():
+    for raw in stdout.splitlines():
         line = raw.strip()
         if not line:
             continue
@@ -54,16 +52,28 @@ def paperclip_search(query: str, n: int = 6) -> list[dict]:
             continue
         if cur is None:
             continue
-        if not cur["id"] and (hit := ID.search(line)) and not line.startswith("http"):
-            cur["id"] = hit.group(1)
-        elif line.startswith("http") and not cur["url"]:
-            cur["url"] = line
+        if line.startswith("http"):
+            if not cur["url"]:
+                cur["url"] = line
         elif line.startswith('"'):
             cur["abstract"] = line.strip('"')
+        elif not cur["id"] and (hit := ID.search(line)):
+            cur["id"] = hit.group(1)
     if cur:
         papers.append(cur)
-    # Keep anything with a title; an id-less hit is still a real retrieval.
+    # An id-less hit is still a real retrieval; only a title is required.
     return [p for p in papers if p.get("title")]
+
+
+def paperclip_search(query: str, n: int = 6) -> list[dict]:
+    """Real Paperclip call. Returns [] and lets the caller report the failure."""
+    try:
+        out = subprocess.run(
+            [PAPERCLIP, "search", "-s", "pmc", query, "-n", str(n)],
+            capture_output=True, text=True, timeout=90)
+    except Exception:
+        return []
+    return _parse_search(out.stdout)
 
 
 class Handler(SimpleHTTPRequestHandler):

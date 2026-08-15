@@ -17,6 +17,7 @@ import urllib.request
 from dependency_scout.depmap import analyze_gene_effects, load_tf_universe
 from dependency_scout.models import MediatorLink, RankedCandidate
 from dependency_scout.ranking import gate, rank_all
+from dependency_scout.provenance import InputFile, RunProvenance
 from dependency_scout.report import build_shortlist
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -310,8 +311,19 @@ def main() -> int:
               f"{predicted[gene]['ordered_fraction']:.0%} ordered")
     print(f"predicted monomers: {len(predicted)}")
 
+    prov = RunProvenance(
+        inputs=[InputFile.pin("gene_effect", ge), InputFile.pin("models", models),
+                InputFile.pin("tf_universe", tf_list)]
+        + ([InputFile.pin("structure_cif", cif)] if cif.exists() else []),
+        notes=["landscape, candidates and gates are computed and byte-reproducible",
+               "papers shown in the interface are retrieved live and are not pinned"],
+    )
+    print("input fingerprint:", prov.fingerprint[:16])
+
     UI.mkdir(exist_ok=True)
     payload = {
+        "provenance": prov.model_dump(mode="json"),
+        "fingerprint": prov.fingerprint,
         "generated_from": "DepMap Public 24Q2 Chronos; Lambert et al. TF catalogue v1.01",
         "landscape_context": LANDSCAPE_CONTEXT,
         "thresholds": thresholds(),
