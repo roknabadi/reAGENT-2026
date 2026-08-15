@@ -298,7 +298,10 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
 
 #v-structure{grid-template-columns:1fr 300px}
 #wrap3d{position:relative;overflow:hidden}
-#canvas3d{display:block;width:100%;height:100%;cursor:grab}
+/* Out of flow: a canvas keeps its backing-store width as an intrinsic size, which
+   props its grid column open and stops the panel ever shrinking. Growing worked,
+   shrinking did not, and the buffer stayed stale at the old width. */
+#canvas3d{display:block;position:absolute;inset:0;width:100%;height:100%;cursor:grab}
 #canvas3d:active{cursor:grabbing}
 .leg{position:absolute;left:18px;top:16px;font-size:12px;background:var(--glass);
   backdrop-filter:blur(9px);border:1px solid var(--line);border-radius:var(--r);padding:11px 13px}
@@ -709,7 +712,11 @@ function setStage({id,state,detail,note}){
   apply(localStorage.dsSrc === 'off');
   btn.onclick = () => { const off = body.dataset.src !== 'off';
     localStorage.dsSrc = off ? 'off' : 'on'; apply(off);
-    setTimeout(()=>{ sizePlot(); draw(); renderStructure?.(); }, 340); };
+    // Resize the 3D panel explicitly too. A ResizeObserver alone is not enough:
+    // shrinking the canvas is itself the observation that causes the shrink, and
+    // the browser drops that second notification to break the loop. Growing was
+    // delivered, shrinking was not, so the buffer stayed stale at the old width.
+    setTimeout(()=>{ sizePlot(); draw(); glc?.size(); renderStructure?.(); }, 340); };
 }
 function addPaper(p){
   const box=$('#papers'); box.querySelector('.empty')?.remove();
