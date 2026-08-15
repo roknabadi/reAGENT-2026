@@ -68,7 +68,7 @@
       "evidence_id": "EV-INT-A1",
       "evidence_type": "interaction",
       "interpretation": "observed",
-      "claim": "TFDEMOA co-precipitates with the Mediator subunit MEDDEMO1 in a synthetic pulldown fixture, mapped to the TFDEMOA activation domain.",
+      "claim": "Crosslinking mass spectrometry in a synthetic fixture places TFDEMOA residues 22-33 in direct contact with the MEDDEMO1 core, identifying the interacting region rather than only the association.",
       "subject": "TFDEMOA-MEDDEMO1",
       "value": 0.82,
       "unit": "support_fraction",
@@ -76,8 +76,64 @@
       "source_id": "SRC-FIX-INT",
       "limitations": [
         "Synthetic record.",
-        "Co-precipitation reports association, not direct contact."
+        "A mapped crosslink is not a solved interface structure."
       ]
+    },
+    {
+      "evidence_id": "EV-INT-E1",
+      "evidence_type": "interaction",
+      "interpretation": "observed",
+      "claim": "TFDEMOE co-precipitates with MEDDEMO1 in a synthetic whole-protein pull-down. The pull-down used full-length protein and identifies no interacting region.",
+      "subject": "TFDEMOE-MEDDEMO1",
+      "value": 0.79,
+      "unit": "support_fraction",
+      "supports": true,
+      "source_id": "SRC-FIX-INT",
+      "limitations": [
+        "Synthetic record.",
+        "A whole-protein pull-down reports association, not a contact point.",
+        "No interacting region is mapped, so there is nothing to model or screen."
+      ]
+    },
+    {
+      "evidence_id": "EV-EXP-F1",
+      "evidence_type": "expression",
+      "interpretation": "observed",
+      "claim": "TFDEMOF is strongly overexpressed in synthetic colorectal models relative to matched normal tissue (log2 fold change 4.2).",
+      "subject": "TFDEMOF",
+      "value": 4.2,
+      "unit": "log2_fold_change",
+      "supports": true,
+      "source_id": "SRC-FIX-NORM",
+      "limitations": [
+        "Synthetic values.",
+        "Overexpression is not evidence of dependency."
+      ]
+    },
+    {
+      "evidence_id": "EV-DEP-F1",
+      "evidence_type": "dependency",
+      "interpretation": "computed",
+      "claim": "Despite strong overexpression, TFDEMOF shows no dependency signal in synthetic colorectal models (median gene effect -0.18, indistinguishable from other lineages at -0.11).",
+      "subject": "TFDEMOF",
+      "value": -0.18,
+      "unit": "gene_effect_score",
+      "supports": false,
+      "source_id": "SRC-FIX-DEP",
+      "contradicts": ["EV-EXP-F1"],
+      "limitations": ["Synthetic values."]
+    },
+    {
+      "evidence_id": "EV-DEP-E1",
+      "evidence_type": "dependency",
+      "interpretation": "computed",
+      "claim": "TFDEMOE shows a strong selective dependency in synthetic melanoma models (median gene effect -0.98 versus -0.15 elsewhere).",
+      "subject": "TFDEMOE",
+      "value": -0.98,
+      "unit": "gene_effect_score",
+      "supports": true,
+      "source_id": "SRC-FIX-DEP",
+      "limitations": ["Synthetic values."]
     },
     {
       "evidence_id": "EV-NORM-A1",
@@ -190,16 +246,16 @@
     {
       "evidence_id": "EV-INT-D1",
       "evidence_type": "interaction",
-      "interpretation": "inference",
-      "claim": "TFDEMOD is reported to associate with MEDDEMO1 in a synthetic genetic-interaction fixture.",
+      "interpretation": "observed",
+      "claim": "A synthetic peptide array maps TFDEMOD residues 41-52 as the fragment retained by MEDDEMO1.",
       "subject": "TFDEMOD-MEDDEMO1",
-      "value": 0.45,
+      "value": 0.55,
       "unit": "support_fraction",
       "supports": true,
       "source_id": "SRC-FIX-INT",
       "limitations": [
         "Synthetic record.",
-        "A genetic interaction does not establish a physical contact."
+        "A peptide array tests isolated fragments, not the intact proteins."
       ]
     }
   ],
@@ -230,11 +286,16 @@
         "mediator_subunit": "MEDDEMO1",
         "interaction_support": 0.82,
         "interaction_type": "direct_binding",
-        "assay": "synthetic co-immunoprecipitation fixture",
+        "assay": "synthetic crosslinking mass spectrometry fixture",
         "interpretation": "observed",
+        "interacting_region_mapped": true,
+        "tf_region": "activation domain, residues 22-33 (synthetic)",
         "evidence_ids": ["EV-INT-A1"],
         "source_id": "SRC-FIX-INT",
-        "limitations": ["Synthetic record; association is not direct contact."]
+        "limitations": [
+          "Synthetic record.",
+          "A mapped region is not the same as a solved interface structure."
+        ]
       },
       "tractability": {
         "tf_uniprot": "SYNTH-TFDEMOA",
@@ -334,6 +395,92 @@
     },
     {
       "schema_version": "1.0",
+      "candidate_id": "CAND-OVEREXPRESSED",
+      "disease_context": "Synthetic colorectal carcinoma (fixture)",
+      "transcription_factor": "TFDEMOF",
+      "mediator_subunit": "MEDDEMO1",
+      "hypothesis": "TFDEMOF is overexpressed in synthetic colorectal models and may drive them. FIXTURE HYPOTHESIS: this is the negative control named in PROJECT.md — overexpression with no dependency signal. It must be rejected out loud.",
+      "dependency": {
+        "gene": "TFDEMOF",
+        "disease_context": "Synthetic colorectal carcinoma (fixture)",
+        "n_target_models": 24,
+        "n_other_models": 414,
+        "median_target_effect": -0.18,
+        "median_other_effect": -0.11,
+        "target_dependent_fraction": 0.08,
+        "other_dependent_fraction": 0.05,
+        "selectivity_delta": -0.07,
+        "mann_whitney_p": 0.44,
+        "evidence_ids": ["EV-DEP-F1", "EV-EXP-F1"],
+        "source_id": "SRC-FIX-DEP"
+      },
+      "mediator": {
+        "transcription_factor": "TFDEMOF",
+        "mediator_subunit": "MEDDEMO1",
+        "interaction_support": 0.7,
+        "interaction_type": "direct_binding",
+        "assay": "synthetic crosslinking fixture",
+        "interpretation": "observed",
+        "interacting_region_mapped": true,
+        "tf_region": "activation domain, residues 60-71 (synthetic)",
+        "evidence_ids": ["EV-EXP-F1"],
+        "source_id": "SRC-FIX-INT",
+        "limitations": ["Synthetic record."]
+      },
+      "tractability": {
+        "tf_uniprot": "SYNTH-TFDEMOF",
+        "notes": ["Not pursued; there is no dependency to explain."]
+      },
+      "normal_cell_evidence_ids": [],
+      "contradicting_evidence_ids": ["EV-DEP-F1"],
+      "evidence_ids": ["EV-EXP-F1", "EV-DEP-F1"]
+    },
+    {
+      "schema_version": "1.0",
+      "candidate_id": "CAND-PULLDOWN-ONLY",
+      "disease_context": "Synthetic melanoma (fixture)",
+      "transcription_factor": "TFDEMOE",
+      "mediator_subunit": "MEDDEMO1",
+      "hypothesis": "TFDEMOE may act through MEDDEMO1 in synthetic melanoma models. FIXTURE HYPOTHESIS: this is the negative control named in PROJECT.md — a strong selective dependency whose Mediator link rests only on a whole-protein pull-down with no interacting region mapped. It must be rejected out loud.",
+      "dependency": {
+        "gene": "TFDEMOE",
+        "disease_context": "Synthetic melanoma (fixture)",
+        "n_target_models": 21,
+        "n_other_models": 417,
+        "median_target_effect": -0.98,
+        "median_other_effect": -0.15,
+        "target_dependent_fraction": 0.79,
+        "other_dependent_fraction": 0.07,
+        "selectivity_delta": -0.83,
+        "mann_whitney_p": 3e-08,
+        "evidence_ids": ["EV-DEP-E1"],
+        "source_id": "SRC-FIX-DEP"
+      },
+      "mediator": {
+        "transcription_factor": "TFDEMOE",
+        "mediator_subunit": "MEDDEMO1",
+        "interaction_support": 0.79,
+        "interaction_type": "complex_member",
+        "assay": "synthetic whole-protein pull-down fixture",
+        "interpretation": "observed",
+        "interacting_region_mapped": false,
+        "evidence_ids": ["EV-INT-E1"],
+        "source_id": "SRC-FIX-INT",
+        "limitations": [
+          "Whole-protein pull-down; no interacting region is mapped.",
+          "Association is not a contact point."
+        ]
+      },
+      "tractability": {
+        "tf_uniprot": "SYNTH-TFDEMOE",
+        "notes": ["No contact point mapped, so there is nothing to model."]
+      },
+      "normal_cell_evidence_ids": [],
+      "contradicting_evidence_ids": [],
+      "evidence_ids": ["EV-DEP-E1", "EV-INT-E1"]
+    },
+    {
+      "schema_version": "1.0",
       "candidate_id": "CAND-INCOMPLETE-EVIDENCE",
       "disease_context": "Synthetic sarcoma (fixture)",
       "transcription_factor": "TFDEMOD",
@@ -356,13 +503,18 @@
       "mediator": {
         "transcription_factor": "TFDEMOD",
         "mediator_subunit": "MEDDEMO1",
-        "interaction_support": 0.45,
-        "interaction_type": "genetic",
-        "assay": "synthetic genetic-interaction fixture",
-        "interpretation": "inference",
+        "interaction_support": 0.55,
+        "interaction_type": "direct_binding",
+        "assay": "synthetic peptide-array fixture",
+        "interpretation": "observed",
+        "interacting_region_mapped": true,
+        "tf_region": "activation domain, residues 41-52 (synthetic)",
         "evidence_ids": ["EV-INT-D1"],
         "source_id": "SRC-FIX-INT",
-        "limitations": ["A genetic interaction does not establish physical contact."]
+        "limitations": [
+          "Synthetic record.",
+          "A peptide array tests isolated fragments, not the intact proteins."
+        ]
       },
       "tractability": {
         "notes": ["No sequences supplied; structural tractability is unassessed."]

@@ -37,6 +37,11 @@ class GateThresholds(BaseModel):
     min_mediator_support: float = 0.3
     """Below this the TF-Mediator connection is treated as unsupported."""
 
+    require_mapped_interacting_region: bool = True
+    """PROJECT.md names a whole-protein pull-down with no mapped interacting
+    region as a negative control the agent must reject out loud. Correlation
+    passing itself off as contact is the failure this gate exists to catch."""
+
 
 class ScoringWeights(BaseModel):
     """Component weights. Must sum to 1.0 so the total stays in [0, 1]."""

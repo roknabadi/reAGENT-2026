@@ -116,11 +116,17 @@ def build_requests(
 ) -> list[StructuralModelRequest]:
     """Build the Boltz2 complex job plus one ESMFold2 monomer check per chain.
 
-    Returns an empty list when sequences are missing: a structural job without
-    sequences is not something to guess at.
+    Returns an empty list when sequences are missing, or when the TF-Mediator
+    contact has no mapped interacting region. Modelling an unmapped association
+    would manufacture an interface the evidence does not support, which is the
+    failure mode PROJECT.md names.
     """
     tract = candidate.tractability
     if not (tract.tf_sequence and tract.mediator_sequence):
+        return []
+    if config.gates.require_mapped_interacting_region and not (
+        candidate.mediator.ready_for_structural_modeling
+    ):
         return []
 
     tf_chain = ChainSpec(

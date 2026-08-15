@@ -567,9 +567,10 @@ class Orchestrator:
             best = scorecards[0]
             candidate = candidates[best.candidate_id]
             contradictions = list(candidate.contradicting_evidence_ids)
-            structural_ready = bool(
+            has_sequences = bool(
                 candidate.tractability.tf_sequence and candidate.tractability.mediator_sequence
             )
+            structural_ready = has_sequences and candidate.mediator.ready_for_structural_modeling
             checkpoint = HumanCheckpoint(
                 checkpoint_id=f"{state.run_id}-hero",
                 stage=Stage.HERO_CHECKPOINT,
@@ -591,9 +592,13 @@ class Orchestrator:
                 rejected_candidate_ids=list(state.rejected_candidate_ids),
                 uncertainty=list(best.uncertainty_notes),
                 structural_readiness=(
-                    "ready: both partner sequences are available for modelling"
+                    "ready: the contact has a mapped interacting region "
+                    f"({candidate.mediator.tf_region}) and both partner sequences"
                     if structural_ready else
-                    "not ready: at least one partner sequence is missing"
+                    "not ready: "
+                    + ("no mapped interacting region, so there is no contact "
+                       "point to model" if not candidate.mediator.interacting_region_mapped
+                       else "at least one partner sequence is missing")
                 ),
                 created_at=utc_now(),
             )

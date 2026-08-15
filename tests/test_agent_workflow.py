@@ -77,7 +77,12 @@ class IngestTests(TempRunCase):
         self.assertTrue(self.bundle.fixture)
         self.assertIn("SYNTHETIC", (self.bundle.fixture_note or "").upper())
         report, accepted = ingest(self.bundle)
-        self.assertEqual(len(accepted), 4)
+        # Ingest validates provenance and internal consistency; gating comes later,
+        # so every well-formed fixture candidate survives this stage.
+        self.assertEqual(
+            [c.candidate_id for c in accepted],
+            [c.candidate_id for c in self.bundle.candidates],
+        )
         self.assertFalse(report.rejected_candidates)
         self.assertTrue(any("FIXTURE RUN" in w for w in report.warnings))
 
@@ -131,6 +136,74 @@ class GateTests(TempRunCase):
         self.assertFalse(outcome.eligible)
         self.assertIn("mediator_support", outcome.failed_gates)
         self.assertTrue(any("no named assay" in reason for reason in outcome.reasons))
+
+    def test_every_negative_control_named_in_project_md_is_rejected(self):
+        """PROJECT.md names three. A run that only says yes shows no judgment."""
+        expected = {
+            "CAND-BROAD": "broad_essentiality",            # pan-essential TF
+            "CAND-OVEREXPRESSED": "dependency_strength",   # overexpressed, no dependency
+            "CAND-PULLDOWN-ONLY": "mediator_region_mapped",  # association, not contact
+        }
+        for candidate_id, gate in expected.items():
+            with self.subTest(candidate=candidate_id):
+                outcome = evaluate_gates(self.candidates[candidate_id], self.thresholds)
+                self.assertFalse(outcome.eligible)
+                self.assertIn(gate, outcome.failed_gates)
+                self.assertTrue(outcome.reasons)
+
+    def test_overexpression_alone_does_not_survive_the_dependency_gate(self):
+        candidate = self.candidates["CAND-OVEREXPRESSED"]
+        self.assertIn("EV-DEP-F1", candidate.contradicting_evidence_ids)
+        outcome = evaluate_gates(candidate, self.thresholds)
+        self.assertFalse(outcome.eligible)
+        self.assertIn("dependency_strength", outcome.failed_gates)
+        self.assertIn("disease_specificity", outcome.failed_gates)
+        # The Mediator contact is genuinely mapped; it is the dependency that fails.
+        self.assertNotIn("mediator_region_mapped", outcome.failed_gates)
+
+    def test_whole_protein_pulldown_without_a_mapped_region_is_rejected(self):
+        """The negative control PROJECT.md names: association, not contact.
+
+        This candidate has a strong, selective dependency and a real pull-down.
+        It is rejected purely because no interacting region is mapped, which is
+        the correlation-versus-contact distinction the project turns on.
+        """
+        candidate = self.candidates["CAND-PULLDOWN-ONLY"]
+        self.assertLess(candidate.dependency.median_target_effect, -0.5)
+        self.assertTrue(candidate.mediator.is_supported)
+
+        outcome = evaluate_gates(candidate, self.thresholds)
+        self.assertFalse(outcome.eligible)
+        self.assertEqual(outcome.failed_gates, ["mediator_region_mapped"])
+        self.assertTrue(any("no interacting region" in r for r in outcome.reasons))
+        self.assertTrue(any("model or screen against" in r for r in outcome.reasons))
+
+    def test_a_mapped_region_requires_direct_binding_evidence(self):
+        payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        for candidate in payload["candidates"]:
+            if candidate["candidate_id"] == "CAND-PULLDOWN-ONLY":
+                candidate["mediator"]["interacting_region_mapped"] = True
+                candidate["mediator"]["tf_region"] = "claimed without direct evidence"
+        with self.assertRaises(ValueError) as ctx:
+            InputBundle.model_validate(payload)
+        self.assertIn("direct binding", str(ctx.exception))
+
+    def test_mapped_region_must_name_the_region(self):
+        payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        for candidate in payload["candidates"]:
+            if candidate["candidate_id"] == "CAND-SELECTIVE":
+                candidate["mediator"]["tf_region"] = None
+        with self.assertRaises(ValueError) as ctx:
+            InputBundle.model_validate(payload)
+        self.assertIn("tf_region", str(ctx.exception))
+
+    def test_only_a_mapped_contact_is_ready_for_structural_modeling(self):
+        self.assertTrue(
+            self.candidates["CAND-SELECTIVE"].mediator.ready_for_structural_modeling
+        )
+        self.assertFalse(
+            self.candidates["CAND-PULLDOWN-ONLY"].mediator.ready_for_structural_modeling
+        )
 
     def test_all_failures_are_collected_not_just_the_first(self):
         outcome = evaluate_gates(self.candidates["CAND-BROAD"], self.thresholds)
@@ -368,6 +441,13 @@ class StructureTests(TempRunCase):
             self.candidates["CAND-INCOMPLETE-EVIDENCE"], self.config
         )
         self.assertEqual(requests, [])
+
+    def test_no_structural_request_without_a_mapped_contact_point(self):
+        """Modelling an unmapped association would invent the interface."""
+        candidate = self.candidates["CAND-PULLDOWN-ONLY"].model_copy(deep=True)
+        candidate.tractability.tf_sequence = "MSDLQTPVSEAKALLQRLEEAG"
+        candidate.tractability.mediator_sequence = "MAQVSTLLDRLNQAGDKVAQQL"
+        self.assertEqual(build_requests(candidate, self.config), [])
 
     def test_chain_sequences_must_be_amino_acids(self):
         with self.assertRaises(ValueError):
@@ -626,7 +706,15 @@ class WorkflowTests(TempRunCase):
             e.detail["candidate_id"] for e in events
             if e.event_type == "candidate.rejected"
         }
-        self.assertEqual(rejected, {"CAND-BROAD", "CAND-UNSUPPORTED-MEDIATOR"})
+        self.assertEqual(
+            rejected,
+            {
+                "CAND-BROAD",                 # pan-essential
+                "CAND-OVEREXPRESSED",         # overexpressed, no dependency
+                "CAND-PULLDOWN-ONLY",         # association, no mapped contact
+                "CAND-UNSUPPORTED-MEDIATOR",  # no assay, no source
+            },
+        )
 
     def test_improvement_iteration_is_recorded(self):
         orchestrator = self.make_orchestrator("improve")

@@ -144,6 +144,13 @@ class MediatorEvidence(Base):
 
     `interaction_support` is deliberately nullable: an absent value means the
     connection is unsupported, and it is never read as a zero that averages away.
+
+    `interacting_region_mapped` is the distinction the project turns on. A
+    whole-protein pull-down or a co-expression correlation says two proteins are
+    associated; it does not say where they touch, and there is nothing to model
+    or screen against. It mirrors `MediatorLink` in
+    `src/dependency_scout/models.py` so both halves of the repo mean the same
+    thing by "direct".
     """
 
     schema_version: str = SCHEMA_VERSION
@@ -153,9 +160,26 @@ class MediatorEvidence(Base):
     interaction_type: Literal["direct_binding", "complex_member", "genetic", "inferred"] | None = None
     assay: str | None = None
     interpretation: Interpretation | None = None
+    interacting_region_mapped: bool = False
+    tf_region: str | None = None
+    """Named region, e.g. "activation domain, residues 374-384"."""
     evidence_ids: list[str] = Field(default_factory=list)
     source_id: str | None = None
     limitations: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def mapped_region_needs_direct_evidence(self) -> MediatorEvidence:
+        if self.interacting_region_mapped:
+            if not self.tf_region:
+                raise ValueError(
+                    "interacting_region_mapped requires tf_region to name the region"
+                )
+            if self.interaction_type != "direct_binding":
+                raise ValueError(
+                    "a mapped interacting region requires direct binding evidence, "
+                    f"not {self.interaction_type!r}"
+                )
+        return self
 
     @property
     def is_supported(self) -> bool:
@@ -166,6 +190,11 @@ class MediatorEvidence(Base):
             and self.source_id is not None
             and bool(self.evidence_ids)
         )
+
+    @property
+    def ready_for_structural_modeling(self) -> bool:
+        """Only a supported contact with a mapped region is worth modelling."""
+        return self.is_supported and self.interacting_region_mapped
 
 
 class StructuralTractability(Base):

@@ -41,6 +41,7 @@ GATE_NAMES = (
     "broad_essentiality",
     "disease_specificity",
     "mediator_support",
+    "mediator_region_mapped",
     "provenance",
 )
 
@@ -105,6 +106,19 @@ def evaluate_gates(
             f"unsupported Mediator interaction: support "
             f"{mediator.interaction_support:.2f} is below the required "
             f"{thresholds.min_mediator_support:.2f}",
+        ))
+
+    # The negative control PROJECT.md names explicitly: association without a
+    # mapped contact point. There is nothing to model or screen against, so this
+    # is rejected out loud rather than passed downstream.
+    if thresholds.require_mapped_interacting_region and not mediator.interacting_region_mapped:
+        assay = mediator.assay or "no named assay"
+        failures.append(GateFailure(
+            "mediator_region_mapped",
+            f"TF-Mediator contact is not mapped "
+            f"({mediator.transcription_factor}-{mediator.mediator_subunit}): "
+            f"{assay} establishes association but identifies no interacting "
+            "region, so there is no contact point to model or screen against",
         ))
 
     provenance_problems = []
