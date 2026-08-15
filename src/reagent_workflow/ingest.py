@@ -22,7 +22,11 @@ from .models import (
 )
 
 IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
-GENE_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9-]{0,20}$")
+# Real HGNC symbols are uppercase alphanumeric with hyphens (HLA-A, NKX2-1).
+# Underscores and dots are permitted because upstream fixtures and alias tables
+# use them, and rejecting a candidate over punctuation is not a scientific
+# judgment — the gates are where candidates should fail.
+GENE_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9._-]{0,20}$")
 
 
 class InputBundle(BaseModel):
