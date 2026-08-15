@@ -13,11 +13,28 @@ def gene_symbol(column: str) -> str:
     return GENE_SUFFIX.sub("", str(column)).strip()
 
 
+def load_tf_universe(path: str | Path) -> set[str]:
+    """HGNC symbols from the Lambert et al. 2018 human TF catalogue.
+
+    Screening 1.6k transcription factors instead of all 18k genes is the point:
+    a TF-dependency question does not get a better answer from ribosomal genes,
+    and the full matrix is 382 MB.
+    """
+    frame = pd.read_csv(path, low_memory=False)
+    is_tf = frame["Is TF?"].astype(str).str.strip().str.casefold() == "yes"
+    return set(frame.loc[is_tf, "HGNC symbol"].dropna().astype(str))
+
+
 def _detect_column(frame: pd.DataFrame, names: tuple[str, ...]) -> str:
     lowered = {str(c).lower(): str(c) for c in frame.columns}
     for name in names:
         if name.lower() in lowered:
             return lowered[name.lower()]
+    # The published CRISPRGeneEffect.csv ships its ModelID column with an empty
+    # header, which pandas names "Unnamed: 0". Every other column is a gene.
+    first = str(frame.columns[0])
+    if first.startswith("Unnamed:") or first == "":
+        return first
     raise ValueError(f"Could not find any of {names}; columns={list(frame.columns)[:20]}")
 
 

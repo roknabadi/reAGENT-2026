@@ -21,6 +21,7 @@ def main():
     discover = sub.add_parser("discover")
     discover.add_argument("--gene-effect", required=True); discover.add_argument("--models", required=True)
     discover.add_argument("--context", required=True); discover.add_argument("--genes")
+    discover.add_argument("--tf-list", help="Lambert et al. TF catalogue CSV; restricts the screen to transcription factors")
     discover.add_argument("--context-column"); discover.add_argument("--source-version", default="DepMap Public 26Q1")
     discover.add_argument("--synthetic", action="store_true"); discover.add_argument("--output")
     plan = sub.add_parser("plan"); plan.add_argument("candidate_json"); plan.add_argument("--index", type=int, default=0); plan.add_argument("--output")
@@ -32,6 +33,10 @@ def main():
     args = parser.parse_args()
     if args.command == "discover":
         genes = set(args.genes.split(",")) if args.genes else None
+        if args.tf_list:
+            from .depmap import load_tf_universe
+            universe = load_tf_universe(args.tf_list)
+            genes = (genes & universe) if genes else universe
         records = analyze_gene_effects(args.gene_effect, args.models, context=args.context, genes=genes,
             context_column=args.context_column, source_version=args.source_version, synthetic=args.synthetic)
         dump([r.model_dump(mode="json") for r in rank_all(records)], args.output)

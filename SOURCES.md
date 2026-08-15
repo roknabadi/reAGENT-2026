@@ -9,6 +9,9 @@ Add each artifact before it is used in the project.
 | PARADE | https://github.com/autosome-ru/parade | Pinned by Proto Tools | MIT; attribution required | On first model run | Verified by Proto Tools |
 | BenchFlow | https://github.com/benchflow-ai/benchflow | PyPI 0.6.8 | Apache-2.0 | 2026-08-15 | PyPI-managed install |
 | Paperclip | https://paperclip.gxl.ai | CLI 0.7.37 | Service/package terms | 2026-08-14 | N/A |
+| DepMap CRISPRGeneEffect (Chronos) | https://depmap.org/portal/data_page/ | Public 24Q2 | CC BY 4.0 | 2026-08-15 | 382 MB, 1100 lines × 18443 genes, local only |
+| DepMap Model metadata | https://depmap.org/portal/data_page/ | Public 24Q2 | CC BY 4.0 | 2026-08-15 | 1921 models, OncotreeLineage/Subtype |
+| Lambert et al. human TF catalogue | http://humantfs.ccbr.utoronto.ca | v1.01 | Academic use, cite Cell 2018;172:650 | 2026-08-15 | 1639 TFs of 2765 rows |
 
 ## Scientific evidence
 
