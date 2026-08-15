@@ -13,10 +13,10 @@
       "note": "PDB 9F6Y, EMD-50242. Apo MED23 is PDB 9F76 / EMD-50247."
     },
     {
-      "statement": "ELK1 I376, F378 and L382 form the hydrophobic contacts with MED23. F378 binds deeply and is buried, sheltered by adjacent H377 and W379, and is surrounded in MED23 by I339 and L343 (H19), F379, G382 and S383 (H21), and V533 and M537 (H30).",
+      "statement": "ELK1 I376, F378 and L382 form the hydrophobic contacts with MED23. F378 binds deeply and is buried, sheltered by adjacent H377 and W379, and is surrounded in MED23 by I339 and L343 (H19), F379, G382 and S383 (H21), and V533 and M537 (H28).",
       "support": "direct_experimental",
       "citations": ["https://doi.org/10.1038/s41467-025-59014-8"],
-      "note": "These MED23 residues define the pocket a small molecule would have to occupy."
+      "note": "These MED23 residues define the pocket a small molecule would have to occupy. Helix assignment corrected 2026-08-15: V533 and M537 are in H28, not H30, verified against PMC12015215 L23."
     },
     {
       "statement": "ELK1 phosphorylated at S383 binds MED23 with a Kd of 81 nM by SPR, while only minimal interaction is detected by pull-down without phosphorylation. Mutation of the central FW motif abolishes the interaction.",
