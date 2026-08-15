@@ -86,5 +86,37 @@ class RunConfig(BaseModel):
 
     max_improvement_iterations: int = Field(default=2, ge=0, le=2)
 
+    enable_alphafold2: bool = False
+    """Optional second interface predictor alongside Boltz2.
+
+    Off by default: the pipeline runs Boltz2 only, which is the model Proto
+    prefers for complexes because it explicitly predicts them. Turning this on
+    adds a second opinion on the interface, but note that agreement between the
+    two is weak evidence — they share PDB-derived training data and fail
+    together on the same kinds of interface.
+
+    With this off there is exactly one interface model, so there is no consensus
+    to report and ``compare_models`` does not claim one.
+    """
+
+    enable_esmfold2_monomer: bool = False
+    """Optional per-chain monomer sanity check.
+
+    Off by default. It answers a different question from the interface — whether
+    each chain folds in isolation — and costs one GPU job per chain. It never
+    votes on the interface whether it runs or not.
+    """
+
+    structure_replicates: int = Field(default=3, ge=1, le=10)
+    """Replicate predictions per model, varying only the seed.
+
+    One prediction is a point estimate from a stochastic process. Replicates
+    give a spread, which is what makes "the models agree" checkable rather than
+    an impression. Costs N GPU jobs per model, so it is configurable — and every
+    replicate beyond the first only runs on the live path.
+    """
+
+    ci_confidence_level: float = Field(default=0.95, gt=0, lt=1)
+
     def hash(self) -> str:
         return content_hash(self.model_dump(mode="json"))

@@ -341,6 +341,19 @@ def cmd_biorisk_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_run_report(args: argparse.Namespace) -> int:
+    """Write the human-facing account: the prompt, the research, the conclusions."""
+    from .reporting import write_run_report  # noqa: PLC0415
+
+    orchestrator = _orchestrator(args)
+    path = write_run_report(orchestrator, Path(args.output) if args.output else None)
+    if args.print:
+        print(path.read_text(encoding="utf-8"))
+    else:
+        _print({"run_report": str(path), "bytes": path.stat().st_size})
+    return 0
+
+
 def cmd_export_demo(args: argparse.Namespace) -> int:
     """Emit demo.json — the single artifact the UI reads (TASKS.md #2)."""
     orchestrator = _orchestrator(args)
@@ -465,6 +478,11 @@ def cmd_demo(args: argparse.Namespace) -> int:
         report = orchestrator.run_complete()
         print(f"\n== report ==\nstatus={report.status} confidence={report.confidence}")
 
+    from .reporting import write_run_report  # noqa: PLC0415
+
+    report_path = write_run_report(orchestrator)
+    print(f"\n== run report ==\n{report_path}")
+
     demo_path = export_demo_json(orchestrator)
     print(f"\n== demo.json (schema {DEMO_SCHEMA_VERSION}) ==\n{demo_path}")
 
@@ -566,6 +584,14 @@ def build_parser() -> argparse.ArgumentParser:
         "show", help="show the recorded assessment for a run"
     ))
     br_show.set_defaults(func=cmd_biorisk_show)
+
+    run_report = with_run(sub.add_parser(
+        "run-report",
+        help="write the prompt / research / conclusions document for a run",
+    ))
+    run_report.add_argument("--output", help="write elsewhere than the run directory")
+    run_report.add_argument("--print", action="store_true", help="print to stdout")
+    run_report.set_defaults(func=cmd_run_report)
 
     export_demo = with_run(sub.add_parser(
         "export-demo", help="emit demo.json, the single artifact the UI reads"

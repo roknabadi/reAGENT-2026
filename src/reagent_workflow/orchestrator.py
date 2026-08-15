@@ -945,8 +945,9 @@ class Orchestrator:
             )
 
         boltz = next((r for r in results if r.model == "boltz2"), None)
+        alphafold = next((r for r in results if r.model == "alphafold2"), None)
         esmfold = [r for r in results if r.model == "esmfold2"]
-        comparison = compare_models(candidate_id, boltz, esmfold)
+        comparison = compare_models(candidate_id, boltz, esmfold, alphafold)
         comparison_path = self.store.path("structure", "comparison.json")
         self.store.write_model(comparison_path, comparison)
         self.tracer.emit(

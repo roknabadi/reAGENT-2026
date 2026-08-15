@@ -6,12 +6,22 @@ Contracts used here were read off the installed packages, not guessed:
 - ``proto_tools.tools.structure_prediction.esmfold2.ESMFold2Input``/``ESMFold2Config``
 - ``proto_tools.entities.complex.Complex`` (chains accept ``{"sequence", "id"}``)
 - ``proto_tools.modal.client.dispatch_to_modal(key, inputs, config)``
+- ``proto_tools.tools.structure_prediction.alphafold2.AlphaFold2Input``/``Config``
 - ``proto_tools.modal.tool_map.TOOL_MAP`` keys ``boltz2-prediction`` /
-  ``esmfold2-prediction``
+  ``esmfold2-prediction`` / ``alphafold2-prediction``
 
-Model roles are enforced by ``StructuralModelRequest``: Boltz2 predicts the
-target-partner complex, ESMFold2 checks monomers or structured domains. ESMFold2
-is never used as an interface predictor.
+Model roles are enforced by ``StructuralModelRequest``. Two models predict the
+target-partner complex and may vote on the interface: **Boltz2** and
+**AlphaFold2**, both of which take the whole complex and pair heterocomplex
+MSAs. **ESMFold2** checks monomers or structured domains and is never used as an
+interface predictor — it is a single-sequence model, and counting its opinion on
+an interface it was never shown would manufacture consensus.
+
+Agreement is judged on overlapping confidence intervals across replicate seeds,
+not on point estimates: two runs of a stochastic model differ, and the interval
+is what separates real disagreement from replicate noise. Unanimity among these
+predictors is still not independent confirmation — they share PDB-derived
+training data, so they fail together on the same kinds of interface.
 
 The two chains carry generic roles — ``target`` and ``partner`` — because this
 stage is not specific to any one class of target. Any single protein pair the
@@ -33,6 +43,7 @@ from .config import RunConfig
 from .models import (
     CandidateHypothesis,
     ChainSpec,
+    ConfidenceInterval,
     Interpretation,
     ModelComparison,
     StructuralModelRequest,
@@ -44,6 +55,13 @@ _logger = logging.getLogger(__name__)
 
 BOLTZ2_TOOL_KEY = "boltz2-prediction"
 ESMFOLD2_TOOL_KEY = "esmfold2-prediction"
+ALPHAFOLD2_TOOL_KEY = "alphafold2-prediction"
+
+# Models that take the whole complex and may therefore vote on the interface.
+# ESMFold2 is deliberately absent: it is a single-sequence monomer model, and
+# counting its opinion on an interface it was never shown would manufacture
+# consensus rather than measure it.
+INTERFACE_MODELS = ("boltz2", "alphafold2")
 
 # Confidence floors used only to phrase the comparison, never to claim validation.
 LOW_CONFIDENCE_PLDDT = 0.70
@@ -127,7 +145,13 @@ def build_requests(
     checkpoint_id: str | None = None,
     seed: int = 7,
 ) -> list[StructuralModelRequest]:
-    """Build the Boltz2 complex job plus one ESMFold2 monomer check per chain.
+    """Build the structural jobs for one candidate.
+
+    By default that is a single Boltz2 complex prediction: Proto prefers Boltz2
+    for complexes because it explicitly predicts them, and one good model beats
+    a chorus of correlated ones. ``enable_alphafold2`` adds a second interface
+    opinion and ``enable_esmfold2_monomer`` adds per-chain folding checks; both
+    are off by default and cost a GPU job each per replicate.
 
     Returns an empty list when sequences are missing, or when the target-partner
     contact has no mapped interacting region. Modelling an unmapped association
@@ -155,6 +179,9 @@ def build_requests(
     boltz_config = {"device": device, "seed": seed, "use_msa": True, "diffusion_samples": 1}
     esm_config = {"device": device, "seed": seed, "model_checkpoint": "esmfold2-fast"}
 
+    af2_config = {"device": device, "seed": seed, "use_msa": True,
+                  "pair_heterocomplex_msas": True, "num_recycles": 3}
+
     requests = [
         StructuralModelRequest(
             request_id=f"{candidate.candidate_id}-boltz2-complex",
@@ -172,7 +199,27 @@ def build_requests(
             human_approval_checkpoint_id=checkpoint_id,
         )
     ]
-    for chain in (target_chain, partner_chain):
+    if config.enable_alphafold2:
+        # A second independent interface predictor. Independent in architecture
+        # and MSA handling, NOT in training data — both learned from the PDB, so
+        # their errors correlate and agreement is weaker evidence than two truly
+        # independent methods would give. compare_models says so explicitly.
+        requests.append(StructuralModelRequest(
+            request_id=f"{candidate.candidate_id}-alphafold2-complex",
+            candidate_id=candidate.candidate_id,
+            model="alphafold2",
+            proto_tool_key=ALPHAFOLD2_TOOL_KEY,
+            purpose="complex_interface",
+            chains=[target_chain, partner_chain],
+            config=af2_config,
+            seed=seed,
+            device=device,
+            input_hash=_request_hash(
+                "alphafold2", [target_chain, partner_chain], af2_config, seed
+            ),
+            human_approval_checkpoint_id=checkpoint_id,
+        ))
+    for chain in (target_chain, partner_chain) if config.enable_esmfold2_monomer else ():
         # Request ids stay derived from the role, so they remain deterministic
         # for a given candidate: "-esmfold2-target" and "-esmfold2-partner".
         requests.append(StructuralModelRequest(
@@ -189,6 +236,38 @@ def build_requests(
             human_approval_checkpoint_id=checkpoint_id,
         ))
     return requests
+
+
+def _tool_input_and_config(request: StructuralModelRequest, complex_obj: Any) -> tuple[Any, Any, str]:
+    """Build the installed Proto input/config pair for this request's model.
+
+    One place, because a two-branch if/else silently routed AlphaFold2 into the
+    ESMFold2 contract and validated its config against the wrong model.
+    """
+    if request.model == "boltz2":
+        from proto_tools.tools.structure_prediction.boltz2 import (  # noqa: PLC0415
+            Boltz2Config, Boltz2Input,
+        )
+        return (
+            Boltz2Input(complexes=[complex_obj]), Boltz2Config(**request.config),
+            "proto_tools.tools.structure_prediction.boltz2.Boltz2Input",
+        )
+    if request.model == "alphafold2":
+        from proto_tools.tools.structure_prediction.alphafold2 import (  # noqa: PLC0415
+            AlphaFold2Config, AlphaFold2Input,
+        )
+        return (
+            AlphaFold2Input(complexes=[complex_obj]),
+            AlphaFold2Config(**request.config),
+            "proto_tools.tools.structure_prediction.alphafold2.AlphaFold2Input",
+        )
+    from proto_tools.tools.structure_prediction.esmfold2 import (  # noqa: PLC0415
+        ESMFold2Config, ESMFold2Input,
+    )
+    return (
+        ESMFold2Input(complexes=[complex_obj]), ESMFold2Config(**request.config),
+        "proto_tools.tools.structure_prediction.esmfold2.ESMFold2Input",
+    )
 
 
 # ------------------------------------------------------------------ validation
@@ -218,20 +297,7 @@ def validate_request(request: StructuralModelRequest) -> dict[str, Any]:
     ])
 
     try:
-        if request.model == "boltz2":
-            from proto_tools.tools.structure_prediction.boltz2 import (  # noqa: PLC0415
-                Boltz2Config, Boltz2Input,
-            )
-            tool_input = Boltz2Input(complexes=[complex_obj])
-            tool_config = Boltz2Config(**request.config)
-            contract = "proto_tools.tools.structure_prediction.boltz2.Boltz2Input"
-        else:
-            from proto_tools.tools.structure_prediction.esmfold2 import (  # noqa: PLC0415
-                ESMFold2Config, ESMFold2Input,
-            )
-            tool_input = ESMFold2Input(complexes=[complex_obj])
-            tool_config = ESMFold2Config(**request.config)
-            contract = "proto_tools.tools.structure_prediction.esmfold2.ESMFold2Input"
+        tool_input, tool_config, contract = _tool_input_and_config(request, complex_obj)
     except Exception as exc:  # pydantic validation or a changed contract
         report["blockers"].append(f"{type(exc).__name__}: {exc}")
         return report
@@ -296,10 +362,16 @@ def _result_from_cached(
     prediction_caveat = "Computational prediction. Not experimental evidence."
     if source != "fixture" and prediction_caveat not in limitations:
         limitations.append(prediction_caveat)
+    intervals = {
+        metric: ConfidenceInterval.model_validate(raw)
+        for metric, raw in (payload.get("confidence_ci") or {}).items()
+    }
     return StructuralModelResult(
         request_id=request.request_id,
         candidate_id=request.candidate_id,
         model=request.model,
+        confidence_ci=intervals,
+        replicate_seeds=list(payload.get("replicate_seeds") or []),
         model_version=payload.get("model_version"),
         proto_tools_version=payload.get("proto_tools_version"),
         status="cached",
@@ -332,6 +404,11 @@ def execute_request(
     Order: cache, then validation-only, then live dispatch. Live dispatch needs
     both human approval and ``allow_live_modal``; without them the result is a
     recorded ``skipped``, not a silent fallback.
+
+    On the live path this runs ``config.structure_replicates`` predictions that
+    differ only in seed, and returns one result carrying the confidence interval
+    across them. Replicates cost GPU jobs, so the cached and fixture paths serve
+    whatever interval was stored rather than re-running anything.
     """
     chain_map = {c.chain_id: c.role for c in request.chains}
 
@@ -386,7 +463,35 @@ def execute_request(
             error="; ".join(validation["blockers"]) or "request failed validation",
         )
 
-    return _dispatch_live(request, caches, max_retries=max_retries)
+    replicates = max(1, config.structure_replicates)
+    if replicates == 1:
+        return _dispatch_live(request, caches, max_retries=max_retries)
+
+    # Replicate seeds are derived from the request's own seed so the set is
+    # deterministic: the same request reproduces the same replicates.
+    base_seed = request.seed if request.seed is not None else 0
+    results: list[StructuralModelResult] = []
+    for index in range(replicates):
+        seed = base_seed + index
+        replicate = request.model_copy(update={
+            "seed": seed,
+            "config": {**request.config, "seed": seed},
+            "request_id": (
+                request.request_id if index == 0 else f"{request.request_id}-r{index}"
+            ),
+        })
+        outcome = _dispatch_live(replicate, caches, max_retries=max_retries)
+        results.append(outcome)
+        if outcome.status == "failed":
+            # Do not burn the remaining GPU jobs once one has failed; the
+            # failure is recorded and the caller decides.
+            break
+
+    finished = [r for r in results if r.status in {"cached", "completed"}]
+    if not finished:
+        return results[0]
+    aggregated = aggregate_replicates(finished, level=config.ci_confidence_level)
+    return aggregated.model_copy(update={"request_id": request.request_id})
 
 
 def _dispatch_live(
@@ -404,18 +509,7 @@ def _dispatch_live(
     complex_obj = Complex(chains=[
         {"sequence": c.sequence, "id": c.chain_id} for c in request.chains
     ])
-    if request.model == "boltz2":
-        from proto_tools.tools.structure_prediction.boltz2 import (  # noqa: PLC0415
-            Boltz2Config, Boltz2Input,
-        )
-        tool_input: Any = Boltz2Input(complexes=[complex_obj])
-        tool_config: Any = Boltz2Config(**request.config)
-    else:
-        from proto_tools.tools.structure_prediction.esmfold2 import (  # noqa: PLC0415
-            ESMFold2Config, ESMFold2Input,
-        )
-        tool_input = ESMFold2Input(complexes=[complex_obj])
-        tool_config = ESMFold2Config(**request.config)
+    tool_input, tool_config, _contract = _tool_input_and_config(request, complex_obj)
 
     last_error: str | None = None
     for attempt in range(1, max_retries + 1):
@@ -538,84 +632,245 @@ def _extract_confidence(payload: dict[str, Any]) -> dict[str, float]:
     return found
 
 
+# ----------------------------------------------------- confidence intervals
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values)
+
+
+def confidence_interval(
+    metric: str, values: list[float], *, level: float = 0.95
+) -> ConfidenceInterval:
+    """Interval across replicate predictions of the same request.
+
+    Uses a normal-approximation interval on the mean (mean ± z·SEM). With the
+    small replicate counts affordable here — 3 is the default — that is an
+    approximation, and ``method`` says so rather than dressing it up. A single
+    replicate yields a degenerate interval, which is honest: one stochastic run
+    tells you nothing about its own spread.
+    """
+    n = len(values)
+    if n == 0:
+        raise ValueError(f"{metric}: no values to summarise")
+    point = _mean(values)
+    if n == 1:
+        return ConfidenceInterval(
+            metric=metric, point=point, lo=point, hi=point, n=1,
+            method="single replicate; no spread is measurable",
+        )
+    variance = sum((v - point) ** 2 for v in values) / (n - 1)
+    sem = (variance / n) ** 0.5
+    # z for the common levels; the table is explicit so the number is auditable.
+    z = {0.90: 1.645, 0.95: 1.960, 0.99: 2.576}.get(round(level, 2), 1.960)
+    margin = z * sem
+    return ConfidenceInterval(
+        metric=metric, point=point, lo=point - margin, hi=point + margin, n=n,
+        method=(
+            f"normal-approximation {int(level * 100)}% interval on the mean "
+            f"(mean +/- {z}*SEM) over {n} replicate seeds; small-n approximation"
+        ),
+    )
+
+
+def aggregate_replicates(
+    results: list[StructuralModelResult], *, level: float = 0.95
+) -> StructuralModelResult:
+    """Collapse replicate results for one request into one carrying intervals."""
+    if not results:
+        raise ValueError("no replicate results to aggregate")
+    usable = [r for r in results if r.status in {"cached", "completed"} and r.confidence]
+    if not usable:
+        return results[0]
+
+    metrics: dict[str, list[float]] = {}
+    for result in usable:
+        for metric, value in result.confidence.items():
+            metrics.setdefault(metric, []).append(value)
+
+    intervals = {
+        metric: confidence_interval(metric, values, level=level)
+        for metric, values in metrics.items()
+    }
+    return usable[0].model_copy(update={
+        "confidence": {m: ci.point for m, ci in intervals.items()},
+        "confidence_ci": intervals,
+        "replicate_seeds": [r.seed for r in usable if r.seed is not None],
+    })
+
+
 # ------------------------------------------------------------------ comparison
 def compare_models(
     candidate_id: str,
     boltz: StructuralModelResult | None,
     esmfold: list[StructuralModelResult],
+    alphafold: StructuralModelResult | None = None,
 ) -> ModelComparison:
-    """Compare the complex prediction against the monomer checks.
+    """Compare the interface predictors against each other and the monomer checks.
 
-    The monomer checks say whether each partner has a well-formed structured
-    domain. They cannot confirm the interface, and this comparison says so.
+    Two models vote on the interface: Boltz2 and AlphaFold2, both of which were
+    shown the whole complex. ESMFold2 checks whether each chain folds on its own
+    and does NOT vote — it never saw the interface, so counting it would
+    manufacture a third opinion rather than measure one.
+
+    Agreement is judged by whether the models' confidence intervals overlap, not
+    by whether their point estimates happen to be close. Two runs of the same
+    stochastic model differ; the interval is what separates a real disagreement
+    from replicate noise.
     """
-    agreements: list[str] = []
-    disagreements: list[str] = []
-    delta: dict[str, float] = {}
-    limitations = [
-        "Boltz2 predicts the complex; ESMFold2 checks monomers only.",
-        "ESMFold2 is not used as an interface predictor, so it cannot confirm "
-        "or refute the predicted interface.",
+    # Describe only what actually ran. Naming models that were never dispatched
+    # reads as if their opinion was sought and reported.
+    limitations: list[str] = []
+
+    interface_results = {
+        name: result
+        for name, result in (("boltz2", boltz), ("alphafold2", alphafold))
+        if result is not None
+        and result.status in {"cached", "completed"}
+        and result.confidence
+    }
+    usable_esm = [
+        r for r in esmfold if r.status in {"cached", "completed"} and r.confidence
     ]
 
-    usable_esm = [r for r in esmfold if r.status in {"cached", "completed"} and r.confidence]
-    boltz_usable = boltz is not None and boltz.status in {"cached", "completed"} and boltz.confidence
+    models_compared = sorted([*interface_results, *(["esmfold2"] if usable_esm else [])])
+    if len(interface_results) > 1:
+        limitations.append(
+            "Interface predictions come from "
+            f"{', '.join(sorted(interface_results))}; they share PDB-derived "
+            "training data, so agreement between them is correlated."
+        )
+    if usable_esm:
+        limitations.append(
+            "ESMFold2 checks whether each chain folds in isolation and does not "
+            "vote on the interface."
+        )
+    confidence_ci = {
+        name: dict(result.confidence_ci) for name, result in interface_results.items()
+    }
 
-    if not boltz_usable or not usable_esm:
+    if not interface_results:
         return ModelComparison(
             candidate_id=candidate_id,
             boltz2_request_id=boltz.request_id if boltz else None,
             esmfold2_request_id=usable_esm[0].request_id if usable_esm else None,
+            alphafold2_request_id=alphafold.request_id if alphafold else None,
+            models_compared=models_compared,
+            interface_models=[],
+            interface_models_available=0,
             verdict="insufficient",
+            consensus="insufficient",
             limitations=[
                 *limitations,
-                "Insufficient results to compare: at least one model produced no "
-                "confidence metrics.",
+                "No interface model produced confidence metrics, so nothing about "
+                "the interface could be compared.",
             ],
         )
 
-    assert boltz is not None
-    boltz_plddt = boltz.confidence.get("plddt")
-    esm_plddts = [r.confidence["plddt"] for r in usable_esm if "plddt" in r.confidence]
+    agreements: list[str] = []
+    disagreements: list[str] = []
+    delta: dict[str, float] = {}
+    ci_overlap: dict[str, bool] = {}
 
-    if boltz_plddt is not None and esm_plddts:
-        mean_esm = sum(esm_plddts) / len(esm_plddts)
-        delta["plddt_boltz2_minus_esmfold2_mean"] = round(boltz_plddt - mean_esm, 4)
-        if abs(boltz_plddt - mean_esm) <= 0.10:
-            agreements.append(
-                f"Per-residue confidence is comparable (Boltz2 pLDDT {boltz_plddt:.2f} vs "
-                f"ESMFold2 mean {mean_esm:.2f}); both models find the chains foldable."
+    # -- do the interface models agree with each other? ----------------------
+    if len(interface_results) >= 2:
+        names = sorted(interface_results)
+        for metric in ("iptm", "plddt", "ptm"):
+            present = {
+                n: interface_results[n].confidence[metric]
+                for n in names if metric in interface_results[n].confidence
+            }
+            if len(present) < 2:
+                continue
+            first, second = names[0], names[1]
+            delta[f"{metric}_{first}_minus_{second}"] = round(
+                present.get(first, 0.0) - present.get(second, 0.0), 4
+            )
+            intervals = {
+                n: interface_results[n].confidence_ci.get(metric) for n in present
+            }
+            if all(intervals.values()):
+                overlap = intervals[first].overlaps(intervals[second])  # type: ignore[union-attr]
+                ci_overlap[metric] = overlap
+                if overlap:
+                    agreements.append(
+                        f"{first} and {second} agree on {metric}: intervals overlap "
+                        f"({intervals[first].lo:.2f}-{intervals[first].hi:.2f} vs "  # type: ignore[union-attr]
+                        f"{intervals[second].lo:.2f}-{intervals[second].hi:.2f})."  # type: ignore[union-attr]
+                    )
+                else:
+                    disagreements.append(
+                        f"{first} and {second} disagree on {metric}: intervals are "
+                        f"disjoint ({intervals[first].lo:.2f}-{intervals[first].hi:.2f} "  # type: ignore[union-attr]
+                        f"vs {intervals[second].lo:.2f}-{intervals[second].hi:.2f})."  # type: ignore[union-attr]
+                    )
+            else:
+                # No replicates, so no interval. Fall back to a point comparison
+                # and say that is what happened.
+                gap = abs(present[first] - present[second])
+                limitations.append(
+                    f"{metric} compared as point estimates only (no replicates), so "
+                    "replicate noise cannot be separated from real disagreement."
+                )
+                if gap <= 0.10:
+                    agreements.append(
+                        f"{first} and {second} report comparable {metric} "
+                        f"({present[first]:.2f} vs {present[second]:.2f})."
+                    )
+                else:
+                    disagreements.append(
+                        f"{first} and {second} differ on {metric} "
+                        f"({present[first]:.2f} vs {present[second]:.2f})."
+                    )
+    else:
+        limitations.append(
+            "Only one interface model produced results, so interface agreement "
+            "could not be assessed."
+        )
+
+    # -- does each interface model clear the confidence floor? ---------------
+    votes = 0
+    for name, result in sorted(interface_results.items()):
+        iptm = result.confidence.get("iptm")
+        if iptm is None:
+            limitations.append(f"{name} returned no ipTM, so interface confidence is unknown.")
+            continue
+        interval = result.confidence_ci.get("iptm")
+        if interval is not None and interval.hi < LOW_CONFIDENCE_IPTM:
+            disagreements.append(
+                f"{name} interface confidence is low across replicates "
+                f"(ipTM {interval.lo:.2f}-{interval.hi:.2f}, entirely below "
+                f"{LOW_CONFIDENCE_IPTM})."
+            )
+        elif iptm < LOW_CONFIDENCE_IPTM:
+            disagreements.append(
+                f"{name} interface confidence is low (ipTM {iptm:.2f}); the "
+                "predicted interface is not a reliable basis for a pocket."
             )
         else:
+            votes += 1
+            agreements.append(f"{name} reports interface confidence ipTM {iptm:.2f}.")
+
+    # -- monomer sanity, which informs but does not vote ---------------------
+    for result in usable_esm:
+        plddt = result.confidence.get("plddt")
+        if plddt is not None and plddt < LOW_CONFIDENCE_PLDDT:
+            role = next(iter(result.chain_map.values()), result.request_id)
             disagreements.append(
-                f"Per-residue confidence differs (Boltz2 pLDDT {boltz_plddt:.2f} vs "
-                f"ESMFold2 mean {mean_esm:.2f}); the complex context changes how "
-                "confidently at least one chain is placed."
+                f"ESMFold2 monomer confidence for the {role} is low "
+                f"(pLDDT {plddt:.2f}); that chain may be disordered in isolation."
             )
-        for result in usable_esm:
-            plddt = result.confidence.get("plddt")
-            if plddt is not None and plddt < LOW_CONFIDENCE_PLDDT:
-                role = next(iter(result.chain_map.values()), result.request_id)
-                disagreements.append(
-                    f"ESMFold2 monomer confidence for the {role} is low "
-                    f"(pLDDT {plddt:.2f}); that chain may be disordered in isolation."
-                )
 
-    iptm = boltz.confidence.get("iptm")
-    if iptm is None:
-        limitations.append("Boltz2 returned no ipTM, so interface confidence is unknown.")
-    elif iptm < LOW_CONFIDENCE_IPTM:
-        disagreements.append(
-            f"Boltz2 interface confidence is low (ipTM {iptm:.2f}); the predicted "
-            "interface is not a reliable basis for a pocket definition."
-        )
+    available = len(interface_results)
+    if available == 0:
+        consensus = "insufficient"
+    elif votes == available and available >= 2:
+        consensus = "unanimous"
+    elif votes == 0:
+        consensus = "split" if available >= 2 else "insufficient"
+    elif votes >= 2 or (votes == 1 and available == 1):
+        consensus = "majority" if available >= 2 else "insufficient"
     else:
-        agreements.append(f"Boltz2 reports interface confidence ipTM {iptm:.2f}.")
+        consensus = "split"
 
-    # "consistent" must mean a comparison happened and agreed — not that nothing
-    # could be compared. With no pLDDT on either side and no ipTM, the old code
-    # fell through to "consistent" on an empty agreements list, reporting model
-    # agreement it never computed.
     if disagreements:
         verdict = "inconsistent"
     elif agreements:
@@ -626,13 +881,29 @@ def compare_models(
             "No comparable confidence metric was present on both models, so no "
             "agreement or disagreement could be established."
         )
+
+    if consensus == "unanimous":
+        limitations.append(
+            "Unanimous agreement among interface predictors is not independent "
+            "confirmation: these models share training data drawn from the PDB, "
+            "so they fail together on the same kinds of interface."
+        )
+
     return ModelComparison(
         candidate_id=candidate_id,
-        boltz2_request_id=boltz.request_id,
-        esmfold2_request_id=usable_esm[0].request_id,
+        boltz2_request_id=boltz.request_id if boltz else None,
+        esmfold2_request_id=usable_esm[0].request_id if usable_esm else None,
+        alphafold2_request_id=alphafold.request_id if alphafold else None,
+        models_compared=models_compared,
+        interface_models=sorted(interface_results),
+        interface_models_available=available,
+        interface_votes=votes,
         agreements=agreements,
         disagreements=disagreements,
         confidence_delta=delta,
+        confidence_ci=confidence_ci,
+        ci_overlap=ci_overlap,
+        consensus=consensus,
         interpretation=Interpretation.PREDICTED,
         verdict=verdict,
         limitations=limitations,

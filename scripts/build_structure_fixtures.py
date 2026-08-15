@@ -44,11 +44,31 @@ CACHE_DIR = FIXTURE_DIR / "structure_cache"
 # roles carry all of them.
 CONFIDENCE = {
     "boltz2": {"plddt": 0.81, "ptm": 0.74, "iptm": 0.66, "avg_pae": 8.4},
+    # AlphaFold2 is the second interface predictor. Its ipTM interval is set to
+    # OVERLAP Boltz2's while its pLDDT interval does NOT, so the demo exercises
+    # both branches of the interval comparison rather than a uniform agreement.
+    "alphafold2": {"plddt": 0.69, "ptm": 0.71, "iptm": 0.63, "avg_pae": 9.1},
     "esmfold2:target": {"plddt": 0.62, "ptm": 0.58, "avg_pae": 12.1},
     "esmfold2:partner": {"plddt": 0.88, "ptm": 0.83, "avg_pae": 5.7},
 }
 
+# Replicate spread per model, as (metric -> half-width). Stored so the fixture
+# carries real intervals instead of the degenerate single-replicate case, which
+# would let the comparison silently fall back to point estimates.
+SPREAD = {
+    "boltz2": {"plddt": 0.03, "ptm": 0.03, "iptm": 0.04, "avg_pae": 0.6},
+    "alphafold2": {"plddt": 0.02, "ptm": 0.03, "iptm": 0.05, "avg_pae": 0.7},
+    "esmfold2:target": {"plddt": 0.04, "ptm": 0.03, "avg_pae": 0.9},
+    "esmfold2:partner": {"plddt": 0.02, "ptm": 0.02, "avg_pae": 0.4},
+}
+REPLICATE_SEEDS = [7, 8, 9]
+
 UNRESOLVED = {
+    "alphafold2": [
+        "The interface is a prediction and has no experimental support.",
+        "AlphaFold2 and Boltz2 share PDB-derived training data, so agreement "
+        "between them is not independent confirmation.",
+    ],
     "boltz2": [
         "The interface is a prediction and has no experimental support.",
         "Interface residue identity is not resolved well enough to define a pocket.",
@@ -69,8 +89,8 @@ def main() -> int:
     written = []
     for candidate in bundle.candidates:
         for request in build_requests(candidate, config):
-            if request.model == "boltz2":
-                key = "boltz2"
+            if request.model in ("boltz2", "alphafold2"):
+                key = request.model
             else:
                 role = next(chain.role for chain in request.chains)
                 key = f"esmfold2:{role}"
@@ -85,6 +105,20 @@ def main() -> int:
                 "model_version": f"{request.model}-fixture",
                 "proto_tools_version": "fixture",
                 "confidence": CONFIDENCE[key],
+                "confidence_ci": {
+                    metric: {
+                        "metric": metric, "point": value,
+                        "lo": round(value - SPREAD[key].get(metric, 0.0), 4),
+                        "hi": round(value + SPREAD[key].get(metric, 0.0), 4),
+                        "n": len(REPLICATE_SEEDS),
+                        "method": (
+                            f"synthetic fixture spread over {len(REPLICATE_SEEDS)} "
+                            "replicate seeds; not a measured interval"
+                        ),
+                    }
+                    for metric, value in CONFIDENCE[key].items()
+                },
+                "replicate_seeds": REPLICATE_SEEDS,
                 "runtime_ms": 0,
                 "unresolved_questions": UNRESOLVED[request.model],
                 "limitations": [
