@@ -21,6 +21,14 @@ from reagent_workflow.benchflow_export import (
     validate_record,
     validate_with_benchflow,
 )
+from reagent_workflow.adapters import (
+    INTERPRETATION_TO_SUPPORT,
+    SUPPORT_TO_INTERPRETATION,
+    ConversionRefused,
+    to_candidate,
+    to_input_bundle,
+    to_mediator_evidence,
+)
 from reagent_workflow.config import RunConfig
 from reagent_workflow.demo_export import (
     DEMO_SCHEMA_VERSION,
@@ -157,7 +165,7 @@ class GateTests(TempRunCase):
             self.candidates["CAND-UNSUPPORTED-MEDIATOR"], self.thresholds
         )
         self.assertFalse(outcome.eligible)
-        self.assertIn("mediator_support", outcome.failed_gates)
+        self.assertIn("interaction_support", outcome.failed_gates)
         self.assertTrue(any("no named assay" in reason for reason in outcome.reasons))
 
     def test_every_negative_control_named_in_project_md_is_rejected(self):
@@ -165,7 +173,7 @@ class GateTests(TempRunCase):
         expected = {
             "CAND-BROAD": "broad_essentiality",            # pan-essential TF
             "CAND-OVEREXPRESSED": "dependency_strength",   # overexpressed, no dependency
-            "CAND-PULLDOWN-ONLY": "mediator_region_mapped",  # association, not contact
+            "CAND-PULLDOWN-ONLY": "interface_region_mapped",  # association, not contact
         }
         for candidate_id, gate in expected.items():
             with self.subTest(candidate=candidate_id):
@@ -182,7 +190,7 @@ class GateTests(TempRunCase):
         self.assertIn("dependency_strength", outcome.failed_gates)
         self.assertIn("disease_specificity", outcome.failed_gates)
         # The Mediator contact is genuinely mapped; it is the dependency that fails.
-        self.assertNotIn("mediator_region_mapped", outcome.failed_gates)
+        self.assertNotIn("interface_region_mapped", outcome.failed_gates)
 
     def test_whole_protein_pulldown_without_a_mapped_region_is_rejected(self):
         """The negative control PROJECT.md names: association, not contact.
@@ -197,7 +205,7 @@ class GateTests(TempRunCase):
 
         outcome = evaluate_gates(candidate, self.thresholds)
         self.assertFalse(outcome.eligible)
-        self.assertEqual(outcome.failed_gates, ["mediator_region_mapped"])
+        self.assertEqual(outcome.failed_gates, ["interface_region_mapped"])
         self.assertTrue(any("no interacting region" in r for r in outcome.reasons))
         self.assertTrue(any("model or screen against" in r for r in outcome.reasons))
 
@@ -218,7 +226,7 @@ class GateTests(TempRunCase):
                 candidate["mediator"]["tf_region"] = None
         with self.assertRaises(ValueError) as ctx:
             InputBundle.model_validate(payload)
-        self.assertIn("tf_region", str(ctx.exception))
+        self.assertIn("target_region", str(ctx.exception))
 
     def test_only_a_mapped_contact_is_ready_for_structural_modeling(self):
         self.assertTrue(
@@ -469,8 +477,8 @@ class StructureTests(TempRunCase):
     def test_no_structural_request_without_a_mapped_contact_point(self):
         """Modelling an unmapped association would invent the interface."""
         candidate = self.candidates["CAND-PULLDOWN-ONLY"].model_copy(deep=True)
-        candidate.tractability.tf_sequence = "MSDLQTPVSEAKALLQRLEEAG"
-        candidate.tractability.mediator_sequence = "MAQVSTLLDRLNQAGDKVAQQL"
+        candidate.tractability.target_sequence = "MSDLQTPVSEAKALLQRLEEAG"
+        candidate.tractability.partner_sequence = "MAQVSTLLDRLNQAGDKVAQQL"
         self.assertEqual(build_requests(candidate, self.config), [])
 
     def test_chain_sequences_must_be_amino_acids(self):
@@ -724,7 +732,7 @@ class WorkflowTests(TempRunCase):
         for event in events:
             self.assertTrue(event.config_hash)
             self.assertEqual(event.run_id, "trace")
-            self.assertEqual(event.schema_version, "1.0")
+            self.assertEqual(event.schema_version, "1.1")
 
         # Every rejection is reconstructable from the trace alone.
         rejected = {
@@ -1030,7 +1038,7 @@ class DemoJsonTests(TempRunCase):
         steps = [link["step"] for link in payload["summary"]["chain"]]
         self.assertEqual(
             steps,
-            ["disease", "transcription_factor", "mediator_contact", "interface", "compounds"],
+            ["disease", "target", "partner_contact", "interface", "compounds"],
         )
         for link in payload["summary"]["chain"]:
             self.assertIn(
@@ -1077,6 +1085,246 @@ class DemoJsonTests(TempRunCase):
         self.assertEqual(
             DemoPayload.model_validate(payload).model_dump(mode="json"), payload
         )
+
+
+class AdapterTests(TempRunCase):
+    """TASKS_AMIR.md A2 — real DepMap numbers must reach the agent.
+
+    The named cases from the spec. The sign-flip test is the load-bearing one:
+    the two packages define `selectivity_delta` with opposite signs, and a
+    copied value fails ingest with a confusing message.
+    """
+
+    EXAMPLES = REPO_ROOT / "examples"
+    SCOUT_OUTPUT = REPO_ROOT / "outputs" / "demo_candidates.json"
+
+    def _link(self, name: str) -> Any:
+        from dependency_scout import models as ds  # noqa: PLC0415
+
+        path = self.EXAMPLES / f"mediator_link_{name}_med23.json"
+        return ds.MediatorLink.model_validate(
+            json.loads(path.read_text(encoding="utf-8"))
+        )
+
+    def _scout_candidate(self) -> Any:
+        """A RankedCandidate as `dependency-scout discover` actually writes it."""
+        from dependency_scout import models as ds  # noqa: PLC0415
+
+        payload = json.loads(self.SCOUT_OUTPUT.read_text(encoding="utf-8"))
+        rows = payload if isinstance(payload, list) else [payload]
+        for row in rows:
+            candidate = ds.RankedCandidate.model_validate(row)
+            if candidate.dependency is not None:
+                return candidate
+        self.skipTest("no scout candidate with dependency data on disk")
+
+    # ---------------------------------------------------------- the sign flip
+    def test_selectivity_delta_is_negated_not_copied(self):
+        scout = self._scout_candidate()
+        self.assertGreater(
+            scout.dependency.selectivity_delta, 0,
+            msg="scout convention is other-minus-target, positive means selective",
+        )
+        result = to_candidate(scout, interaction_support=0.8, assay="co-IP")
+        self.assertTrue(result.ok, msg=result.refusal)
+        candidate = result.candidate
+        assert candidate is not None
+
+        self.assertAlmostEqual(
+            candidate.dependency.selectivity_delta,
+            -scout.dependency.selectivity_delta, places=9,
+        )
+        # And it must agree with the medians, which is what ingest checks.
+        implied = (
+            candidate.dependency.median_target_effect
+            - candidate.dependency.median_other_effect
+        )
+        self.assertLess(
+            abs(implied - candidate.dependency.selectivity_delta), 0.02
+        )
+
+    def test_adapted_candidate_survives_ingest(self):
+        bundle, refusals, _ = to_input_bundle(
+            [self._scout_candidate()],
+            interaction_support={"SELECTIVE_TF": 0.8},
+            assays={"SELECTIVE_TF": "co-IP"},
+        )
+        self.assertEqual(refusals, [])
+        report, accepted = ingest(bundle)
+        self.assertTrue(report.ok, msg=report.rejected_candidates)
+        self.assertEqual(report.rejected_candidates, [])
+        self.assertEqual(len(accepted), 1)
+
+    # ------------------------------------------------------------- refusals
+    def test_adapter_refuses_to_invent_interaction_support(self):
+        """No default. A number nobody measured must not clear a gate."""
+        with self.assertRaises(TypeError):
+            to_mediator_evidence(  # type: ignore[call-arg]
+                self._link("elk1"),
+                transcription_factor="ELK1",
+                assay="co-IP",
+                source_id="SRC-1",
+                evidence_ids=["EV-1"],
+            )
+
+    def test_missing_support_leaves_the_link_unsupported(self):
+        mediator = to_mediator_evidence(
+            self._link("elk1"), transcription_factor="ELK1",
+            interaction_support=None, assay=None, source_id=None, evidence_ids=[],
+        )
+        self.assertFalse(mediator.is_supported)
+
+    def test_calibration_control_is_refused_by_default(self):
+        from dependency_scout import models as ds  # noqa: PLC0415
+
+        scout = self._scout_candidate()
+        elk1 = ds.RankedCandidate(
+            gene="ELK1", dependency=scout.dependency, mediator=self._link("elk1")
+        )
+        result = to_candidate(elk1, interaction_support=0.9, assay="cryo-EM")
+        self.assertFalse(result.ok)
+        self.assertIn("calibration control", result.refusal or "")
+
+    def test_candidate_awaiting_dependency_data_is_refused(self):
+        from dependency_scout import models as ds  # noqa: PLC0415
+
+        ranked = ds.RankedCandidate(gene="RUNX2", mediator=self._link("runx2"))
+        result = to_candidate(ranked, interaction_support=0.8, assay="co-IP")
+        self.assertFalse(result.ok)
+        self.assertIn("awaiting quantitative dependency data", result.refusal or "")
+
+    # ------------------------------------------------- the two worked examples
+    def test_elk1_example_round_trips_as_direct(self):
+        mediator = to_mediator_evidence(
+            self._link("elk1"), transcription_factor="ELK1",
+            interaction_support=0.9, assay="cryo-EM structure",
+            source_id="SRC-1", evidence_ids=["EV-1"],
+        )
+        self.assertEqual(mediator.interaction_type, "direct_binding")
+        self.assertTrue(mediator.interacting_region_mapped)
+        self.assertTrue(mediator.ready_for_structural_modeling)
+        self.assertEqual(
+            mediator.ready_for_structural_modeling,
+            self._link("elk1").ready_for_structural_modeling,
+        )
+
+    def test_cebpb_example_stays_rejected(self):
+        link = self._link("cebpb")
+        mediator = to_mediator_evidence(
+            link, transcription_factor="CEBPB",
+            interaction_support=0.6, assay="whole-protein pull-down",
+            source_id="SRC-1", evidence_ids=["EV-1"],
+        )
+        self.assertEqual(mediator.interaction_type, "complex_member")
+        self.assertFalse(mediator.interacting_region_mapped)
+        self.assertFalse(mediator.ready_for_structural_modeling)
+
+        scout = self._scout_candidate()
+        candidate = to_candidate(
+            scout.model_copy(update={"mediator": link}),
+            interaction_support=0.6, assay="whole-protein pull-down",
+        ).candidate
+        assert candidate is not None
+        outcome = evaluate_gates(candidate, RunConfig().gates)
+        self.assertIn("interface_region_mapped", outcome.failed_gates)
+
+    def test_every_claim_citation_becomes_a_public_source(self):
+        result = to_candidate(
+            self._scout_candidate().model_copy(
+                update={"mediator": self._link("elk1")}
+            ),
+            interaction_support=0.9, assay="cryo-EM",
+            allow_calibration_only=True,
+        )
+        self.assertTrue(result.ok, msg=result.refusal)
+        citations = {
+            citation
+            for claim in self._link("elk1").claims
+            for citation in claim.citations
+        }
+        minted = [s for s in result.sources if s.version == "as-cited"]
+        self.assertGreaterEqual(len(minted), 1)
+        self.assertLessEqual(len(minted), len(citations))
+        for source in minted:
+            self.assertTrue(source.url.startswith("https://"))
+
+    def test_vocabulary_maps_are_bijective(self):
+        self.assertEqual(
+            set(SUPPORT_TO_INTERPRETATION.values()), set(INTERPRETATION_TO_SUPPORT)
+        )
+        for support, interpretation in SUPPORT_TO_INTERPRETATION.items():
+            self.assertEqual(INTERPRETATION_TO_SUPPORT[interpretation], support)
+
+    # --------------------------------------------------------- done-when
+    def test_scout_dependency_alone_cannot_reach_a_hero(self):
+        """Dependency numbers without a mapped Mediator contact go nowhere.
+
+        `dependency-scout discover` emits candidates with a default, empty
+        `MediatorLink`. That is the correct outcome, not a gap in the adapter:
+        a selective dependency with no mapped contact point is the negative
+        control PROJECT.md names.
+        """
+        bundle, _, _ = to_input_bundle(
+            [self._scout_candidate()],
+            interaction_support={"SELECTIVE_TF": 0.8},
+            assays={"SELECTIVE_TF": "co-IP"},
+        )
+        orchestrator = self.make_orchestrator("adapter-nohero")
+        orchestrator.init_run(bundle)
+        orchestrator.run_until_checkpoint()
+        state = orchestrator.store.load_state()
+
+        self.assertEqual(state.status, "awaiting_human")
+        self.assertEqual(state.eligible_candidate_ids, [])
+        rejections = orchestrator.store.read_jsonl(orchestrator.rejections_path)
+        self.assertTrue(
+            any("interface_region_mapped" in r["failed_gates"] for r in rejections)
+        )
+
+    def test_joined_dependency_and_mapped_contact_reaches_the_hero_checkpoint(self):
+        """The done-when: real numbers plus a mapped contact reach the gate.
+
+        This is the join the project needs — Vraj's dependency numbers on the
+        same gene as Andrey's mapped Mediator contact.
+        """
+        scout = self._scout_candidate()
+        # The scout fixture measures 4 models, below the 5-model floor (and well
+        # below Kevin's n>=15). Raise it to a realistic count so this test
+        # exercises the join rather than re-testing the sample-support gate.
+        dependency = scout.dependency.model_copy(
+            update={"n_target_models": 15, "n_other_models": 400}
+        )
+        joined = scout.model_copy(
+            update={"mediator": self._link("runx2"), "dependency": dependency}
+        )
+        bundle, refusals, _ = to_input_bundle(
+            [joined],
+            interaction_support={scout.name: 0.8},
+            assays={scout.name: "crosslinking mass spectrometry"},
+        )
+        self.assertEqual(refusals, [])
+
+        orchestrator = self.make_orchestrator("adapter-e2e")
+        orchestrator.init_run(bundle)
+        checkpoint = orchestrator.run_until_checkpoint()
+
+        self.assertEqual(orchestrator.store.load_state().status, "awaiting_human")
+        self.assertIsNotNone(
+            checkpoint.recommended_candidate_id,
+            msg="a mapped contact with real dependency numbers should reach a hero",
+        )
+        # The contact is mapped, so readiness must not complain about that.
+        # It blocks on sequences, which the adapter does not carry — those are
+        # fetched in the structure stage (A4).
+        readiness = checkpoint.structural_readiness or ""
+        self.assertNotIn("no mapped interacting region", readiness)
+        self.assertIn("sequence", readiness)
+
+    def test_bundle_refuses_when_nothing_converts(self):
+        from dependency_scout import models as ds  # noqa: PLC0415
+
+        with self.assertRaises(ConversionRefused):
+            to_input_bundle([ds.RankedCandidate(gene="X", mediator=self._link("runx2"))])
 
 
 class MediatorContractParityTests(unittest.TestCase):

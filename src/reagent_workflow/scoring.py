@@ -26,7 +26,9 @@ def _linear(value: float, low: float, high: float) -> float:
 
 def score_candidate(candidate: CandidateHypothesis, config: RunConfig) -> CandidateScorecard:
     dependency = candidate.dependency
-    mediator = candidate.mediator
+    # ``candidate.mediator`` is the attribute name; what it holds is general
+    # interaction evidence between the target gene and its partner.
+    interaction = candidate.mediator
     tractability = candidate.tractability
     weights = config.weights
     components: list[ScoreComponent] = []
@@ -112,37 +114,40 @@ def score_candidate(candidate: CandidateHypothesis, config: RunConfig) -> Candid
         evidence_ids=normal_ids,
     ))
 
-    # -- Mediator evidence quality -------------------------------------------
+    # -- interaction evidence quality ----------------------------------------
     # Direct binding assays outrank inference; an unsupported link is missing.
     interaction_rank = {
         "direct_binding": 1.0, "complex_member": 0.7,
         "genetic": 0.5, "inferred": 0.25, None: 0.0,
     }
-    mediator_supported = mediator.is_supported
-    if mediator_supported:
-        support = mediator.interaction_support or 0.0
-        type_factor = interaction_rank.get(mediator.interaction_type, 0.0)
-        mediator_value = _clamp(support * type_factor)
+    interaction_supported = interaction.is_supported
+    if interaction_supported:
+        support = interaction.interaction_support or 0.0
+        type_factor = interaction_rank.get(interaction.interaction_type, 0.0)
+        interaction_value = _clamp(support * type_factor)
     else:
-        mediator_value = 0.0
+        interaction_value = 0.0
     components.append(ScoreComponent(
-        name="mediator_evidence_quality",
+        name="interaction_evidence_quality",
         definition=(
-            "Strength of the TF-Mediator interaction evidence, weighted by assay type "
-            "(direct binding 1.0, complex membership 0.7, genetic 0.5, inferred 0.25). "
-            "Requires a support value, a named assay, a source, and evidence records."
+            "Strength of the target-partner interaction evidence, weighted by assay "
+            "type (direct binding 1.0, complex membership 0.7, genetic 0.5, inferred "
+            "0.25). Requires a support value, a named assay, a source, and evidence "
+            "records."
         ),
-        raw=mediator.interaction_support if mediator_supported else None,
-        unit="support_fraction" if mediator_supported else None,
+        raw=interaction.interaction_support if interaction_supported else None,
+        unit="support_fraction" if interaction_supported else None,
         normalization="support value multiplied by the assay-type factor, clamped to [0,1]",
-        normalized=mediator_value,
+        normalized=interaction_value,
+        # TODO: the weight field is still named ``mediator_evidence_quality`` in
+        # config.ScoringWeights; the component it weights is now general.
         weight=weights.mediator_evidence_quality,
-        missing=not mediator_supported,
+        missing=not interaction_supported,
         uncertainty=(
-            "; ".join(mediator.limitations) if mediator.limitations
-            else (None if mediator_supported else "TF-Mediator link is unsupported")
+            "; ".join(interaction.limitations) if interaction.limitations
+            else (None if interaction_supported else "target-partner link is unsupported")
         ),
-        evidence_ids=list(mediator.evidence_ids),
+        evidence_ids=list(interaction.evidence_ids),
     ))
 
     # -- structural tractability ---------------------------------------------
@@ -153,7 +158,7 @@ def score_candidate(candidate: CandidateHypothesis, config: RunConfig) -> Candid
     if tractability.experimental_structure_id:
         tract_points += 0.5
         tract_notes.append(f"experimental structure {tractability.experimental_structure_id}")
-    if tractability.tf_sequence and tractability.mediator_sequence:
+    if tractability.target_sequence and tractability.partner_sequence:
         tract_points += 0.3
         tract_notes.append("both sequences available")
     if tractability.domain_bounded:

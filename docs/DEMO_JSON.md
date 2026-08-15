@@ -16,6 +16,33 @@ reagent-agent demo <run_id> --by "<name>"     # full demo, emits demo.json too
 A ready-to-build-against file exists now, from a fixture run:
 `runs/<run_id>/demo.json`. It is ~46 KB on the fixture run and loads with `JSON.parse`.
 
+## Schema 1.1 — target-agnostic vocabulary
+
+The pipeline is now general across target classes; TF–Mediator is one test case.
+Candidate rows name a `target_gene` and a `partner_gene`, plus optional free-text
+`target_class` / `partner_class` ("transcription factor", "Mediator subunit",
+"kinase"), which may be `null`.
+
+**Nothing you have already built breaks, except the two chain steps below.**
+Every renamed field is *also* still emitted under its old name with an identical
+value, mirrored by a validator so the pair cannot drift:
+
+| new | deprecated alias, still emitted |
+|---|---|
+| `candidates[].target_gene` | `transcription_factor` |
+| `candidates[].partner_gene` | `mediator_subunit` |
+| `candidates[].target_region` | `tf_region` |
+| `structure.target_region` | `tf_region` |
+| `summary.target_gene` | `transcription_factor` |
+| `summary.partner_gene` | `mediator_subunit` |
+
+Two gate names also changed, which shows up in `gate_failures[].gate`:
+`mediator_support` → `interaction_support`, and `mediator_region_mapped` →
+`interface_region_mapped`.
+
+Migrate when convenient; say the word and I will drop the aliases once the
+screens read the new names.
+
 ## Two guarantees you can build on
 
 1. **Every key is always present.** Missing data is `null` or `[]`, never an
@@ -27,7 +54,7 @@ A ready-to-build-against file exists now, from a fixture run:
    row. `evidence[]` and `sources[]` are there when you want the full table, not
    because a row needs them.
 
-The shape is frozen at `schema_version: "1.0"`. If a field changes meaning the
+The shape is frozen at `schema_version: "1.1"`. If a field changes meaning the
 version bumps and I tell you. Adding a new optional field will not break you,
 because you are reading keys you already know.
 
@@ -35,7 +62,7 @@ because you are reading keys you already know.
 
 | Key | Type | For |
 |---|---|---|
-| `schema_version` | `"1.0"` | guard |
+| `schema_version` | `"1.1"` | guard |
 | `generated_at` | ISO8601 | footer |
 | `run` | object | provenance strip |
 | `summary` | object | screen #14 |
@@ -59,8 +86,10 @@ Both arrays hold the identical object, so one render function does both.
   "candidate_id": "CAND-SELECTIVE",
   "rank": 1,                       // null when rejected
   "status": "hero",                // "hero" | "eligible" | "rejected"
-  "transcription_factor": "TFDEMOA",
-  "mediator_subunit": "MEDDEMO1",
+  "target_gene": "TFDEMOA",          // alias also emitted: transcription_factor
+  "partner_gene": "MEDDEMO1",        // alias also emitted: mediator_subunit
+  "target_class": null,              // free text, e.g. "transcription factor"
+  "partner_class": null,
   "disease_context": "…",
   "hypothesis": "…",
 
@@ -82,14 +111,14 @@ Both arrays hold the identical object, so one render function does both.
 
   "involvement": "direct",         // direct | indirect | predicted | unknown
   "interacting_region_mapped": true,
-  "tf_region": "activation domain, residues 22-33",
+  "target_region": "activation domain, residues 22-33",  // alias: tf_region
   "interface_tractability": "folded_domain",  // short_linear_motif | folded_domain | unknown
   "screening_concerns": ["…"],     // advisory, not a gate
   "calibration_only": false,       // ELK1/ELF3 controls — never show as a result
 
   "gate_eligible": true,
   "gate_failures": [               // [] when eligible
-    { "gate": "mediator_region_mapped", "reason": "…full sentence…" }
+    { "gate": "interface_region_mapped", "reason": "…full sentence…" }
   ],
 
   "claims": [
@@ -117,8 +146,8 @@ PROJECT.md:
 |---|---|---|
 | `CAND-BROAD` | `broad_essentiality` | pan-essential TF |
 | `CAND-OVEREXPRESSED` | `dependency_strength` | overexpressed, no dependency |
-| `CAND-PULLDOWN-ONLY` | `mediator_region_mapped` | association, no mapped contact |
-| `CAND-UNSUPPORTED-MEDIATOR` | `mediator_support` | no assay, no source |
+| `CAND-PULLDOWN-ONLY` | `interface_region_mapped` | association, no mapped contact |
+| `CAND-UNSUPPORTED-MEDIATOR` | `interaction_support` | no assay, no source |
 
 ## `structure` — screen #12
 
@@ -126,13 +155,13 @@ PROJECT.md:
 {
   "status": "predicted",           // "none" | "predicted" | "experimental"
   "candidate_id": "…",
-  "tf_region": "…",                // the mapped region, for the pocket callout
+  "target_region": "…",            // the mapped region, for the pocket callout (alias: tf_region)
   "interface_residues": {},        // {} until a real target is modelled
   "results": [
     { "request_id": "…", "model": "boltz2", "purpose": "complex_interface",
       "status": "cached", "source": "fixture",
       "confidence": { "plddt": 0.81, "ptm": 0.74, "iptm": 0.66, "avg_pae": 8.4 },
-      "chain_map": { "A": "transcription_factor", "B": "mediator_subunit" },
+      "chain_map": { "A": "target", "B": "partner" },
       "limitations": ["…"], "unresolved_questions": ["…"] }
   ],
   "comparison_verdict": "inconsistent",   // consistent | inconsistent | insufficient
@@ -172,18 +201,25 @@ yours is the real one.
 
 ## `summary.chain` — screen #14
 
+> **BREAKING in schema 1.1 — two step names changed, with no aliases.**
+> `transcription_factor` → **`target`**, and `mediator_contact` →
+> **`partner_contact`**. I did not emit duplicate hops, because a duplicated
+> step renders as a duplicated row. If screen #14 matches on step names, this is
+> the one place you have to edit.
+
 Five hops, in order, each with a status so you can colour the arrow:
 
 ```jsonc
-[ { "step": "disease",              "value": "…", "status": "established", "detail": "…" },
-  { "step": "transcription_factor", "value": "TFDEMOA", "status": "established" },
-  { "step": "mediator_contact",     "value": "TFDEMOA-MEDDEMO1", "status": "established" },
-  { "step": "interface",            "value": "inconsistent", "status": "predicted" },
-  { "step": "compounds",            "value": "not_run", "status": "blocked" } ]
+[ { "step": "disease",         "value": "…", "status": "established", "detail": "…" },
+  { "step": "target",          "value": "TFDEMOA", "status": "established" },
+  { "step": "partner_contact", "value": "TFDEMOA-MEDDEMO1", "status": "established" },
+  { "step": "interface",       "value": "inconsistent", "status": "predicted" },
+  { "step": "compounds",       "value": "not_run", "status": "blocked" } ]
 ```
 
-`status` is one of `established`, `predicted`, `missing`, `blocked`. The steps
-and their order are fixed, so the layout can be static.
+`status` is one of `established`, `predicted`, `missing`, `blocked`. The step
+count, their order, and the status vocabulary are unchanged, so the layout stays
+static.
 
 ## What is not in here, deliberately
 

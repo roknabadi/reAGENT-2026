@@ -33,10 +33,17 @@ CACHE_DIR = FIXTURE_DIR / "structure_cache"
 # a plausible complex prediction paired with one partner that is only weakly
 # ordered in isolation, so the comparison reports a real disagreement rather
 # than a uniformly confident and uninformative "consistent".
+# Keyed by chain role. The roles are now target/partner rather than
+# transcription_factor/mediator_subunit; the values stay glued to the chains
+# they described. The target chain is the deliberately low-confidence one
+# (pLDDT 0.62 against the partner's 0.88) — that asymmetry is what makes the
+# comparison report a real disagreement instead of a uniformly confident and
+# uninformative "consistent". Swapping these two silently changes the demo's
+# scientific outcome.
 CONFIDENCE = {
     "boltz2": {"plddt": 0.81, "ptm": 0.74, "iptm": 0.66, "avg_pae": 8.4},
-    "esmfold2:transcription_factor": {"plddt": 0.62, "ptm": 0.58, "avg_pae": 12.1},
-    "esmfold2:mediator_subunit": {"plddt": 0.88, "ptm": 0.83, "avg_pae": 5.7},
+    "esmfold2:target": {"plddt": 0.62, "ptm": 0.58, "avg_pae": 12.1},
+    "esmfold2:partner": {"plddt": 0.88, "ptm": 0.83, "avg_pae": 5.7},
 }
 
 UNRESOLVED = {

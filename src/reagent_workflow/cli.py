@@ -15,6 +15,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from .benchflow_export import (
     build_trace_manifest,
@@ -51,9 +52,53 @@ def _print(payload: object) -> None:
 
 
 # ----------------------------------------------------------------- commands
+def _parse_support(pairs: list[str] | None) -> dict[str, float]:
+    """`--interaction-support GENE=0.8` — a human supplies the number, not us."""
+    values: dict[str, float] = {}
+    for pair in pairs or []:
+        gene, _, raw = pair.partition("=")
+        if not gene or not raw:
+            raise ValueError(f"expected GENE=VALUE, got {pair!r}")
+        values[gene.strip()] = float(raw)
+    return values
+
+
+def _bundle_from_ranked(
+    path: Path,
+    support: dict[str, float],
+    assays: dict[str, str],
+) -> tuple[Any, list[str], list[str]]:
+    """Convert `dependency-scout discover --output` JSON into a runnable bundle."""
+    from dependency_scout.models import RankedCandidate  # noqa: PLC0415
+
+    from .adapters import to_input_bundle  # noqa: PLC0415
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, dict):
+        payload = payload.get("candidates", [payload])
+    ranked = [RankedCandidate.model_validate(row) for row in payload]
+    return to_input_bundle(ranked, interaction_support=support, assays=assays)
+
+
 def cmd_init(args: argparse.Namespace) -> int:
-    bundle_path = Path(args.input) if args.input else FIXTURE_BUNDLE
-    bundle = load_bundle_file(bundle_path)
+    conversion_notes: dict[str, list[str]] = {}
+    if getattr(args, "from_ranked", None):
+        from .adapters import ConversionRefused  # noqa: PLC0415
+
+        try:
+            bundle, refusals, losses = _bundle_from_ranked(
+                Path(args.from_ranked),
+                _parse_support(args.interaction_support),
+                dict(pair.split("=", 1) for pair in (args.assay or [])),
+            )
+        except (ConversionRefused, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        conversion_notes = {"refused": refusals, "losses": losses}
+        bundle_path = Path(args.from_ranked)
+    else:
+        bundle_path = Path(args.input) if args.input else FIXTURE_BUNDLE
+        bundle = load_bundle_file(bundle_path)
     store = _store(args)
     orchestrator = Orchestrator(store, RunConfig(), repo_root=Path.cwd())
     try:
@@ -68,6 +113,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         "fixture_run": state.fixture_run,
         "input": str(bundle_path),
         "candidates": len(bundle.candidates),
+        **conversion_notes,
     })
     return 0
 
@@ -400,6 +446,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     init = with_run(sub.add_parser("init", help="create a run from an input bundle"))
     init.add_argument("--input", help="path to a candidates bundle (default: fixture)")
+    init.add_argument(
+        "--from-ranked",
+        help="dependency-scout discover output (JSON list of RankedCandidate); "
+        "converted through the adapter, refusals and losses reported",
+    )
+    init.add_argument(
+        "--interaction-support", action="append", metavar="GENE=VALUE",
+        help="human-supplied TF-Mediator support value. Without one the link "
+        "stays unsupported and the gate rejects it; the adapter never invents it.",
+    )
+    init.add_argument(
+        "--assay", action="append", metavar="GENE=NAME",
+        help="assay backing the interaction support value",
+    )
     init.add_argument("--force", action="store_true", help="overwrite an existing run")
     init.set_defaults(func=cmd_init)
 
