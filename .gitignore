@@ -1,0 +1,15 @@
+.env
+.venv/
+.proto/
+.paperclip/
+.modal.toml
+.cache/
+tools/
+bin/
+downloads/
+apps/
+vendor/
+outputs/
+__pycache__/
+*.pyc
+.DS_Store
