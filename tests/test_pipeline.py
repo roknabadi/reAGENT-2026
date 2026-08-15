@@ -120,6 +120,27 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("SELECTIVE_TF", picked)
         self.assertIn("calibration control", render_markdown(sl))
 
+    def test_pou2f3_is_the_case_the_dependency_gate_cannot_see(self):
+        """POU2F3 has a mapped short-linear-motif contact with a ligandable groove
+        and is, per the literature, essential in SCLC-P and dispensable in every
+        other SCLC subtype. Our median-based gate cannot detect that (see
+        team/FINDINGS_DEPMAP_ROUND01.md section 4), so the candidate must come out
+        'direct' on evidence while honestly reporting that it has no numbers."""
+        link = MediatorLink.model_validate_json(
+            Path("examples/coactivator_link_pou2f3_ocat1.json").read_text(encoding="utf-8"))
+        self.assertEqual(link.partner_gene, "POU2AF2")
+        self.assertIs(link.involvement, Involvement.DIRECT)
+        self.assertIs(link.tractability, InterfaceTractability.SHORT_LINEAR_MOTIF)
+        self.assertTrue(link.ready_for_structural_modeling)
+        self.assertEqual(link.screening_concerns, [])  # a real target, not a control
+        self.assertIn("188-192", link.tf_region)
+        # The ligandability claim is a CASTpFold computation, never experimental.
+        pocket = next(c for c in link.claims if "ligandable" in c.statement)
+        self.assertIs(pocket.support, SupportType.COMPUTATIONAL_PREDICTION)
+        ok, reason = RankedCandidate(gene="POU2F3", mediator=link).shortlistable
+        self.assertFalse(ok)
+        self.assertIn("awaiting quantitative dependency data", reason)
+
     def test_the_contract_is_not_mediator_specific(self):
         """The pitch claims the pipeline is general across target classes. Sasha's
         cross-complex validation list (team/VALIDATION_TARGETS.md) tests that.

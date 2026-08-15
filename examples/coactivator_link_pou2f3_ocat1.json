@@ -1,0 +1,33 @@
+{
+  "partner_gene": "POU2AF2",
+  "tractability": "short_linear_motif",
+  "calibration_only": false,
+  "interacting_region_mapped": true,
+  "tf_region": "POU2F3 LEELE motif, residues 188-192, in the alpha-1 helix of the POU-specific (POU_S) domain; secondary contact at conserved leucines L235 and L237 in the alpha3-alpha4 turn",
+  "claims": [
+    {
+      "statement": "Structures of POU2F3 DNA-binding domain bound to the coactivator OCA-T1 (POU2AF2) and to OCA-T2 (POU2AF3) on DNA reveal a tripartite POU2F3-OCA-DNA interface. The POU2F3 LEELE motif at residues 188-192 in the alpha-1 helix of the POU_S domain contacts the OCA peptide, with additional contacts from conserved leucines L235 and L237 in the turn connecting the alpha3 and alpha4 helices.",
+      "support": "direct_experimental",
+      "citations": ["https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12755459/"],
+      "note": "PDB 9PFP (OCA-T1 complex), 9PFN and 9PFO (OCA-T2 complex, low and high resolution). Retrieved via Paperclip 2026-08-15."
+    },
+    {
+      "statement": "Alanine substitutions in the POU2F3 LEELE motif - L188A, E189A, L191A and E192A - impair binding to OCA-T1. An interaction-deficient OCA-T1 V22E mutant is used as a negative control.",
+      "support": "genetic_functional",
+      "citations": ["https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12755459/"],
+      "note": "Point mutations in the mapped motif produce loss of binding, so occupancy of this surface is coupled to the interaction."
+    },
+    {
+      "statement": "The structure reveals a shallow but highly conserved groove on POU2F3 that cradles the OCA peptide, described by the authors as a potential ligandable surface. CASTpFold analysis identifies a surface-exposed pocket of approximately 1022 cubic Angstroms and a smaller 38 cubic Angstrom pocket within the DNA major groove bordered by the ordered OCA-T1 coil.",
+      "support": "computational_prediction",
+      "citations": ["https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12755459/"],
+      "note": "Pocket volumes are a CASTpFold computation on the experimental structure, not a measured binding site. Ligandability is a prediction and must not be reported as demonstrated druggability."
+    },
+    {
+      "statement": "Approximately 15% of small cell lung cancers express POU2F3 and other tuft cell markers, termed SCLC-P. POU2F3 is essential for the growth of these cells in vitro but dispensable in other SCLC subtypes. POU2F3-positive tuft cell-like cancers also occur in thymus, prostate, bladder, colon, pancreas and pharynx.",
+      "support": "genetic_functional",
+      "citations": ["https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12755459/"],
+      "note": "This is the subpopulation-dependency pattern that team/FINDINGS_DEPMAP_ROUND01.md section 4 shows our median-based gate structurally cannot detect: essential in one molecular subtype, dispensable in the rest of the same lineage."
+    }
+  ]
+}
