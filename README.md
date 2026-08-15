@@ -118,3 +118,75 @@ dependency-scout validate-proto examples/proto_screen_spec.smoke.json \
 
 See `docs/ARCHITECTURE.md`. Real analysis requires official public DepMap
 files; the included fixture only tests behavior.
+
+## Agent workflow: candidates → hero hypothesis → structure → next experiment
+
+`src/reagent_workflow` is the orchestrated agent. It runs
+
+```text
+INGEST → GATE → SCORE → HERO_CHECKPOINT → STRUCTURE → NEXT_EXPERIMENT → COMPLETE
+```
+
+and stops at the hero checkpoint until a named human approves. The filesystem is
+the source of truth: every run lives in `runs/<run_id>/` and resumes from disk
+with no conversation history. The agent's constitution is [`SOUL.md`](SOUL.md);
+each stage loads only the rules it needs.
+
+### Demo
+
+```bash
+source ./activate.sh
+python -m reagent_workflow.cli demo demo-001 --by "your-name"
+```
+
+The package also installs `agent` and `reagent-agent` console scripts. Prefer
+`reagent-agent` or the `python -m` form: `agent` is a common binary name (Cursor
+ships one) and may be shadowed on your `PATH`.
+
+That single command runs the whole loop on synthetic fixtures: gates and
+ranking, the hero checkpoint, approval, a cached Boltz2/ESMFold2 comparison, the
+next experiment, the final report, and a BenchFlow JSONL trace it then validates
+with the installed BenchFlow.
+
+### Step by step
+
+Shown with the `reagent-agent` script; `python -m reagent_workflow.cli` takes the
+same arguments.
+
+```bash
+reagent-agent init demo-002                     # defaults to the fixture bundle
+reagent-agent run demo-002                      # runs to the hero checkpoint, stops
+reagent-agent status demo-002                   # state, ranking, manifest drift
+reagent-agent checkpoint show demo-002          # the case for and against
+reagent-agent checkpoint resolve demo-002 demo-002-hero \
+    --decision approve --by "your-name"
+reagent-agent structure validate demo-002       # compile Proto inputs, run nothing
+reagent-agent structure run demo-002            # cached Boltz2 + ESMFold2, no Modal
+reagent-agent experiment demo-002               # next experiment + self-improvement
+reagent-agent report demo-002                   # final_report.md
+reagent-agent trace demo-002 --summary          # internal event counts
+reagent-agent trace export-benchflow demo-002   # benchflow_trace.jsonl + manifest
+reagent-agent trace validate-benchflow demo-002 # validated by BenchFlow itself
+reagent-agent resume demo-002                   # continue from whatever is on disk
+reagent-agent evidence show demo-002 EV-CONTRA-A1   # rehydrate compacted detail
+```
+
+Use `--input path/to/bundle.json` on `init` to supply your own candidates; the
+accepted shape is `InputBundle` in `src/reagent_workflow/ingest.py`.
+
+### What it does and does not claim
+
+- Boltz2 predicts the TF–Mediator complex; ESMFold2 checks monomers only and is
+  never used as an interface predictor.
+- Model agreement is recorded as agreement, not as validation.
+- Missing evidence scores zero and lowers completeness; its weight is never
+  redistributed.
+- Broadly essential genes and unsupported Mediator links are rejected, with the
+  reason written to `decisions/rejections.jsonl`.
+- Live Modal dispatch is off by default and needs both an approved checkpoint
+  and an explicit `--allow-live-modal`.
+- The bundled fixtures are synthetic test data, labelled as such in every
+  artifact they touch. They carry no scientific weight.
+
+Traces are written locally and never uploaded; publication needs explicit
+approval per [`benchflow/README.md`](benchflow/README.md).

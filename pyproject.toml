@@ -11,6 +11,9 @@ dependencies = ["pandas>=2", "pydantic>=2", "scipy>=1"]
 
 [project.scripts]
 dependency-scout = "dependency_scout.cli:main"
+agent = "reagent_workflow.cli:main"
+# `agent` is a common binary name (Cursor ships one). This alias is unambiguous.
+reagent-agent = "reagent_workflow.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
