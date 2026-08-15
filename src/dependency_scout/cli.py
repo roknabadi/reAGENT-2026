@@ -4,8 +4,9 @@ from pathlib import Path
 from .depmap import analyze_gene_effects
 from .models import ProtoScreenSpec
 from .planner import next_actions
-from .proto_bridge import validate_proto_spec
 from .ranking import rank_all
+# proto_bridge is imported inside validate-proto only: it needs proto_tools, and
+# discover/plan/shortlist must still run on a machine without Proto installed.
 
 
 def dump(value, output):
@@ -24,6 +25,10 @@ def main():
     discover.add_argument("--synthetic", action="store_true"); discover.add_argument("--output")
     plan = sub.add_parser("plan"); plan.add_argument("candidate_json"); plan.add_argument("--index", type=int, default=0); plan.add_argument("--output")
     proto = sub.add_parser("validate-proto"); proto.add_argument("spec_json"); proto.add_argument("--output")
+    short = sub.add_parser("shortlist", help="Stage-1 A/B/C/D table; stops before structural modeling")
+    short.add_argument("candidate_json"); short.add_argument("--scope", required=True)
+    short.add_argument("--partner", default="MED23"); short.add_argument("--top", type=int, default=3)
+    short.add_argument("--markdown", action="store_true"); short.add_argument("--output")
     args = parser.parse_args()
     if args.command == "discover":
         genes = set(args.genes.split(",")) if args.genes else None
@@ -35,7 +40,21 @@ def main():
         values = json.loads(Path(args.candidate_json).read_text(encoding="utf-8"))
         candidate = RankedCandidate.model_validate(values[args.index] if isinstance(values, list) else values)
         dump([a.model_dump(mode="json") for a in next_actions(candidate)], args.output)
+    elif args.command == "shortlist":
+        from .models import RankedCandidate
+        from .report import build_shortlist, render_markdown
+        values = json.loads(Path(args.candidate_json).read_text(encoding="utf-8"))
+        candidates = [RankedCandidate.model_validate(v) for v in values]
+        sl = build_shortlist(candidates, disease_scope=args.scope,
+                             partner_gene=args.partner, top_n=args.top)
+        if args.markdown:
+            text = render_markdown(sl)
+            if args.output: Path(args.output).write_text(text, encoding="utf-8")
+            else: print(text, end="")
+        else:
+            dump(sl.model_dump(mode="json"), args.output)
     else:
+        from .proto_bridge import validate_proto_spec
         spec = ProtoScreenSpec.model_validate_json(Path(args.spec_json).read_text(encoding="utf-8"))
         dump(validate_proto_spec(spec), args.output)
 

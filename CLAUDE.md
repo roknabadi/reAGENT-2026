@@ -20,3 +20,9 @@
   blocker to `team/status/<name>.md`, and log decisions with their evidence in
   `team/DECISIONS.md`. Do not proceed past an `OPEN` gate in
   `team/CHECKPOINTS.md`; abstain and post a blocker instead.
+- Work on a branch. Never commit or push to `main` unless explicitly asked in
+  that request. `git fetch origin` at the start of a session and before each
+  push; merge `origin/main` into the branch as soon as it moves.
+- A TF–Mediator contact needs a mapped interacting region. Co-expression,
+  correlation, or a whole-protein pull-down is not contact — say so and reject
+  it rather than passing it downstream.

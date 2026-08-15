@@ -1,0 +1,34 @@
+{
+  "partner_gene": "MED23",
+  "interacting_region_mapped": true,
+  "tf_region": "ELK1 transactivation domain, MED23-binding motif (MBM) residues 374-384, sequence PSIHFWSTLS(p)P",
+  "claims": [
+    {
+      "statement": "Cryo-EM structure at 3.0 A of human MED23 bound to the phosphorylated ELK1 transactivation domain. The ELK1 MED23-binding motif (residues 374-384) binds the concave face of the MED23 core at the HR2/HR3 interface, in a site formed by helices H19, H21, H28 and H30.",
+      "support": "direct_experimental",
+      "citations": [
+        "https://doi.org/10.1038/s41467-025-59014-8",
+        "https://www.rcsb.org/structure/9F6Y"
+      ],
+      "note": "PDB 9F6Y, EMD-50242. Apo MED23 is PDB 9F76 / EMD-50247."
+    },
+    {
+      "statement": "ELK1 I376, F378 and L382 form the hydrophobic contacts with MED23. F378 binds deeply and is buried, sheltered by adjacent H377 and W379, and is surrounded in MED23 by I339 and L343 (H19), F379, G382 and S383 (H21), and V533 and M537 (H30).",
+      "support": "direct_experimental",
+      "citations": ["https://doi.org/10.1038/s41467-025-59014-8"],
+      "note": "These MED23 residues define the pocket a small molecule would have to occupy."
+    },
+    {
+      "statement": "ELK1 phosphorylated at S383 binds MED23 with a Kd of 81 nM by SPR, while only minimal interaction is detected by pull-down without phosphorylation. Mutation of the central FW motif abolishes the interaction.",
+      "support": "direct_experimental",
+      "citations": ["https://doi.org/10.1038/s41467-025-59014-8"],
+      "note": "Binding is phosphorylation-dependent; any screen against this site inherits that condition."
+    },
+    {
+      "statement": "The designed MED23 G382F mutation disrupts ELK1 binding and impairs ELK1-dependent serum-induced activation of target genes in MED23-null MEFs.",
+      "support": "genetic_functional",
+      "citations": ["https://doi.org/10.1038/s41467-025-59014-8"],
+      "note": "Point mutation in the pocket produces the expected loss of function, so occupancy of this site is coupled to transcriptional output."
+    }
+  ]
+}
