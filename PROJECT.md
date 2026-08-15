@@ -2,98 +2,44 @@
 
 ## Goal
 
-Build a Track A **AI Scientist** workflow that starts from public disease data,
-identifies a selective transcription-factor dependency, connects it to a
-Mediator interaction, and advances the strongest hypothesis toward
-structure-based drug discovery.
+Build a Track A **AI Scientist** workflow that uses public disease data to find
+a selective transcription-factor dependency, connect it to a Mediator
+interaction, and advance the strongest hypothesis toward structure-based drug
+discovery.
 
-## Why Mediator
-
-Mediator links enhancer-bound transcription factors to the promoter and RNA
+Mediator links enhancer-bound transcription factors to promoter and RNA
 polymerase II machinery. Restricting discovery to this system keeps the search
-biologically focused and makes it possible to judge structural hypotheses
-rigorously.
+biologically focused and the structural hypotheses testable.
 
-## Known examples and positive controls
+## Positive controls
 
-- **ELK1–MED23:** a structurally characterized TF–Mediator interaction with a
-  defined ELK1 interface and associated allosteric changes in MED23.
+- **ELK1–MED23:** a structurally characterized TF–Mediator interaction.
 - **ELF3–MED23:** a disease-relevant interaction in HER2-driven epithelial
-  cancers for which disruption of the ELF3–MED23 interaction has shown
-  transcriptional and antitumor effects.
+  cancers.
 
-These are validation examples of the kind of vulnerability the system should
-be capable of recovering. They are not predetermined discovery targets.
+These are validation examples, not predetermined targets.
 
 ## Workflow
 
-### 1. Discovery
+1. Mine public dependency, cancer/omics, normal-tissue, and literature data for
+   disease or cell states selectively dependent on a TF program.
+2. Identify known or plausible Mediator interactions for the leading TFs.
+3. Select one hero disease–TF–Mediator hypothesis using dependency strength,
+   specificity, normal-cell proxies, evidence quality, and tractability.
+4. Retrieve or model the interface and reject unsupported structural claims.
+5. Define a defensible pocket and run a bounded virtual screen for candidate
+   chemical starting points.
 
-Mine public dependency screens, cancer and omics datasets, normal-tissue data,
-and primary literature to find diseases or cell states unusually dependent on
-a particular transcription factor or narrow transcriptional program.
+Initial setup uses Claude Code and Tamarind. Paperclip, Proto, or Modal can be
+used when they materially improve the experiment without becoming architectural
+requirements.
 
-### 2. Mediator filtering
-
-Determine whether the leading transcription factors have known or plausible
-interactions with Mediator. Rank the resulting disease–TF–Mediator hypotheses
-by evidence quality rather than by textual plausibility alone.
-
-### 3. Convergence
-
-Nominate one strongest **hero indication–TF–Mediator pair** using explicit
-criteria:
-
-- dependency strength and prevalence;
-- disease or cell-state specificity;
-- normal-cell evidence as a safety proxy, not a safety claim;
-- quality and independence of supporting evidence;
-- structural confidence and tractability.
-
-The system must also record contradictions, missing evidence, and reasons for
-rejecting otherwise attractive candidates.
-
-### 4. Structural hypothesis
-
-Model or retrieve the selected TF–Mediator interface and evaluate its quality.
-Use known cases such as ELK1–MED23 as validation controls where appropriate.
-Do not invent an interface, binding pocket, or residue mapping when public
-evidence is insufficient.
-
-### 5. Drug-discovery hypothesis
-
-Identify a defensible pocket or interface region and run a bounded virtual
-screen to generate candidate chemical starting points. Preserve compound,
-structure, configuration, model, and scoring provenance. Treat docking and
-model scores as computational prioritization, not evidence of binding.
-
-## Initial execution environment
-
-- Claude Code for repository-level reasoning and orchestration.
-- Tamarind for accessible structural modeling and screening workflows.
-- Paperclip may be used for public literature and biological evidence.
-- Proto or Modal may be used when a specific model or additional compute
-  materially improves the experiment.
-
-The scientific contracts and repository layout should remain independent of
-any one service so components can be changed without rewriting the project.
-
-## Hackathon endpoint
-
-Produce one coherent, evidence-backed story:
+## Endpoint
 
 ```text
-disease or cell state
-        ↓
-selective TF dependency
-        ↓
-Mediator interaction
-        ↓
-structural hypothesis
-        ↓
-candidate chemical starting points
+disease/cell state → selective TF dependency → Mediator interface
+→ structural hypothesis → candidate compounds
 ```
 
-The endpoint is a falsifiable target and screening hypothesis with public
-provenance—not a claim of experimental validation, therapeutic efficacy,
-binding, selectivity, or safety.
+The result is a public, evidence-backed, falsifiable hypothesis—not a claim of
+binding, safety, efficacy, or experimental validation.
