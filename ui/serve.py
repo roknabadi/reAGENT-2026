@@ -14,6 +14,7 @@ not run, which is the whole point of the interface.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -36,24 +37,33 @@ def paperclip_search(query: str, n: int = 6) -> list[dict]:
             capture_output=True, text=True, timeout=90)
     except Exception:
         return []
+    # Parse defensively: the CLI's metadata line has already changed shape once
+    # (it now carries the journal where it used to say PMC), and a brittle parser
+    # silently reports "no papers found", which reads as a real null result.
+    ID = re.compile(r"\b((?:PMC|bio_|med_|arx_|tri_|fda_)[\w.]+)\b")
     papers, cur = [], None
     for raw in out.stdout.splitlines():
         line = raw.strip()
         if not line:
             continue
-        if line[0].isdigit() and ". " in line[:4]:
+        m = re.match(r"^(\d+)\.\s+(.*)$", line)
+        if m:
             if cur:
                 papers.append(cur)
-            cur = {"title": line.split(". ", 1)[1], "id": "", "url": "", "abstract": ""}
-        elif cur is not None and " · PMC · " in line:
-            cur["id"] = line.split(" · ")[0]
-        elif cur is not None and line.startswith("https://"):
+            cur = {"title": m.group(2), "id": "", "url": "", "abstract": ""}
+            continue
+        if cur is None:
+            continue
+        if not cur["id"] and (hit := ID.search(line)) and not line.startswith("http"):
+            cur["id"] = hit.group(1)
+        elif line.startswith("http") and not cur["url"]:
             cur["url"] = line
-        elif cur is not None and line.startswith('"'):
+        elif line.startswith('"'):
             cur["abstract"] = line.strip('"')
     if cur:
         papers.append(cur)
-    return [p for p in papers if p.get("id")]
+    # Keep anything with a title; an id-less hit is still a real retrieval.
+    return [p for p in papers if p.get("title")]
 
 
 class Handler(SimpleHTTPRequestHandler):
