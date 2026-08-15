@@ -71,3 +71,28 @@ Inspect these files first:
 - Bring laptop, charger, adapters, and photo ID.
 - Claim Modal and sponsor credits during the Day 1 lightning talks.
 
+## Hackathon build: Dependency Scout → Proto Screen
+
+The first executable slice lives in `src/dependency_scout`. It ranks public
+DepMap disease-selective dependencies, produces a bounded evidence plan, and
+compiles structural handoffs against Proto's native Vina input model.
+
+```bash
+source ./activate.sh
+python -m unittest discover -s tests -v
+
+# Clearly labeled synthetic smoke test (never scientific evidence)
+mkdir -p outputs
+dependency-scout discover --gene-effect tests/fixtures/gene_effect.csv \
+  --models tests/fixtures/models.csv --context Lung --synthetic \
+  --output outputs/demo_candidates.json
+dependency-scout plan outputs/demo_candidates.json \
+  --output outputs/demo_evidence_plan.json
+
+# Compile a public c-Abl/imatinib smoke example to Proto's native Vina contract
+dependency-scout validate-proto examples/proto_screen_spec.smoke.json \
+  --output outputs/proto_smoke.json
+```
+
+See `docs/ARCHITECTURE.md`. Real analysis requires official public DepMap
+files; the included fixture only tests behavior.

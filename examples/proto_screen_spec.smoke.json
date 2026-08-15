@@ -1,0 +1,23 @@
+{
+  "candidate_gene": "ABL1",
+  "disease_context": "Proto contract smoke test only",
+  "partner_gene": "N/A",
+  "structure_source": "pdb",
+  "pdb_id": "1IEP",
+  "receptor_path": "vendor/proto-language/proto-tools/proto_tools/tools/molecular_docking/vina/example_receptor_1iep.pdb",
+  "interface_residues": {},
+  "search_box": {
+    "mode": "reference_ligand",
+    "reference_ligand_path": "vendor/proto-language/proto-tools/proto_tools/tools/molecular_docking/vina/example_reference_imatinib.pdb",
+    "padding": 4.0
+  },
+  "ligand_smiles": [
+    "Cc1ccc(NC(=O)c2ccc(CN3CC[NH+](C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1"
+  ],
+  "tools": ["pdb-fetch-entry", "vina-docking"],
+  "public_evidence_urls": [
+    "https://www.rcsb.org/structure/1IEP",
+    "https://github.com/evo-design/proto-tools"
+  ],
+  "hypothesis_only": true
+}

@@ -1,0 +1,12 @@
+{
+  "candidate_gene": "REPLACE_WITH_PUBLIC_CANDIDATE",
+  "disease_context": "REPLACE_WITH_CONTEXT",
+  "partner_gene": "REPLACE_WITH_COACTIVATOR",
+  "structure_source": "pdb",
+  "pdb_id": "REPLACE_WITH_PDB_ID",
+  "interface_residues": {},
+  "ligand_smiles": [],
+  "tools": ["pdb-fetch-entry", "ipsae", "pdockq2"],
+  "public_evidence_urls": ["https://depmap.org/portal/data_page/"],
+  "hypothesis_only": true
+}

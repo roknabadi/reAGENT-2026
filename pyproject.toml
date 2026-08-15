@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dependency-scout"
+version = "0.1.0"
+description = "Public-only transcriptional dependency discovery with Proto structural handoffs"
+requires-python = ">=3.12"
+dependencies = ["pandas>=2", "pydantic>=2", "scipy>=1"]
+
+[project.scripts]
+dependency-scout = "dependency_scout.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
