@@ -36,13 +36,46 @@ INTERFACE = {
     "POU2F3": "examples/coactivator_link_pou2f3_ocat1.json",
     "FOXO4": "examples/coactivator_link_foxo4_kix.json",
 }
-# ELK1 MED23-binding motif and the MED23 residues lining the pocket (PMC12015215).
-STRUCTURE = {
-    "pdb_id": "9F6Y", "resolution_a": 3.0, "method": "cryo-EM",
-    "citation": "https://doi.org/10.1038/s41467-025-59014-8",
-    "chains": {"A": "MED23", "B": "ELK1 MED23-binding motif"},
-    "motif_residues": list(range(374, 385)),
-    "pocket_residues": [339, 343, 379, 382, 383, 533, 537],
+# Experimental structures we hold coordinates for, keyed by the target-partner
+# pair each one resolves. One entry per real deposition. A pair with no entry
+# gets no structure: that absence is the result, not a gap to fill with another
+# pair's coordinates or with an unreviewed prediction.
+STRUCTURES = {
+    # ELK1 MED23-binding motif and the MED23 residues lining the pocket (PMC12015215).
+    ("ELK1", "MED23"): {
+        "pdb_id": "9F6Y", "resolution_a": 3.0, "method": "cryo-EM",
+        "citation": "https://doi.org/10.1038/s41467-025-59014-8",
+        "backbone_chain": "A", "peptide_chain": "B",
+        "chains": {"A": "MED23", "B": "ELK1 MED23-binding motif"},
+        "peptide_residues": list(range(374, 385)),
+        "contact_residues": [339, 343, 379, 382, 383, 533, 537],
+        "peptide_label": "ELK1 motif 374-384",
+        "contact_label": "MED23 pocket residues",
+        "sequence": "PSIHFWSTLS(p)P",
+        "sequence_note": "residues 374-384 of the ELK1 transactivation domain. F378 buries deepest.",
+        "site_note": "The concave face at the HR2/HR3 interface. An eleven-residue motif in a "
+                     "defined groove is the tractable case - a folded-domain interface presents "
+                     "no comparable site.",
+    },
+    # POU2F3 POU domains with the OCA-T1 peptide on DNA (PMC12755459). Every
+    # highlighted residue is one the paper names: the LEELE motif and L235/L237
+    # on POU2F3, and the OCA-T1 V22 whose V22E substitution abolishes binding.
+    ("POU2F3", "POU2AF2"): {
+        "pdb_id": "9PFP", "resolution_a": 1.7, "method": "X-ray diffraction",
+        "citation": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12755459/",
+        "backbone_chain": "A", "peptide_chain": "B",
+        "chains": {"A": "POU2F3 POU domains", "B": "OCA-T1 (POU2AF2) peptide"},
+        "peptide_residues": [22],
+        "contact_residues": [188, 189, 190, 191, 192, 235, 237],
+        "peptide_label": "OCA-T1 peptide (V22 marked)",
+        "contact_label": "POU2F3 contact residues",
+        "sequence": "LEELE",
+        "sequence_note": "residues 188-192 in the alpha-1 helix of the POU_S domain; "
+                         "L235 and L237 in the alpha3-alpha4 turn add a second contact.",
+        "site_note": "A shallow, conserved groove cradling the coactivator peptide. The "
+                     "authors' CASTpFold pocket volume is a computation on this structure, "
+                     "not a measured site: ligandability here is a prediction.",
+    },
 }
 
 
@@ -57,6 +90,56 @@ def thresholds() -> dict:
         "min_models": 3, "confidence_floor": MIN_MODELS,
         "_source": "dependency_scout.ranking.gate", "_verified": "-0.5" in src,
     }
+
+
+def uniprot_accession(gene: str) -> tuple[str, str, int] | None:
+    """Reviewed human entry for a gene symbol. Returns (accession, name, length)."""
+    url = ("https://rest.uniprot.org/uniprotkb/search?query=gene_exact:"
+           f"{gene}+AND+organism_id:9606+AND+reviewed:true"
+           "&fields=accession,protein_name,length&format=json&size=1")
+    with urllib.request.urlopen(url, timeout=30) as r:
+        hits = json.load(r).get("results") or []
+    if not hits:
+        return None
+    h = hits[0]
+    name = h["proteinDescription"]["recommendedName"]["fullName"]["value"]
+    return h["primaryAccession"], name, h["sequence"]["length"]
+
+
+def alphafold_model(acc: str) -> dict | None:
+    """AlphaFold DB entry metadata. The monomer only: AFDB holds no complexes."""
+    try:
+        with urllib.request.urlopen(
+                f"https://alphafold.ebi.ac.uk/api/prediction/{acc}", timeout=30) as r:
+            entries = json.load(r)
+    except Exception as e:
+        print(f"  alphafold lookup failed for {acc}: {e}", file=sys.stderr)
+        return None
+    return entries[0] if entries else None
+
+
+def af_trace(cif: pathlib.Path) -> list[list]:
+    """CA trace with per-residue pLDDT from the B-factor column of an AFDB model."""
+    lines = cif.read_text().splitlines()
+    i = next(k for k, l in enumerate(lines) if l.startswith("_atom_site."))
+    cols = []
+    while lines[i].startswith("_atom_site."):
+        cols.append(lines[i].strip().split(".")[1])
+        i += 1
+    idx = {c: n for n, c in enumerate(cols)}
+    out = []
+    for l in lines[i:]:
+        if l.startswith("#"):
+            break
+        f = l.split()
+        if len(f) < len(cols) or f[idx["label_atom_id"]] != "CA":
+            continue
+        out.append([int(f[idx["label_seq_id"]]),
+                    round(float(f[idx["Cartn_x"]]), 2),
+                    round(float(f[idx["Cartn_y"]]), 2),
+                    round(float(f[idx["Cartn_z"]]), 2),
+                    round(float(f[idx["B_iso_or_equiv"]]), 1)])
+    return out
 
 
 def ca_trace(cif: pathlib.Path) -> dict:
@@ -149,7 +232,10 @@ def main() -> int:
             "awaiting": c.awaiting_dependency_data,
             "shortlisted": i in sl.shortlist_indices,
             "blocked_because": reason,
-            "partner": c.mediator.partner_gene,
+            # MediatorLink.partner_gene defaults to MED23. A candidate with no
+            # interface record has no proposed partner at all, and emitting the
+            # default would publish a pairing nobody claimed.
+            "partner": c.mediator.partner_gene if c.mediator.claims else None,
             "involvement": c.mediator.involvement.value,
             "region": c.mediator.tf_region,
             "region_mapped": c.mediator.interacting_region_mapped,
@@ -162,18 +248,67 @@ def main() -> int:
                        for cl in c.mediator.claims],
         })
 
-    # 3. Structure, if a local mmCIF is present.
-    structure = None
-    cif = DOWNLOADS / f"{STRUCTURE['pdb_id']}.cif"
-    if not cif.exists():
+    # 3. Structures, one per target-partner pair we have a real deposition for.
+    structures = {}
+    for (gene, partner), meta in STRUCTURES.items():
+        cif = DOWNLOADS / f"{meta['pdb_id']}.cif"
+        if not cif.exists():
+            try:
+                urllib.request.urlretrieve(
+                    f"https://files.rcsb.org/download/{meta['pdb_id']}.cif", cif)
+            except Exception as e:  # offline is fine; the panel just says so
+                print(f"structure {meta['pdb_id']} skipped: {e}", file=sys.stderr)
+                continue
+        structures[f"{gene}|{partner}"] = {
+            **meta, "gene": gene, "partner": partner, "trace": ca_trace(cif)}
+        print(f"structure {gene}-{partner} ({meta['pdb_id']}):",
+              {k: len(v) for k, v in structures[f"{gene}|{partner}"]["trace"].items()})
+    pairs = {f"{r['gene']}|{r['partner']}" for r in rows if r["partner"]}
+    print(f"structures: {len(structures)} of {len(pairs)} candidate pairs have coordinates")
+
+    # 3b. For every target with no solved complex, the AlphaFold monomer. This is
+    # the target alone, predicted, never the interface — but per-residue pLDDT
+    # says out loud how much of the protein is ordered enough to have a pocket,
+    # which is the reason most of these pairs have no complex to begin with.
+    predicted = {}
+    for gene in sorted({r["gene"] for r in rows
+                        if f"{r['gene']}|{r['partner']}" not in structures}):
         try:
-            urllib.request.urlretrieve(
-                f"https://files.rcsb.org/download/{STRUCTURE['pdb_id']}.cif", cif)
-        except Exception as e:  # offline is fine; the panel just says so
-            print(f"structure skipped: {e}", file=sys.stderr)
-    if cif.exists():
-        structure = {**STRUCTURE, "trace": ca_trace(cif)}
-        print("structure:", {k: len(v) for k, v in structure["trace"].items()})
+            up = uniprot_accession(gene)
+        except Exception as e:
+            print(f"  uniprot lookup failed for {gene}: {e}", file=sys.stderr)
+            continue
+        if not up:
+            print(f"  no reviewed human entry for {gene}", file=sys.stderr)
+            continue
+        acc, name, length = up
+        meta = alphafold_model(acc)
+        if not meta:
+            continue
+        cif = DOWNLOADS / f"AF-{acc}.cif"
+        if not cif.exists():
+            try:
+                urllib.request.urlretrieve(meta["cifUrl"], cif)
+            except Exception as e:
+                print(f"  alphafold download failed for {gene}: {e}", file=sys.stderr)
+                continue
+        trace = af_trace(cif)
+        if not trace:
+            continue
+        ordered = sum(1 for p in trace if p[4] >= 70)
+        predicted[gene] = {
+            "gene": gene, "uniprot": acc, "protein_name": name, "length": length,
+            "mean_plddt": round(meta.get("globalMetricValue") or 0.0, 1),
+            "ordered_fraction": round(ordered / len(trace), 3),
+            "model_version": meta.get("latestVersion"),
+            "source_url": f"https://alphafold.ebi.ac.uk/entry/{acc}",
+            "cif_url": meta["cifUrl"],
+            "trace": trace,
+        }
+        print(f"  alphafold {gene} ({acc}): {len(trace)} res, "
+              f"mean pLDDT {predicted[gene]['mean_plddt']}, "
+              f"{predicted[gene]['ordered_fraction']:.0%} ordered")
+    print(f"predicted monomers: {len(predicted)}")
 
     UI.mkdir(exist_ok=True)
     payload = {
@@ -182,7 +317,10 @@ def main() -> int:
         "thresholds": thresholds(),
         "landscape": landscape,
         "candidates": rows,
-        "structure": structure,
+        "structures": structures,
+        "predicted": predicted,
+        # The hero renders one fixed complex and says which; keep it addressable.
+        "structure": next(iter(structures.values()), None),
     }
     (UI / "data.json").write_text(json.dumps(payload, separators=(",", ":")) + "\n",
                                  encoding="utf-8")

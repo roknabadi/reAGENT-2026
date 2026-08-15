@@ -156,12 +156,19 @@ class Handler(SimpleHTTPRequestHandler):
             "note": "A whole-protein pull-down is association, not contact.",
             "metric": len(mapped)})
 
-        # 6 — structure
-        S = DATA.get("structure")
+        # 6 — structure, per target-partner pair rather than one fixed complex
+        structs = DATA.get("structures") or {}
+        pairs = {f"{c['gene']}|{c['partner']}" for c in cands if c["partner"]}
+        have = sorted(k for k in structs if k in pairs)
         self._sse("stage", {
-            "id": "structure", "state": "done" if S else "blocked",
-            "detail": f"PDB {S['pdb_id']} at {S['resolution_a']} Å" if S else "no structure",
-            "note": "A structure is not a binding claim."})
+            "id": "structure", "state": "done" if have else "blocked",
+            "detail": ", ".join(
+                f"{structs[k]['gene']}–{structs[k]['partner']} PDB {structs[k]['pdb_id']}"
+                f" at {structs[k]['resolution_a']} Å" for k in have)
+                if have else "no candidate pair has deposited coordinates",
+            "note": f"{len(have)} of {len(pairs)} pairs solved; "
+                    f"{len(DATA.get('predicted') or {})} targets fall back to an AlphaFold "
+                    f"monomer. A structure is not a binding claim."})
 
         # 7 — screening: genuinely not built yet, and says so
         self._sse("stage", {
