@@ -495,8 +495,10 @@ class StructuralModelRequest(Base):
     schema_version: str = SCHEMA_VERSION
     request_id: str
     candidate_id: str
-    model: Literal["boltz2", "esmfold2"]
-    proto_tool_key: Literal["boltz2-prediction", "esmfold2-prediction"]
+    model: Literal["boltz2", "esmfold2", "alphafold2"]
+    proto_tool_key: Literal[
+        "boltz2-prediction", "esmfold2-prediction", "alphafold2-prediction"
+    ]
     purpose: Literal["complex_interface", "monomer_confidence"]
     chains: list[ChainSpec] = Field(min_length=1)
     config: dict[str, Any] = Field(default_factory=dict)
@@ -515,14 +517,59 @@ class StructuralModelRequest(Base):
                 raise ValueError("ESMFold2 monomer checks take exactly one chain")
             if self.proto_tool_key != "esmfold2-prediction":
                 raise ValueError("esmfold2 requires the esmfold2-prediction tool key")
-        if self.model == "boltz2":
+        # Boltz2 and AlphaFold2 are the interface predictors: both take the
+        # whole complex and pair heterocomplex MSAs. ESMFold2 is not promoted to
+        # that role just to make a third vote — it is a single-sequence monomer
+        # model, and counting it would manufacture consensus.
+        if self.model in {"boltz2", "alphafold2"}:
+            expected_key = f"{self.model}-prediction"
             if self.purpose != "complex_interface":
-                raise ValueError("Boltz2 is used here for complex interface prediction")
+                raise ValueError(
+                    f"{self.model} is used here for complex interface prediction"
+                )
             if len(self.chains) < 2:
                 raise ValueError("a complex prediction needs at least two chains")
-            if self.proto_tool_key != "boltz2-prediction":
-                raise ValueError("boltz2 requires the boltz2-prediction tool key")
+            if self.proto_tool_key != expected_key:
+                raise ValueError(f"{self.model} requires the {expected_key} tool key")
         return self
+
+
+class ConfidenceInterval(Base):
+    """A confidence metric with its spread across replicate predictions.
+
+    A single pLDDT is a point estimate from one stochastic run. Two models whose
+    point estimates differ by 0.05 may be indistinguishable once replicate
+    spread is accounted for, and two that look equal may not be. The interval is
+    what makes "these models agree" a checkable statement rather than an
+    impression.
+
+    ``lo``/``hi`` are the bounds of the interval; ``method`` records how they
+    were derived so a reader is not left guessing whether it is a standard
+    error, a percentile range, or a single-run placeholder.
+    """
+
+    metric: str
+    point: float
+    lo: float
+    hi: float
+    n: int = Field(ge=1, description="number of replicate predictions")
+    method: str
+
+    @model_validator(mode="after")
+    def bounds_bracket_the_point(self) -> ConfidenceInterval:
+        if not (self.lo <= self.point <= self.hi):
+            raise ValueError(
+                f"{self.metric}: point {self.point} lies outside [{self.lo}, {self.hi}]"
+            )
+        if self.n == 1 and self.lo != self.hi:
+            raise ValueError(
+                f"{self.metric}: a single replicate cannot have a non-zero interval"
+            )
+        return self
+
+    def overlaps(self, other: ConfidenceInterval) -> bool:
+        """True when the two intervals are not disjoint."""
+        return self.lo <= other.hi and other.lo <= self.hi
 
 
 class StructuralModelResult(Base):
@@ -531,13 +578,18 @@ class StructuralModelResult(Base):
     schema_version: str = SCHEMA_VERSION
     request_id: str
     candidate_id: str
-    model: Literal["boltz2", "esmfold2"]
+    model: Literal["boltz2", "esmfold2", "alphafold2"]
     model_version: str | None = None
     proto_tools_version: str | None = None
     status: Literal["cached", "completed", "failed", "validated_only", "skipped"]
     interpretation: Interpretation = Interpretation.PREDICTED
     source: Literal["live_modal", "cache", "fixture", "none"] = "none"
     confidence: dict[str, float] = Field(default_factory=dict)
+    confidence_ci: dict[str, ConfidenceInterval] = Field(
+        default_factory=dict,
+        description="per-metric interval across replicate seeds; empty if n=1",
+    )
+    replicate_seeds: list[int] = Field(default_factory=list)
     chain_map: dict[str, str] = Field(default_factory=dict)
     input_hash: str
     output_hash: str | None = None
@@ -559,20 +611,51 @@ class StructuralModelResult(Base):
 
 
 class ModelComparison(Base):
-    """Boltz2 vs ESMFold2, with agreement explicitly not counted as validation."""
+    """Consensus across the structural predictors, with agreement explicitly not
+    counted as validation.
+
+    Two models predict the complex interface (Boltz2 and AlphaFold2); ESMFold2
+    checks monomers only and does not vote on the interface. ``interface_votes``
+    counts only the models that actually predicted a complex, so a "unanimous"
+    verdict never rests on a monomer model that was never asked the question.
+    """
 
     schema_version: str = SCHEMA_VERSION
     candidate_id: str
     boltz2_request_id: str | None = None
     esmfold2_request_id: str | None = None
+    alphafold2_request_id: str | None = None
+    models_compared: list[str] = Field(default_factory=list)
+    interface_models: list[str] = Field(
+        default_factory=list,
+        description="models that predicted the complex and may vote on the interface",
+    )
     agreements: list[str] = Field(default_factory=list)
     disagreements: list[str] = Field(default_factory=list)
     confidence_delta: dict[str, float] = Field(default_factory=dict)
+    confidence_ci: dict[str, dict[str, ConfidenceInterval]] = Field(
+        default_factory=dict,
+        description="model -> metric -> interval, as compared",
+    )
+    ci_overlap: dict[str, bool] = Field(
+        default_factory=dict,
+        description="per metric: did every interface model's interval overlap",
+    )
+    interface_votes: int = Field(
+        default=0, ge=0,
+        description="interface models whose confidence cleared the floor",
+    )
+    interface_models_available: int = Field(default=0, ge=0)
+    consensus: Literal[
+        "unanimous", "majority", "split", "insufficient"
+    ] = "insufficient"
     interpretation: Interpretation = Interpretation.PREDICTED
     verdict: Literal["consistent", "inconsistent", "insufficient"] = "insufficient"
     caveat: str = (
-        "Model agreement is not experimental validation. Both models are "
-        "predictors and can be jointly wrong."
+        "Model agreement is not experimental validation. These are all "
+        "predictors trained on overlapping public structural data, so their "
+        "errors are correlated and they can be jointly wrong. Agreement raises "
+        "confidence in the prediction, not in the biology."
     )
     limitations: list[str] = Field(default_factory=list)
 

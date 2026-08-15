@@ -152,6 +152,44 @@ the source of truth: every run lives in `runs/<run_id>/` and resumes from disk
 with no conversation history. The agent's constitution is [`SOUL.md`](SOUL.md);
 each stage loads only the rules it needs.
 
+### Three-model structural consensus
+
+Two models predict the complex and may vote on the interface — **Boltz2** and
+**AlphaFold2**, both of which take the whole complex and pair heterocomplex MSAs
+through Proto. **ESMFold2 checks monomers only and never votes**: it is a
+single-sequence model, and counting its opinion on an interface it was never
+shown would manufacture consensus rather than measure it.
+
+Agreement is judged on **overlapping confidence intervals across replicate
+seeds**, not on point estimates — two runs of a stochastic model differ, and the
+interval is what separates a real disagreement from replicate noise.
+
+```bash
+reagent-agent structure run <run_id>      # after approval
+# consensus: unanimous | verdict: inconsistent
+# iptm intervals overlap (0.58-0.68 vs 0.62-0.70); plddt intervals disjoint
+```
+
+Consensus and verdict are reported separately on purpose: the interface models
+can both clear the confidence floor while still disagreeing on per-residue
+confidence. Unanimity is **not** independent confirmation — these models share
+PDB-derived training data, so they fail together on the same kinds of interface,
+and the comparison says so in its own caveat.
+
+### Run report — prompt, research, conclusions
+
+```bash
+reagent-agent run-report <run_id> --print
+```
+
+One document answering what the agent was asked, what it examined, and what it
+concluded: the objective and the rules in force at each stage, the sources and
+contradicting evidence, the candidates scored, the structural consensus with its
+intervals, every rejection with the gate that fired, the human decisions, the
+proposed experiment, and what the run does not claim. It is reconstructed from
+the run directory, so every number in it traces to an artifact on disk rather
+than to a narration written alongside the run.
+
 ### Biosecurity gateway
 
 Every run is screened before any other stage. Requests that would create
