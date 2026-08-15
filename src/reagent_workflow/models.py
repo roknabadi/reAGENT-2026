@@ -34,11 +34,19 @@ SCHEMA_VERSION = "1.1"
 
 
 class Stage(StrEnum):
+    # Selecting which biological problem to point the pipeline at. Runs before a
+    # candidate exists and stops for human review, so it is deliberately not part
+    # of STAGE_ORDER — that tuple is the implemented candidate-to-experiment flow.
+    USE_CASE_DISCOVERY = "USE_CASE_DISCOVERY"
     INGEST = "INGEST"
     GATE = "GATE"
     SCORE = "SCORE"
     HERO_CHECKPOINT = "HERO_CHECKPOINT"
     STRUCTURE = "STRUCTURE"
+    # Docking and compound prioritisation. Owned by the screening stage, not by
+    # this package; the rules are loaded here so the policy travels with the
+    # agent rather than living only in a document.
+    SCREENING = "SCREENING"
     NEXT_EXPERIMENT = "NEXT_EXPERIMENT"
     COMPLETE = "COMPLETE"
 

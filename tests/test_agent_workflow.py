@@ -399,9 +399,43 @@ class ContextBudgetTests(unittest.TestCase):
 
 
 class SoulTests(unittest.TestCase):
+    def test_screening_policy_is_loaded_not_just_documented(self):
+        """The screening constraints must travel with the agent.
+
+        A policy that lives only in a skill document is a policy the agent can
+        skip. These are the four rules that stop a shortlist being built on an
+        undefined site.
+        """
+        soul = load_soul()
+        rules = soul.rule_ids(Stage.SCREENING)
+        for rule in (
+            "no-site-no-dock",
+            "score-is-not-affinity",
+            "compounds-carry-provenance",
+            "human-before-shortlist",
+        ):
+            self.assertIn(rule, rules)
+        # The abstain rule also has to reach the stage that defines the site.
+        self.assertIn("no-site-no-dock", soul.rule_ids(Stage.STRUCTURE))
+
+    def test_use_case_discovery_assumes_no_target_class(self):
+        soul = load_soul()
+        rules = soul.rule_ids(Stage.USE_CASE_DISCOVERY)
+        self.assertIn("no-target-class-assumed", rules)
+        self.assertIn("scores-have-definitions", rules)
+        text = " ".join(soul.for_stage(Stage.USE_CASE_DISCOVERY)).lower()
+        self.assertIn("no disease, target class, or mechanism is assumed", text)
+
+    def test_every_declared_rule_reaches_at_least_one_stage(self):
+        """An orphaned rule is a rule the agent never reads."""
+        soul = load_soul()
+        used = {rule for stage in Stage for rule in soul.rule_ids(stage)}
+        orphans = sorted(set(soul.rules) - used)
+        self.assertEqual(orphans, [], f"rules declared but never loaded: {orphans}")
+
     def test_only_relevant_rules_load_per_stage(self):
         soul = load_soul()
-        self.assertEqual(soul.version, "1.0")
+        self.assertEqual(soul.version, "1.1")
         structure_rules = soul.for_stage(Stage.STRUCTURE)
         self.assertTrue(any("Human review" in rule for rule in structure_rules))
         self.assertTrue(any("Model agreement" in rule for rule in structure_rules))

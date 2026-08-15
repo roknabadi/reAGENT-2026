@@ -92,3 +92,22 @@ Judges reward results worth trusting. On every project:
 Once the track is set, read the matching `SKILL.md` before running anything and
 follow it exactly: `skills/paperclip/`, `skills/cellxgene-census/`,
 `skills/proto/`, `skills/boltz/`.
+
+## Two skills that decide what you build, and what you may claim
+
+Read these before choosing a target or running a screen. They are policy, not
+reference — the workflow loads their rules per stage from `SOUL.md`.
+
+- **`skills/use-case-discovery/`** — read FIRST, before assuming a disease,
+  target class, or mechanism. Produces five scored candidate use cases and stops
+  for human review. Choosing the problem is the decision everything downstream
+  inherits, and it is far cheaper to change here.
+- **`skills/screening/`** — read BEFORE any docking run. Boltz-2 for the complex,
+  ESMFold monomer-only, DrugCentral primary and ChEMBL `max_phase=4` secondary,
+  Vina then Boltz-2 rerank, human pose review. Its central rule: without a
+  localized, credible interface and a defensible pocket, **abstain rather than
+  dock blindly** — a docking program will rank compounds against a pocket that
+  does not exist.
+
+`docs/PIPELINE.md` states the pipeline as a product, independent of any one
+target class.
