@@ -1,65 +1,40 @@
 # Roles — re:AGENT Track A
 
-Current as of 2026-08-15. This changes as the project changes; edit it and say
-so in `DECISIONS.md` if the change affects who owns a checkpoint.
+Four people. Two write code, one designs the solution, one decides.
 
-| Person | GitHub | Owns |
+| Person | GitHub | Role |
 |---|---|---|
-| Andrey | [@andreyf2022](https://github.com/andreyf2022) | scientific lead / Mediator |
-| Amir | [@roknabadi](https://github.com/roknabadi) | agent workflow / target prioritization / Proto |
-| Kevin | [@Kyung-TaeLee](https://github.com/Kyung-TaeLee) | disease specificity / omics |
-| Vraj | [@vraj00222](https://github.com/vraj00222) | software / data integration / virtual screening |
-| Tatiana | — | experimental biology |
-| Sasha | [@seboulatov](https://github.com/seboulatov) | experimental biology |
+| Andrey | [@andreyf2022](https://github.com/andreyf2022) | **decides** — approvals, major calls, workflow direction |
+| Kevin | [@Kyung-TaeLee](https://github.com/Kyung-TaeLee) | overall solution logic — what the pipeline should do and why |
+| Vraj | [@vraj00222](https://github.com/vraj00222) | build — data in, screening out, demo surface |
+| Amir | [@roknabadi](https://github.com/roknabadi) | build — agent orchestration, gates, structure, trace |
 
-## Andrey — scientific lead / Mediator
+**Andrey decides.** Approvals, checkpoint sign-off, workflow changes, and any
+call that changes what we are targeting. Also the source of scientific
+suggestions — take them as direction, not as opinion.
 
-- Define what makes a good target.
-- Review and rank disease–TF candidates.
-- Choose the final TF–Mediator pair.
-- Guide structural modeling.
-- Work with Amir and Vraj on virtual screening and compound selection.
+**Kevin owns the solution logic.** What the stages are, which data sources,
+which thresholds, how ranking works. He answers "how should this work"; Vraj and
+Amir answer "how do we make it run".
 
-## Amir — agent workflow / target prioritization / Proto
+**Vraj and Amir split the code.** See `team/TASKS.md`. If a task is not on that
+list, it is not this weekend.
 
-- Build the main agent workflow.
-- Connect search, scoring, and decision steps.
-- Integrate Proto for structural modeling and downstream screening.
-- Keep the reasoning/evidence trace clear for judging.
+## Working rule
 
-## Kevin — disease specificity / omics
-
-- Check whether TF dependencies are specific to a cancer type or cell state.
-- Use single-cell/multi-omics and normal-cell data.
-- Assess selectivity and the possible safety window.
-
-## Vraj — software / data integration / virtual screening
-
-- Connect Paperclip and public databases.
-- Build the data pipeline and structured candidate outputs.
-- Keep the demo stable and easy to inspect.
-- Work with Andrey and Amir on structure preparation, screening, and ranking.
-
-## Tatiana — experimental biology
-
-- Sanity-check biological relevance of top candidates.
-- Help define a realistic validation experiment.
-
-## Sasha — experimental biology
-
-- Review whether the proposed TF dependency makes biological sense.
-- Help think through cell-based validation and practical follow-up.
+**Scrappy first, polish second.** Get one candidate through the whole pipe end
+to end with whatever placeholders it takes, then improve the weakest link. A
+polished stage that connects to nothing scores zero on Sunday.
 
 ## Judging goal
 
 **Track A — Build an AI Scientist.** Carry a defined scientific workflow end to
 end: gather evidence, use real tools and databases, generate and test
-hypotheses, emit a structured output, and make the reasoning easy to inspect.
+hypotheses, emit a structured output, make the reasoning easy to inspect.
 
 - **Closing the loop:** the agent proposes the next experiment.
-- **Inspectability:** show why it made each decision — including the ones where
-  it said no.
-- **Validation:** compare against known cases such as ELK1–MED23 / ELF3–MED23.
+- **Inspectability:** show why it made each decision — including the rejections.
+- **Validation:** compare against ELK1–MED23 / ELF3–MED23.
 - **Sponsor tools:** Paperclip + Proto as core tools; Modal if extra compute is
   needed.
 
@@ -70,9 +45,8 @@ compounds worth testing.
 
 | When | What |
 |---|---|
-| Sat 9:45–10:15 PM | Overnight experiment checkpoint — long runs must be queued |
+| Sat 9:45–10:15 PM | Overnight checkpoint — long runs must be queued |
 | **Sun 10:45 AM** | **Final submission. Hard stop.** |
 | Sun 12:30–2:00 PM | Demos and live judging |
 
-Work backwards from Sunday 10:45. Anything not demoable by Sunday 9:00 AM is
-not in the demo.
+Anything not demoable by Sunday 9:00 AM is not in the demo.

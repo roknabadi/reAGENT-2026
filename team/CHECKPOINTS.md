@@ -6,11 +6,15 @@ proceed past an `OPEN` gate — abstain and post a blocker instead.
 
 Status: `OPEN` · `PASSED` · `FAILED` (say what to do differently).
 
+**Andrey signs every gate.** Kevin brings the solution logic and the data behind
+each call; Vraj and Amir bring the run. Andrey decides whether it passes, and
+the decision goes in `DECISIONS.md`.
+
 ---
 
 ## 1. TF shortlist — OPEN
 
-**Signs off:** Kevin + Andrey
+**Signs off:** Andrey (Kevin brings the omics evidence)
 **Test:** hits are real disease dependencies, not just overexpression and not
 broadly essential TFs.
 
@@ -64,7 +68,7 @@ plausible.
 
 ## 3. Hero target selection — OPEN
 
-**Signs off:** whole team, Andrey leads
+**Signs off:** Andrey (Kevin brings the ranking, Vraj/Amir the run)
 **Test:** the agent ranks candidates; humans pick the one
 indication–TF–Mediator pair to pursue.
 
@@ -74,7 +78,7 @@ indication–TF–Mediator pair to pursue.
 
 ## 4. Structural model review — OPEN
 
-**Signs off:** Andrey + Vraj
+**Signs off:** Andrey (Vraj brings the structure/poses)
 **Test:** the predicted interface is credible before docking.
 
 - Evidence:
@@ -83,7 +87,7 @@ indication–TF–Mediator pair to pursue.
 
 ## 5. Virtual-screen hit review — OPEN
 
-**Signs off:** Andrey + Vraj
+**Signs off:** Andrey (Vraj brings the structure/poses)
 **Test:** top poses and chemistry inspected by hand. Docking score is not
 binding affinity.
 

@@ -19,6 +19,20 @@ from computational results.
 
 ---
 
+## 2026-08-15 — Four roles: Andrey decides, Kevin designs, Vraj and Amir build
+Decided by: Andrey
+Why: six named roles with overlapping sign-off was slower than the deadline
+allows. Andrey now signs every gate and owns workflow direction; Kevin owns the
+solution logic (stages, sources, thresholds, ranking); Vraj and Amir split the
+code along what each already built — Vraj the two ends of the pipe (real data
+in, compounds and demo out), Amir the agent in the middle. Task split in
+`team/TASKS.md`. Supersedes the earlier note making Kevin the decision lead.
+Working rule: scrappy end-to-end first, polish the weakest link second. A
+polished stage connected to nothing scores zero on Sunday.
+Alternatives rejected: consensus at each gate (too slow); keeping per-person
+directories (CONTRIBUTING forbids, and it fragments review).
+Reversible: yes — `ROLES.md`, `TASKS.md`, `CHECKPOINTS.md`, `.github/CODEOWNERS`.
+
 ## 2026-08-15 — CEBPB–MED23 is `indirect`, not `direct`; it does not go downstream
 Decided by: Andrey
 Scope: one candidate's evidence classification in the round-01 calibration case.
