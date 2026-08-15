@@ -12,8 +12,17 @@ Add each artifact before it is used in the project.
 | DepMap CRISPRGeneEffect (Chronos) | https://depmap.org/portal/data_page/ | Public 24Q2 | CC BY 4.0 | 2026-08-15 | 382 MB, 1100 lines × 18443 genes, local only |
 | DepMap Model metadata | https://depmap.org/portal/data_page/ | Public 24Q2 | CC BY 4.0 | 2026-08-15 | 1921 models, OncotreeLineage/Subtype |
 | Lambert et al. human TF catalogue | http://humantfs.ccbr.utoronto.ca | v1.01 | Academic use, cite Cell 2018;172:650 | 2026-08-15 | 1639 TFs of 2765 rows |
+| UniProtKB canonical sequences (ELK1 P19419, MED23 O75448) | https://rest.uniprot.org/uniprotkb/ | Fetched live per run via `proto_tools` UniProt tool | CC BY 4.0 | 2026-08-15 | ELK1 428 aa, MED23 989 aa; not vendored, re-fetched each run |
 
 ## Scientific evidence
+
+Constants transcribed into code from these rows are re-checked against the
+primary record at run time where that is possible. `scripts/calibrate_structure.py`
+asserts ELK1 P19419 residues 374–384 are literally `PSIHFWSTLSP` and that PDB
+9F6Y appears in UniProt's own cross-references, and refuses to run if either has
+moved. The claims it does **not** independently verify — that 9F6Y is the MED23
+complex, its resolution, the interface residues, and the Kd — are second-hand
+from the row below and are not used as model inputs.
 
 | Claim used | Source | Identifier | Retrieved |
 |---|---|---|---|
