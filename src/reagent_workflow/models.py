@@ -37,6 +37,9 @@ class Stage(StrEnum):
     # Selecting which biological problem to point the pipeline at. Runs before a
     # candidate exists and stops for human review, so it is deliberately not part
     # of STAGE_ORDER — that tuple is the implemented candidate-to-experiment flow.
+    # The biorisk gateway. Runs before anything else, including INGEST, so a
+    # request that must not proceed never reaches the pipeline at all.
+    BIORISK = "BIORISK"
     USE_CASE_DISCOVERY = "USE_CASE_DISCOVERY"
     INGEST = "INGEST"
     GATE = "GATE"
@@ -599,7 +602,11 @@ class RunState(Base):
     schema_version: str = SCHEMA_VERSION
     run_id: str
     stage: Stage
-    status: Literal["initialized", "running", "awaiting_human", "completed", "failed", "abstained"]
+    status: Literal[
+        "initialized", "running", "awaiting_human", "completed", "failed",
+        "abstained", "refused",
+    ]
+    """``refused`` is the biorisk gateway declining the request outright."""
     created_at: str
     updated_at: str
     config_hash: str

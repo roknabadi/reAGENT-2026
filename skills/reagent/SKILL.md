@@ -93,6 +93,15 @@ Once the track is set, read the matching `SKILL.md` before running anything and
 follow it exactly: `skills/paperclip/`, `skills/cellxgene-census/`,
 `skills/proto/`, `skills/boltz/`.
 
+## Read this one before anything else
+
+- **`skills/biorisk/`** — every run passes a biosecurity screen before any other
+  stage. It refuses requests that create hazardous capability (transmissibility,
+  virulence, host range, immune escape, therapeutic resistance, weaponization),
+  escalates dual-use and non-medical requests to a human, and **permits
+  countermeasure development** — antivirals and antibacterials are medicine, and
+  a gate that blocks them is broken, not cautious.
+
 ## Two skills that decide what you build, and what you may claim
 
 Read these before choosing a target or running a screen. They are policy, not

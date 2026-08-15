@@ -13,6 +13,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .biorisk import (
+    BiosafetyAssessment,
+    BiosafetyRefusal,
+    RiskTier,
+    screen_bundle,
+)
 from .config import RunConfig
 from .context import (
     ContextBudgetManager,
@@ -107,25 +113,107 @@ class Orchestrator:
     def candidates_path(self) -> Path:
         return self.store.path("input", "candidates.json")
 
+    @property
+    def biosafety_path(self) -> Path:
+        return self.store.path("biosafety", "assessment.json")
+
+    # --------------------------------------------------------------- gateway
+    def screen_biorisk(self, bundle: InputBundle) -> BiosafetyAssessment:
+        """Screen the request before any other stage, and record the verdict.
+
+        The assessment is written to disk even when the request is refused: a
+        refusal is an accountability record, not something to discard. The run
+        directory therefore exists for refused runs too, containing the reason
+        and nothing else.
+        """
+        assessment = screen_bundle(bundle)
+        self.store.write_model(self.biosafety_path, assessment)
+
+        event_type = {
+            RiskTier.PERMITTED: EventType.BIORISK_SCREENED,
+            RiskTier.REVIEW_REQUIRED: EventType.BIORISK_ESCALATED,
+            RiskTier.REFUSED: EventType.BIORISK_REFUSED,
+        }[assessment.tier]
+        self.tracer.emit(
+            stage=Stage.BIORISK, event_type=event_type,
+            status=str(assessment.tier),
+            output_refs=[self.store.relative(self.biosafety_path)],
+            detail={
+                "tier": str(assessment.tier),
+                "policy_version": assessment.policy_version,
+                "policy_hash": assessment.policy_hash,
+                "countermeasure_context": assessment.countermeasure_context,
+                "flags": [
+                    {"category": str(f.category), "tier": str(f.tier),
+                     "description": f.description}
+                    for f in assessment.flags
+                ],
+                "rationale": assessment.rationale,
+            },
+        )
+        return assessment
+
     # ------------------------------------------------------------------- init
     def init_run(self, bundle: InputBundle, *, force: bool = False) -> RunState:
-        """Create the run directory and persist the validated input bundle."""
+        """Create the run directory and persist the validated input bundle.
+
+        The biorisk gateway runs first. A refused request never reaches INGEST,
+        and no candidate, evidence, or structural request is written for it.
+        """
         self.store.create(force=force)
+        assessment = self.screen_biorisk(bundle)
+
+        if assessment.tier is RiskTier.REFUSED:
+            refused_state = RunState(
+                run_id=self.store.run_id, stage=Stage.BIORISK, status="refused",
+                created_at=utc_now(), updated_at=utc_now(),
+                config_hash=self.config.hash(), git_commit=self.git_commit,
+                fixture_run=bundle.fixture,
+                error=assessment.summary(),
+                notes=["biorisk gateway refused this request; no stage ran"],
+            )
+            self.store.save_state(refused_state)
+            self._refresh_manifest(bundle.fixture)
+            raise BiosafetyRefusal(assessment)
+
         self.store.write_json(self.candidates_path, bundle.model_dump(mode="json"))
         self.store.write_json(
             self.store.path("input", "config.json"), self.config.model_dump(mode="json")
         )
+        escalated = assessment.tier is RiskTier.REVIEW_REQUIRED
         state = RunState(
             run_id=self.store.run_id,
-            stage=Stage.INGEST,
-            status="initialized",
+            stage=Stage.BIORISK if escalated else Stage.INGEST,
+            status="awaiting_human" if escalated else "initialized",
             created_at=utc_now(),
             updated_at=utc_now(),
             config_hash=self.config.hash(),
             git_commit=self.git_commit,
             fixture_run=bundle.fixture,
+            open_checkpoint_id=f"{self.store.run_id}-biorisk" if escalated else None,
         )
         self.store.save_state(state)
+
+        if escalated:
+            # Dual-use or out-of-scope rather than self-evidently hazardous, so a
+            # person decides. Reuses the same checkpoint machinery as the hero
+            # gate: one mechanism for "the agent stops and asks".
+            checkpoint = HumanCheckpoint(
+                checkpoint_id=f"{self.store.run_id}-biorisk",
+                stage=Stage.BIORISK,
+                requested_decision=(
+                    "Biorisk screening escalated this request for human review. "
+                    "Approve to let the pipeline run, or reject it."
+                ),
+                recommendation=assessment.rationale,
+                uncertainty=[
+                    f"[{f.category}] {f.description} — matched: {f.matched_text}"
+                    for f in assessment.flags
+                ],
+                structural_readiness="blocked: biorisk review is unresolved",
+                created_at=utc_now(),
+            )
+            self.store.append_model(self.checkpoints_path, checkpoint)
         self.tracer.emit(
             stage=Stage.INGEST, event_type=EventType.RUN_STARTED,
             output_refs=[self.store.relative(self.candidates_path)],

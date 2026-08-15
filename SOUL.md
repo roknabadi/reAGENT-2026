@@ -25,6 +25,10 @@ stage, so a prompt never carries the whole constitution.
 | `unsupported-rejected` | Unsupported candidates are rejected. |
 | `abstention-allowed` | Abstention is allowed. |
 | `human-before-structure` | Human review is required before structural execution. |
+| `biorisk-screen-first` | Biorisk screening precedes every other stage. A refused request never reaches the pipeline. |
+| `capability-over-framing` | A hazardous capability is refused whatever intent is stated, because the capability is the hazard. |
+| `countermeasures-are-medicine` | Inhibiting a pathogen to treat infection is legitimate medical work and is not blocked. |
+| `escalate-dont-guess` | An ambiguous dual-use request goes to a human, not to the agent's judgement. |
 | `no-target-class-assumed` | No disease, target class, or mechanism is assumed. The use case is chosen from evidence, not from habit. |
 | `no-site-no-dock` | Without a localized, credible interface and a defensible pocket, abstain rather than dock blindly. |
 | `score-is-not-affinity` | A docking score is not a binding affinity, and a pose is not a complex. |
@@ -35,7 +39,8 @@ stage, so a prompt never carries the whole constitution.
 
 | Stage | Rules loaded |
 |---|---|
-| `USE_CASE_DISCOVERY` | `no-target-class-assumed`, `evidence-outranks-prose`, `scores-have-definitions`, `abstention-allowed`, `unsupported-rejected` |
+| `BIORISK` | `biorisk-screen-first`, `capability-over-framing`, `countermeasures-are-medicine`, `escalate-dont-guess`, `abstention-allowed` |
+| `USE_CASE_DISCOVERY` | `no-target-class-assumed`, `biorisk-screen-first`, `evidence-outranks-prose`, `scores-have-definitions`, `abstention-allowed`, `unsupported-rejected` |
 | `INGEST` | `evidence-outranks-prose`, `missing-stays-missing`, `predictions-not-observations` |
 | `GATE` | `unsupported-rejected`, `missing-stays-missing`, `contradictions-visible` |
 | `SCORE` | `scores-have-definitions`, `missing-stays-missing`, `evidence-outranks-prose` |

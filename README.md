@@ -143,13 +143,36 @@ files; the included fixture only tests behavior.
 `src/reagent_workflow` is the orchestrated agent. It runs
 
 ```text
-INGEST → GATE → SCORE → HERO_CHECKPOINT → STRUCTURE → NEXT_EXPERIMENT → COMPLETE
+BIORISK → INGEST → GATE → SCORE → HERO_CHECKPOINT → STRUCTURE
+→ NEXT_EXPERIMENT → COMPLETE
 ```
 
 and stops at the hero checkpoint until a named human approves. The filesystem is
 the source of truth: every run lives in `runs/<run_id>/` and resumes from disk
 with no conversation history. The agent's constitution is [`SOUL.md`](SOUL.md);
 each stage loads only the rules it needs.
+
+### Biosecurity gateway
+
+Every run is screened before any other stage. Requests that would create
+hazardous capability — increasing transmissibility, virulence, host range,
+immune escape, or therapeutic resistance; producing select agents; weaponization
+— are **refused before `INGEST`**, and no candidate or evidence is written.
+Dual-use and non-medical requests stop at a human checkpoint instead.
+
+Countermeasure development is explicitly permitted: antivirals, antibacterials,
+and host-directed therapy are the medical use this pipeline serves, and a gate
+that blocked them would be broken rather than cautious.
+
+```bash
+reagent-agent biorisk check --text "..."   # 0 permitted, 6 review, 7 refused
+reagent-agent biorisk show <run_id>        # the recorded assessment
+```
+
+A refused run still leaves `biosafety/assessment.json` with the reason and the
+matched text — a refusal is an accountability record, not a silence. The policy
+is hashed so the agent cannot weaken its own gate. It is a first-pass screen,
+not a substitute for institutional biosafety review; see `skills/biorisk/`.
 
 ### Demo
 
