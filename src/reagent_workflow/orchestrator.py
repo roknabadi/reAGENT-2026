@@ -1038,6 +1038,14 @@ class Orchestrator:
         artifact is directly checkable by that task's verifier rather than being
         a third, workflow-only format.
 
+        The ``hero`` block deliberately keeps the keys ``transcription_factor``
+        and ``mediator_subunit`` even though the rest of the pipeline is now
+        target-agnostic. That task is frozen and its verifier asserts those exact
+        key names (``verifier/test_output.py::test_hero_is_complete``), so
+        renaming them here to ``target_gene``/``partner_gene`` would fail an
+        evaluation we are scored on. ``FinalReport`` keeps the same two field
+        names for the same reason. Generalise the pipeline, not this boundary.
+
         A fixture run produces ``synthetic://`` source URLs and will not satisfy
         the verifier's public-evidence assertions. That is the intended
         behaviour: synthetic data must not pass a public-provenance check.
@@ -1112,8 +1120,8 @@ class Orchestrator:
                     "source_url": component_metric("normal_cell_completeness")["source_url"],
                 },
                 "evidence_quality": (
-                    components["mediator_evidence_quality"].normalized
-                    if "mediator_evidence_quality" in components else 0.0
+                    components["interaction_evidence_quality"].normalized
+                    if "interaction_evidence_quality" in components else 0.0
                 ),
                 "structural_tractability": (
                     components["structural_tractability"].normalized

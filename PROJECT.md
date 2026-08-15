@@ -15,13 +15,20 @@ on the way. Mediator/TF is the first test case, not the definition of the system
 | 1 | Identify candidate targets | `dependency_scout/depmap.py:analyze_gene_effects` — DepMap-shaped gene-effect matrix → `DependencyEvidence` | PARTIAL: statistic runs, but every input so far is a synthetic fixture and the caller supplies the gene set (no genome-wide sweep) |
 | 2 | Rank and prioritize | `dependency_scout/ranking.py` (`gate`/`rank`); `reagent_workflow/gates.py` + `scoring.py` + `orchestrator.run_score` → weighted `CandidateScorecard`, then `run_hero_checkpoint` | BUILT |
 | 3 | Specificity / therapeutic window | in-context vs other-context only: `selectivity_delta`, `other_dependent_fraction`. Normal tissue is a scored slot (`normal_cell_completeness`) fed by hand-entered evidence | PARTIAL: no normal-tissue data source is wired |
-| 4 | Target location / druggable mechanism | recorded, not derived: `MediatorLink.tf_region`, `interacting_region_mapped`, `InterfaceTractability`; gate `mediator_region_mapped` rejects unmapped contacts | PARTIAL: sites come from literature, no pocket detection |
+| 4 | Target location / druggable mechanism | recorded, not derived: `MediatorLink.tf_region` / `InteractionEvidence.target_region`, `interacting_region_mapped`, `InterfaceTractability`; gate `interface_region_mapped` rejects unmapped contacts whatever the target class | PARTIAL: sites come from literature, no pocket detection |
 | 5 | Structural tractability | `reagent_workflow/structure.py` — builds/validates boltz2 + esmfold2 requests, caches results, `compare_models` scores two-model agreement; live Modal only after an approved checkpoint | PARTIAL: no PDB retrieval, no pocket-quality metric |
 | 6 | Small-molecule screening | `ProtoScreenSpec` + `proto_bridge.validate_proto_spec` compile and validate a typed Vina input | NOT BUILT: no compound library, nothing docked; the hero payload emits `drug_discovery.status = "blocked"` |
 | 7 | Next testable experiment | `experiment.propose_next_experiment` + `improvement.improve_stage` rubric loop → `reports/next_experiment.json` | BUILT |
 
 Cross-cutting: `trace.py` records every stage event, `store.py` makes runs
-resumable from disk alone, `benchflow_export.py` exports the trace.
+resumable from disk alone, `benchflow_export.py` exports the trace,
+`adapters.py` carries candidates between `dependency_scout` and
+`reagent_workflow` (the two packages share no types by design), and
+`demo_export.py` emits the single `demo.json` the UI reads — its contract is
+`docs/DEMO_JSON.md`.
+
+The pipeline as a product pitch, independent of any one target class, is
+`docs/PIPELINE.md`.
 
 ## End to end
 
@@ -49,9 +56,16 @@ prove from public data that a contact is mapped, not merely correlated with the
 disease, *before* anyone models it in 3D or docks against it. Correlation passing
 itself off as contact is the failure mode this project exists to catch.
 
-**Caveat on generality:** the stages are general; the field names are not yet.
-`CandidateHypothesis.transcription_factor` / `.mediator_subunit` and the
-`mediator_*` gate names hard-code the test case. Renaming is cheap and can wait.
+**Generality is now in the code, not just the stages.** A candidate carries a
+`target_gene` and a `partner_gene`, optionally labelled with a free-text
+`target_class` / `partner_class` ("transcription factor", "Mediator subunit",
+"kinase", "scaffold"). Gates, scoring, structural modelling, and the experiment
+generator operate on target/partner and use the class labels only to phrase
+their output — the workflow code does not know what a transcription factor is.
+The old `transcription_factor` / `mediator_subunit` names still load and still
+read, as aliases, so existing evidence files and the UI keep working.
+
+Swapping target class means supplying different evidence, not editing the agent.
 
 ## The shape of a passing argument
 

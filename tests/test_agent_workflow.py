@@ -165,7 +165,7 @@ class GateTests(TempRunCase):
             self.candidates["CAND-UNSUPPORTED-MEDIATOR"], self.thresholds
         )
         self.assertFalse(outcome.eligible)
-        self.assertIn("mediator_support", outcome.failed_gates)
+        self.assertIn("interaction_support", outcome.failed_gates)
         self.assertTrue(any("no named assay" in reason for reason in outcome.reasons))
 
     def test_every_negative_control_named_in_project_md_is_rejected(self):
@@ -173,7 +173,7 @@ class GateTests(TempRunCase):
         expected = {
             "CAND-BROAD": "broad_essentiality",            # pan-essential TF
             "CAND-OVEREXPRESSED": "dependency_strength",   # overexpressed, no dependency
-            "CAND-PULLDOWN-ONLY": "mediator_region_mapped",  # association, not contact
+            "CAND-PULLDOWN-ONLY": "interface_region_mapped",  # association, not contact
         }
         for candidate_id, gate in expected.items():
             with self.subTest(candidate=candidate_id):
@@ -190,7 +190,7 @@ class GateTests(TempRunCase):
         self.assertIn("dependency_strength", outcome.failed_gates)
         self.assertIn("disease_specificity", outcome.failed_gates)
         # The Mediator contact is genuinely mapped; it is the dependency that fails.
-        self.assertNotIn("mediator_region_mapped", outcome.failed_gates)
+        self.assertNotIn("interface_region_mapped", outcome.failed_gates)
 
     def test_whole_protein_pulldown_without_a_mapped_region_is_rejected(self):
         """The negative control PROJECT.md names: association, not contact.
@@ -205,7 +205,7 @@ class GateTests(TempRunCase):
 
         outcome = evaluate_gates(candidate, self.thresholds)
         self.assertFalse(outcome.eligible)
-        self.assertEqual(outcome.failed_gates, ["mediator_region_mapped"])
+        self.assertEqual(outcome.failed_gates, ["interface_region_mapped"])
         self.assertTrue(any("no interacting region" in r for r in outcome.reasons))
         self.assertTrue(any("model or screen against" in r for r in outcome.reasons))
 
@@ -226,7 +226,7 @@ class GateTests(TempRunCase):
                 candidate["mediator"]["tf_region"] = None
         with self.assertRaises(ValueError) as ctx:
             InputBundle.model_validate(payload)
-        self.assertIn("tf_region", str(ctx.exception))
+        self.assertIn("target_region", str(ctx.exception))
 
     def test_only_a_mapped_contact_is_ready_for_structural_modeling(self):
         self.assertTrue(
@@ -477,8 +477,8 @@ class StructureTests(TempRunCase):
     def test_no_structural_request_without_a_mapped_contact_point(self):
         """Modelling an unmapped association would invent the interface."""
         candidate = self.candidates["CAND-PULLDOWN-ONLY"].model_copy(deep=True)
-        candidate.tractability.tf_sequence = "MSDLQTPVSEAKALLQRLEEAG"
-        candidate.tractability.mediator_sequence = "MAQVSTLLDRLNQAGDKVAQQL"
+        candidate.tractability.target_sequence = "MSDLQTPVSEAKALLQRLEEAG"
+        candidate.tractability.partner_sequence = "MAQVSTLLDRLNQAGDKVAQQL"
         self.assertEqual(build_requests(candidate, self.config), [])
 
     def test_chain_sequences_must_be_amino_acids(self):
@@ -732,7 +732,7 @@ class WorkflowTests(TempRunCase):
         for event in events:
             self.assertTrue(event.config_hash)
             self.assertEqual(event.run_id, "trace")
-            self.assertEqual(event.schema_version, "1.0")
+            self.assertEqual(event.schema_version, "1.1")
 
         # Every rejection is reconstructable from the trace alone.
         rejected = {
@@ -1038,7 +1038,7 @@ class DemoJsonTests(TempRunCase):
         steps = [link["step"] for link in payload["summary"]["chain"]]
         self.assertEqual(
             steps,
-            ["disease", "transcription_factor", "mediator_contact", "interface", "compounds"],
+            ["disease", "target", "partner_contact", "interface", "compounds"],
         )
         for link in payload["summary"]["chain"]:
             self.assertIn(
@@ -1226,7 +1226,7 @@ class AdapterTests(TempRunCase):
         ).candidate
         assert candidate is not None
         outcome = evaluate_gates(candidate, RunConfig().gates)
-        self.assertIn("mediator_region_mapped", outcome.failed_gates)
+        self.assertIn("interface_region_mapped", outcome.failed_gates)
 
     def test_every_claim_citation_becomes_a_public_source(self):
         result = to_candidate(
@@ -1278,7 +1278,7 @@ class AdapterTests(TempRunCase):
         self.assertEqual(state.eligible_candidate_ids, [])
         rejections = orchestrator.store.read_jsonl(orchestrator.rejections_path)
         self.assertTrue(
-            any("mediator_region_mapped" in r["failed_gates"] for r in rejections)
+            any("interface_region_mapped" in r["failed_gates"] for r in rejections)
         )
 
     def test_joined_dependency_and_mapped_contact_reaches_the_hero_checkpoint(self):
