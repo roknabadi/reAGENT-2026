@@ -6,14 +6,19 @@
     {
       "statement": "Ras induces Mediator complex exchange on C/EBP-beta, reported as one of the founding demonstrations that MED23 is targeted by a transcription factor. The contact region on C/EBP-beta is not mapped.",
       "support": "direct_experimental",
-      "citations": ["https://pubmed.ncbi.nlm.nih.gov/14759370/"],
+      "citations": [
+        "https://pubmed.ncbi.nlm.nih.gov/14759370/"
+      ],
       "note": "Mo, Kowenz-Leutz, Xu & Leutz, Mol Cell 13:241-250 (2004). PROVENANCE WARNING: this primary was NOT retrievable as full text in the Paperclip corpus. The claim rests on the citing sentence in Monte et al. 2025 (doi:10.1038/s41467-025-59014-8, ref 19). It has not been read at the source. Do not make this load-bearing until the primary is retrieved."
     },
     {
       "statement": "The C/EBP-beta region that contacts MED23 has never been mapped, so it is unknown whether it engages the MED23 HR2/HR3 groove used by ELK1 and ELF3.",
       "support": "inference",
-      "citations": ["https://doi.org/10.1038/s41467-025-59014-8"],
+      "citations": [
+        "https://doi.org/10.1038/s41467-025-59014-8"
+      ],
       "note": "Absence of a mapped region in the retrieved literature. Reasoning: the ELK1 structure paper cites Mo 2004 only for the fact of Mediator exchange, never for an interface. This is the gap a peptide-tiling experiment against MED23 391-582 would close."
     }
-  ]
+  ],
+  "tractability": "unknown"
 }

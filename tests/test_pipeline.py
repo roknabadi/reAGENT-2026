@@ -1,7 +1,8 @@
 import unittest
 from pathlib import Path
 from dependency_scout.depmap import analyze_gene_effects
-from dependency_scout.models import (Claim, EnrichmentEvidence, Involvement, MediatorLink,
+from dependency_scout.models import (Claim, EnrichmentEvidence, InterfaceTractability, Involvement,
+                                     MediatorLink, RankedCandidate,
                                      ProtoScreenSpec, SupportType)
 from dependency_scout.ranking import rank_all
 from dependency_scout.report import build_shortlist, render_markdown
@@ -75,6 +76,49 @@ class PipelineTests(unittest.TestCase):
         text = render_markdown(sl)
         self.assertIn("no mapped interacting region", text)  # blocker is stated, not hidden
         self.assertIn("stops before structural_modeling", text.lower())
+
+    def test_runx2_passes_the_contact_gate_but_declares_its_tractability_problem(self):
+        """Andrey's round-01 finding: RUNX2's region is genuinely mapped, so the
+        contact gate passes, but the interface is folded domains rather than a
+        short linear motif. The concern must be stated, not discovered at docking."""
+        runx2 = MediatorLink.model_validate_json(
+            Path("examples/mediator_link_runx2_med23.json").read_text(encoding="utf-8"))
+        self.assertIs(runx2.involvement, Involvement.DIRECT)
+        self.assertTrue(runx2.ready_for_structural_modeling)
+        self.assertTrue(any("folded-domain" in c for c in runx2.screening_concerns))
+
+        elk1 = MediatorLink.model_validate_json(
+            Path("examples/mediator_link_elk1_med23.json").read_text(encoding="utf-8"))
+        self.assertIs(elk1.tractability, InterfaceTractability.SHORT_LINEAR_MOTIF)
+        self.assertEqual(elk1.screening_concerns, ["calibration control, never a result"])
+
+    def test_interface_evidence_survives_without_dependency_numbers(self):
+        """Round 01 produced verified interface evidence and no DepMap numbers.
+        A candidate must be representable in that state instead of being unbuildable."""
+        runx2 = MediatorLink.model_validate_json(
+            Path("examples/mediator_link_runx2_med23.json").read_text(encoding="utf-8"))
+        c = RankedCandidate(gene="RUNX2", mediator=runx2)
+        self.assertTrue(c.awaiting_dependency_data)
+        self.assertEqual(c.name, "RUNX2")
+        ok, reason = c.shortlistable
+        self.assertFalse(ok)
+        self.assertIn("awaiting quantitative dependency data", reason)
+        with self.assertRaises(ValueError):  # no dependency and no gene to name it
+            RankedCandidate()
+
+    def test_calibration_controls_never_enter_the_shortlist(self):
+        elk1 = MediatorLink.model_validate_json(
+            Path("examples/mediator_link_elk1_med23.json").read_text(encoding="utf-8"))
+        records = analyze_gene_effects(FIXTURES / "gene_effect.csv", FIXTURES / "models.csv",
+                                       context="Lung", synthetic=True)
+        ranked = rank_all(records)
+        for c in ranked:  # give the control the best possible contact evidence
+            if c.dependency.gene == "SELECTIVE_TF":
+                c.mediator = elk1
+        sl = build_shortlist(ranked, disease_scope="Lung")
+        picked = {sl.candidates[i].name for i in sl.shortlist_indices}
+        self.assertNotIn("SELECTIVE_TF", picked)
+        self.assertIn("calibration control", render_markdown(sl))
 
     def test_elk1_med23_positive_control_classifies_as_direct(self):
         """The known-good case must come out 'direct'. If this breaks, the gate is

@@ -10,7 +10,8 @@
         "https://doi.org/10.1038/nature09409",
         "https://doi.org/10.1038/s41467-025-59014-8"
       ],
-      "note": "NO MED23 EXPERIMENT ON ETV1 EXISTS in the retrieved literature. The supporting fact — that activated KIT prolongs ETV1 protein stability while imatinib and MEK inhibition destabilize it (PMC2955195 L24) — is direct experimental evidence about ETV1 REGULATION, not about a MED23 contact, and is deliberately recorded in SOURCES.md rather than as a claim here: a regulation fact inside MediatorLink.claims would derive involvement=indirect and launder a MAPK observation into a contact. No proteome-wide MBM motif scan was executed either; the Paperclip protein VFS exposes annotation but not raw sequence. The motif scan is the first thing to run."
+      "note": "NO MED23 EXPERIMENT ON ETV1 EXISTS in the retrieved literature. The supporting fact \u2014 that activated KIT prolongs ETV1 protein stability while imatinib and MEK inhibition destabilize it (PMC2955195 L24) \u2014 is direct experimental evidence about ETV1 REGULATION, not about a MED23 contact, and is deliberately recorded in SOURCES.md rather than as a claim here: a regulation fact inside MediatorLink.claims would derive involvement=indirect and launder a MAPK observation into a contact. No proteome-wide MBM motif scan was executed either; the Paperclip protein VFS exposes annotation but not raw sequence. The motif scan is the first thing to run."
     }
-  ]
+  ],
+  "tractability": "unknown"
 }

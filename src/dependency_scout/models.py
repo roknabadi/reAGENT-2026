@@ -67,6 +67,19 @@ class Involvement(StrEnum):
     UNKNOWN = "unknown"      # nothing found
 
 
+class InterfaceTractability(StrEnum):
+    """Whether a mapped interface is a realistic small-molecule site.
+
+    `interacting_region_mapped` says we know *where* two proteins touch. It says
+    nothing about whether a compound could wedge in there, so a short motif in a
+    groove and a large domain-domain interface both read as mapped. They are not
+    equally druggable, and without this the second passes a gate it should fail.
+    """
+    SHORT_LINEAR_MOTIF = "short_linear_motif"  # peptide motif in a defined groove
+    FOLDED_DOMAIN = "folded_domain"            # large domain-domain interface
+    UNKNOWN = "unknown"
+
+
 class MediatorLink(BaseModel):
     """The TF-to-Mediator-subunit contact. Deliverable C of the stage-1 review."""
     model_config = ConfigDict(extra="forbid")
@@ -74,6 +87,9 @@ class MediatorLink(BaseModel):
     interacting_region_mapped: bool = False
     tf_region: str | None = None  # e.g. "activation domain, residues 1-89"
     claims: list[Claim] = Field(default_factory=list)
+    tractability: InterfaceTractability = InterfaceTractability.UNKNOWN
+    calibration_only: bool = False
+    """A known positive used to calibrate the gates. Never a result."""
 
     @model_validator(mode="after")
     def mapped_region_needs_direct_evidence(self) -> "MediatorLink":
@@ -102,6 +118,25 @@ class MediatorLink(BaseModel):
     def ready_for_structural_modeling(self) -> bool:
         return self.involvement is Involvement.DIRECT
 
+    @property
+    def screening_concerns(self) -> list[str]:
+        """Reasons a structurally valid contact may still be a poor drug target.
+
+        Deliberately advisory, not a gate: the humans in CHECKPOINTS.md decide
+        what proceeds. The point is that it is stated rather than discovered
+        after the docking run.
+        """
+        concerns = []
+        if self.tractability is InterfaceTractability.FOLDED_DOMAIN:
+            concerns.append(
+                "folded-domain interface: large buried surface, poor small-molecule "
+                "tractability compared with a short linear motif")
+        if self.tractability is InterfaceTractability.UNKNOWN and self.interacting_region_mapped:
+            concerns.append("interface tractability not assessed")
+        if self.calibration_only:
+            concerns.append("calibration control, never a result")
+        return concerns
+
 
 class EnrichmentEvidence(BaseModel):
     """Optional evidence. Missing values remain missing and never improve rank."""
@@ -129,14 +164,53 @@ class GateResult(BaseModel):
 
 
 class RankedCandidate(BaseModel):
-    dependency: DependencyEvidence
+    """A candidate at any stage of completeness.
+
+    `dependency` is optional because interface evidence and dependency
+    quantification are independent and arrive in either order. Requiring seven
+    DepMap numbers before a verified interface finding could be recorded meant
+    real evidence had nowhere to live until an unrelated stage had run.
+    """
+    gene: str | None = None
+    """Set when there is no `dependency` to carry the gene name."""
+    dependency: DependencyEvidence | None = None
     enrichment: EnrichmentEvidence = Field(default_factory=EnrichmentEvidence)
-    gate: GateResult
-    discovery_score: float = Field(ge=0, le=1)
+    gate: GateResult | None = None
+    discovery_score: float | None = Field(default=None, ge=0, le=1)
     enrichment_score: float | None = Field(default=None, ge=0, le=1)
-    evidence_completeness: float = Field(ge=0, le=1)
-    final_score: float = Field(ge=0, le=1)
+    evidence_completeness: float = Field(default=0.0, ge=0, le=1)
+    final_score: float | None = Field(default=None, ge=0, le=1)
     mediator: MediatorLink = Field(default_factory=MediatorLink)
+
+    @model_validator(mode="after")
+    def a_candidate_needs_a_name(self) -> "RankedCandidate":
+        if not self.dependency and not self.gene:
+            raise ValueError("set `gene` when there is no `dependency` to name it")
+        return self
+
+    @property
+    def name(self) -> str:
+        return self.dependency.gene if self.dependency else (self.gene or "?")
+
+    @property
+    def disease_context(self) -> str:
+        return self.dependency.disease_context if self.dependency else "not yet quantified"
+
+    @property
+    def awaiting_dependency_data(self) -> bool:
+        """Not a failure. The dependency stage has not run for this candidate."""
+        return self.dependency is None
+
+    @property
+    def shortlistable(self) -> tuple[bool, str | None]:
+        """Whether this may enter the top-N, and why not if it may not."""
+        if self.mediator.calibration_only:
+            return False, "calibration control, never a result"
+        if self.awaiting_dependency_data:
+            return False, "awaiting quantitative dependency data"
+        if self.gate and not self.gate.eligible:
+            return False, "; ".join(self.gate.failures)
+        return True, None
 
 
 class Shortlist(BaseModel):
@@ -157,10 +231,10 @@ class Shortlist(BaseModel):
         for i in self.shortlist_indices:
             if not 0 <= i < len(self.candidates):
                 raise ValueError(f"shortlist index {i} is outside the candidate table")
-            if not self.candidates[i].gate.eligible:
+            ok, reason = self.candidates[i].shortlistable
+            if not ok:
                 raise ValueError(
-                    f"shortlisted candidate {self.candidates[i].dependency.gene} failed its "
-                    f"dependency gate: {self.candidates[i].gate.failures}")
+                    f"{self.candidates[i].name} cannot be shortlisted: {reason}")
         return self
 
 
