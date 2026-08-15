@@ -3,75 +3,152 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dependency Scout — TF–coactivator target discovery</title>
+<title>Dependency Scout — agentic target discovery</title>
 <style>
 :root{
-  --paper:#FCFCFB; --sunk:#F4F4F2; --line:#E2E2DE; --line-strong:#C9C9C3;
-  --ink:#14171A; --ink-2:#4A4F55; --ink-3:#7A8087;
+  --bg:#FFFFFF; --sunk:#FAFAF9; --card:#FFFFFF; --line:#E7E7E4; --line-2:#D2D2CE;
+  --ink:#111315; --ink-2:#565B61; --ink-3:#8A9099;
   --pass:#0E8A5F; --fail:#CC2418; --control:#5B4BD6; --await:#A98A00;
-  --grid:#EAEAE6;
-  --serif:Charter,"Bitstream Charter","Iowan Old Style",Georgia,serif;
-  --sans:"Helvetica Neue",Inter,-apple-system,system-ui,sans-serif;
+  --grid:#EFEFEC; --glass:rgba(255,255,255,.82);
+  --sans:-apple-system,"SF Pro Text","SF Pro Display","Helvetica Neue",Inter,system-ui,sans-serif;
   --mono:"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  --r:10px;
 }
-:root:not([data-theme=light]) { color-scheme: light; }
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme=light]){
-    --paper:#131417; --sunk:#1B1D21; --line:#2A2D33; --line-strong:#3C4048;
-    --ink:#ECEDEF; --ink-2:#AAB0B8; --ink-3:#7A8087;
-    --pass:#28A075; --fail:#DE4E42; --control:#736AD8; --await:#B08F22;
-    --grid:#22252A; color-scheme: dark;
-  }
-}
-:root[data-theme=dark]{
-  --paper:#131417; --sunk:#1B1D21; --line:#2A2D33; --line-strong:#3C4048;
-  --ink:#ECEDEF; --ink-2:#AAB0B8; --ink-3:#7A8087;
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#0D0E10; --sunk:#141619; --card:#16181B; --line:#25282D; --line-2:#343840;
+  --ink:#F1F2F4; --ink-2:#A8AEB6; --ink-3:#767C85;
   --pass:#28A075; --fail:#DE4E42; --control:#736AD8; --await:#B08F22;
-  --grid:#22252A; color-scheme: dark;
+  --grid:#1E2126; --glass:rgba(13,14,16,.82); color-scheme:dark;
+}}
+:root[data-theme=dark]{
+  --bg:#0D0E10; --sunk:#141619; --card:#16181B; --line:#25282D; --line-2:#343840;
+  --ink:#F1F2F4; --ink-2:#A8AEB6; --ink-3:#767C85;
+  --pass:#28A075; --fail:#DE4E42; --control:#736AD8; --await:#B08F22;
+  --grid:#1E2126; --glass:rgba(13,14,16,.82); color-scheme:dark;
 }
 *{box-sizing:border-box}
-html,body{height:100%}
-body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
-  font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
-  display:grid;grid-template-rows:auto 1fr}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;
+  line-height:1.55;-webkit-font-smoothing:antialiased;letter-spacing:-.005em;overflow:hidden}
 a{color:inherit}
-:focus-visible{outline:2px solid var(--control);outline-offset:2px;border-radius:2px}
+button{font:inherit}
+:focus-visible{outline:2px solid var(--control);outline-offset:2px;border-radius:4px}
+::selection{background:color-mix(in srgb,var(--control) 22%,transparent)}
 
-/* ── masthead ─────────────────────────────────────────────── */
-header{display:flex;align-items:baseline;gap:14px 24px;flex-wrap:wrap;
-  padding:16px 22px 12px;border-bottom:1px solid var(--line)}
-h1{font-family:var(--serif);font-size:21px;font-weight:600;margin:0;letter-spacing:-.01em}
-@media (max-width:1180px){ .prov{display:none} }
-h1 em{font-style:normal;color:var(--ink-3);font-weight:400}
-.prov{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.01em}
-nav{margin-left:auto;display:flex;gap:2px}
-nav button{font:inherit;font-size:13px;background:none;border:1px solid transparent;
-  color:var(--ink-2);padding:5px 13px;border-radius:5px;cursor:pointer}
+/* ══ LANDING ══════════════════════════════════════════════ */
+#landing{position:fixed;inset:0;z-index:20;display:grid;place-items:center;
+  background:var(--bg);transition:opacity .5s ease,visibility .5s}
+#landing[hidden-state]{opacity:0;visibility:hidden;pointer-events:none}
+#ambient{position:absolute;inset:0;width:100%;height:100%}
+.land-in{position:relative;z-index:2;width:min(720px,90vw);text-align:left}
+.badge{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:500;
+  color:var(--ink-2);border:1px solid var(--line);background:var(--glass);
+  backdrop-filter:blur(9px);padding:5px 11px;border-radius:99px;margin-bottom:26px}
+.badge b{color:var(--pass);font-weight:600}
+.land-in h1{font-size:clamp(34px,5vw,52px);line-height:1.06;letter-spacing:-.032em;
+  font-weight:600;margin:0 0 16px}
+.land-in h1 span{color:var(--ink-3)}
+.land-in .lede{font-size:16.5px;color:var(--ink-2);max-width:56ch;margin:0 0 32px;line-height:1.6}
+.askbox{background:var(--card);border:1px solid var(--line-2);border-radius:14px;
+  padding:6px;box-shadow:0 1px 2px rgba(0,0,0,.04),0 12px 34px -18px rgba(0,0,0,.28)}
+.askrow{display:flex;align-items:center;gap:8px}
+.askrow input{flex:1;font:inherit;font-size:15px;background:none;border:none;color:var(--ink);
+  padding:13px 14px;min-width:0}
+.askrow input::placeholder{color:var(--ink-3)}
+.askrow input:focus{outline:none}
+.go{background:var(--ink);color:var(--bg);border:none;border-radius:9px;
+  width:38px;height:38px;cursor:pointer;font-size:16px;flex:none;
+  display:grid;place-items:center;transition:transform .14s}
+.go:hover{transform:translateX(2px)}
+.chips{display:flex;gap:7px;flex-wrap:wrap;padding:4px 6px 6px}
+.chips button{font-size:12.5px;color:var(--ink-2);background:var(--sunk);
+  border:1px solid var(--line);border-radius:8px;padding:6px 11px;cursor:pointer;
+  text-align:left;transition:border-color .14s,color .14s}
+.chips button:hover{border-color:var(--line-2);color:var(--ink)}
+.land-foot{margin-top:30px;display:flex;gap:26px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-3)}
+.land-foot b{color:var(--ink-2);font-weight:500}
+
+/* ══ APP SHELL ════════════════════════════════════════════ */
+#app{height:100%;display:grid;grid-template-rows:auto 1fr;opacity:0;transition:opacity .5s .15s}
+#app[data-on]{opacity:1}
+header{display:flex;align-items:center;gap:16px;padding:0 20px;height:56px;
+  border-bottom:1px solid var(--line);background:var(--glass);backdrop-filter:blur(9px)}
+.logo{font-weight:600;font-size:14.5px;letter-spacing:-.02em;white-space:nowrap;cursor:pointer;
+  background:none;border:none;color:var(--ink);padding:0}
+.logo em{font-style:normal;color:var(--ink-3);font-weight:400}
+.qbar{flex:1;display:flex;align-items:center;gap:8px;background:var(--sunk);
+  border:1px solid var(--line);border-radius:9px;padding:0 10px;max-width:620px;min-width:0}
+.qbar input{flex:1;font:inherit;font-size:13px;background:none;border:none;color:var(--ink);
+  padding:8px 2px;min-width:0}
+.qbar input:focus{outline:none}
+.qbar button{background:none;border:none;color:var(--ink-3);cursor:pointer;font-size:14px;padding:2px 4px}
+.qbar button:hover{color:var(--ink)}
+nav{display:flex;gap:2px;margin-left:auto}
+nav button{font-size:13px;background:none;border:1px solid transparent;color:var(--ink-2);
+  padding:6px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
 nav button:hover{background:var(--sunk);color:var(--ink)}
-nav button[aria-current=true]{background:var(--sunk);color:var(--ink);
-  border-color:var(--line-strong);font-weight:500}
-.theme{font:inherit;font-size:12px;background:none;border:1px solid var(--line-strong);
-  color:var(--ink-2);padding:5px 10px;border-radius:5px;cursor:pointer;margin-left:10px}
+nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
+  color:var(--ink);font-weight:500}
+.icon-btn{background:none;border:1px solid var(--line);color:var(--ink-2);width:32px;height:32px;
+  border-radius:8px;cursor:pointer;flex:none;display:grid;place-items:center;font-size:13px}
+.icon-btn:hover{color:var(--ink);border-color:var(--line-2)}
 
-main{overflow:hidden;position:relative;min-width:0}
-.view{display:none;height:100%;min-width:0}
+.body{display:grid;grid-template-columns:264px 1fr 300px;min-height:0;overflow:hidden}
+.body > *{min-width:0;min-height:0}
+
+/* ── timeline rail ── */
+.rail{border-right:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:18px 0 30px}
+.rail h2,.srcs h2{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--ink-3);font-weight:600;margin:0 0 12px;padding:0 18px}
+.stage{position:relative;padding:9px 18px 9px 44px;cursor:default}
+.stage::before{content:"";position:absolute;left:25px;top:26px;bottom:-4px;width:1px;
+  background:var(--line-2)}
+.stage:last-child::before{display:none}
+.dot{position:absolute;left:19px;top:12px;width:13px;height:13px;border-radius:50%;
+  border:2px solid var(--line-2);background:var(--sunk);transition:all .3s}
+.stage[data-s=running] .dot{border-color:var(--control);
+  box-shadow:0 0 0 0 color-mix(in srgb,var(--control) 55%,transparent);
+  animation:pulse 1.5s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.stage[data-s=done] .dot{border-color:var(--pass);background:var(--pass)}
+.stage[data-s=blocked] .dot{border-color:var(--fail);background:var(--fail)}
+.stage[data-s=abstained] .dot{border-color:var(--await);background:var(--await)}
+.stage .nm{font-size:13px;font-weight:500;color:var(--ink-3);transition:color .3s}
+.stage:not([data-s=pending]) .nm{color:var(--ink)}
+.stage .dt{font-size:12px;color:var(--ink-2);margin-top:1px;line-height:1.45}
+.stage .nt{font-size:11.5px;color:var(--ink-3);margin-top:3px;line-height:1.45;font-style:italic}
+.stage.in{animation:slideIn .4s ease both}
+@keyframes slideIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+
+/* ── sources rail ── */
+.srcs{border-left:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:18px 0 30px}
+.paper{margin:0 14px 9px;background:var(--card);border:1px solid var(--line);
+  border-radius:var(--r);padding:11px 12px;animation:slideIn .45s ease both;
+  text-decoration:none;display:block;transition:border-color .15s}
+.paper:hover{border-color:var(--line-2)}
+.paper .t{font-size:12.5px;font-weight:500;line-height:1.4;margin-bottom:5px}
+.paper .a{font-size:11.5px;color:var(--ink-2);line-height:1.45;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.paper .id{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:6px}
+.srcs .empty{padding:0 18px;font-size:12.5px;color:var(--ink-3);line-height:1.5}
+
+/* ── main views ── */
+main{position:relative;overflow:hidden}
+.view{position:absolute;inset:0;display:none}
 .view[data-on]{display:grid}
-.view > *{min-width:0;min-height:0}   /* grid children must be allowed to shrink */
 
-/* ── landscape ────────────────────────────────────────────── */
-#landscape{grid-template-columns:1fr 340px}
+#v-landscape{grid-template-columns:1fr 300px}
 #plotwrap{position:relative;overflow:hidden}
 #plot{display:block;width:100%;height:100%;cursor:crosshair}
-.hint{position:absolute;right:18px;top:16px;font-size:11.5px;color:var(--ink-3);
+.hint{position:absolute;right:16px;top:14px;font-size:11px;color:var(--ink-3);
   font-family:var(--mono);pointer-events:none}
-.zoomctl{position:absolute;right:16px;bottom:16px;display:flex;gap:4px}
-.zoomctl button{width:30px;height:30px;font:inherit;font-size:15px;background:var(--paper);
-  border:1px solid var(--line-strong);color:var(--ink-2);border-radius:5px;cursor:pointer}
+.zoomctl{position:absolute;right:14px;bottom:14px;display:flex;gap:4px}
+.zoomctl button{width:29px;height:29px;background:var(--card);border:1px solid var(--line-2);
+  color:var(--ink-2);border-radius:7px;cursor:pointer;font-size:14px}
 .zoomctl button:hover{color:var(--ink)}
-#tip{position:absolute;pointer-events:none;background:var(--paper);
-  border:1px solid var(--line-strong);border-radius:6px;padding:9px 11px;
-  font-size:12px;box-shadow:0 6px 20px rgba(0,0,0,.13);opacity:0;transition:opacity .1s;
-  max-width:250px;z-index:5}
+#tip{position:absolute;pointer-events:none;background:var(--card);border:1px solid var(--line-2);
+  border-radius:var(--r);padding:10px 12px;font-size:12px;box-shadow:0 10px 30px -12px rgba(0,0,0,.3);
+  opacity:0;transition:opacity .1s;max-width:250px;z-index:5}
 #tip[data-on]{opacity:1}
 #tip .g{font-family:var(--mono);font-weight:600;font-size:13px}
 #tip dl{margin:6px 0 0;display:grid;grid-template-columns:auto auto;gap:1px 12px;
@@ -80,539 +157,585 @@ main{overflow:hidden;position:relative;min-width:0}
 #tip .why{margin-top:7px;padding-top:6px;border-top:1px solid var(--line);
   font-size:11px;color:var(--fail);line-height:1.35}
 
-aside{border-left:1px solid var(--line);padding:22px 24px;overflow-y:auto;background:var(--sunk)}
-aside h2{font-family:var(--serif);font-size:16px;margin:0 0 4px;font-weight:600}
-aside .sub{color:var(--ink-3);font-size:12.5px;margin:0 0 20px}
-.stat{margin-bottom:18px}
-.stat .n{font-family:var(--serif);font-size:34px;line-height:1;font-weight:600;
-  letter-spacing:-.02em;display:block}
-.stat .n.zero{color:var(--fail)}
-.stat .l{font-size:12px;color:var(--ink-3);margin-top:3px}
-.bars{margin-top:22px}
-.bars h3{font-size:11px;text-transform:uppercase;letter-spacing:.07em;
-  color:var(--ink-3);margin:0 0 10px;font-weight:600}
+.side{border-left:1px solid var(--line);overflow-y:auto;padding:20px}
+.side h3{font-size:15px;font-weight:600;margin:0 0 3px;letter-spacing:-.015em}
+.side .sub{color:var(--ink-3);font-size:12.5px;margin:0 0 18px}
+.metric{margin-bottom:16px}
+.metric .n{font-size:32px;font-weight:600;letter-spacing:-.03em;line-height:1;display:block}
+.metric .n.zero{color:var(--fail)}
+.metric .l{font-size:12px;color:var(--ink-3);margin-top:3px}
+.cap{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);
+  font-weight:600;margin:20px 0 10px}
 .bar{margin-bottom:9px}
-.bar .lab{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;gap:10px;
-  line-height:1.35}
-.bar .lab span:first-child{min-width:0}
+.bar .lab{display:flex;justify-content:space-between;gap:10px;font-size:12px;
+  margin-bottom:3px;line-height:1.35}
 .bar .lab span:last-child{font-family:var(--mono);color:var(--ink-2);flex:none}
-.bar .track{height:5px;background:var(--grid);border-radius:3px;overflow:hidden;width:100%}
-.bar .fill{height:100%;background:var(--fail);border-radius:3px;max-width:100%}
-.gatebox{margin-top:24px;padding:14px;background:var(--paper);
-  border:1px solid var(--line);border-radius:7px}
-.gatebox h3{font-size:11px;text-transform:uppercase;letter-spacing:.07em;
-  color:var(--ink-3);margin:0 0 9px;font-weight:600}
-.gatebox dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:4px 10px;
+.bar .track{height:4px;background:var(--grid);border-radius:3px;overflow:hidden;width:100%}
+.bar .fill{height:100%;background:var(--fail);border-radius:3px;max-width:100%;
+  animation:grow .6s ease both}
+@keyframes grow{from{width:0!important}}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:13px}
+.panel dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:5px 10px;
   font-size:12px;font-family:var(--mono)}
-.gatebox dt{color:var(--ink-2)}
-.gatebox dd{margin:0;text-align:right}
-.note{margin-top:16px;font-size:12px;color:var(--ink-2);line-height:1.5}
+.panel dt{color:var(--ink-2)}
+.panel dd{margin:0;text-align:right}
+.note{margin-top:14px;font-size:12px;color:var(--ink-2);line-height:1.55}
 .note b{color:var(--ink);font-weight:600}
 
-/* ── candidates ───────────────────────────────────────────── */
-#candidates{grid-template-columns:1fr 420px;overflow:hidden}
-.tablewrap{overflow:auto;padding:20px 0 40px 26px}
+/* candidates */
+#v-candidates{grid-template-columns:1fr 380px}
+.tablewrap{overflow:auto;padding:20px 0 40px 22px}
 table{border-collapse:collapse;width:100%;font-size:13px}
-caption{text-align:left;font-family:var(--serif);font-size:16px;font-weight:600;
-  padding-bottom:3px}
+caption{text-align:left;font-size:15px;font-weight:600;padding-bottom:2px;letter-spacing:-.015em}
 .capsub{text-align:left;color:var(--ink-3);font-size:12.5px;padding-bottom:14px;font-weight:400}
 th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
-  color:var(--ink-3);font-weight:600;padding:0 14px 7px 0;border-bottom:1px solid var(--line-strong);
-  white-space:nowrap}
+  color:var(--ink-3);font-weight:600;padding:0 13px 7px 0;border-bottom:1px solid var(--line-2);
+  white-space:nowrap;position:sticky;top:0;background:var(--bg)}
 th.num,td.num{text-align:right;font-family:var(--mono)}
-td{padding:9px 14px 9px 0;border-bottom:1px solid var(--line);vertical-align:top}
+td{padding:9px 13px 9px 0;border-bottom:1px solid var(--line);vertical-align:top}
 tbody tr{cursor:pointer}
 tbody tr:hover{background:var(--sunk)}
 tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var(--control)}
-.gene{font-family:var(--mono);font-weight:600;font-size:13px;white-space:nowrap}
+.gene{font-family:var(--mono);font-weight:600;white-space:nowrap}
 .ctx{color:var(--ink-2);font-size:12.5px}
-.pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;
-  padding:2px 8px;border-radius:20px;white-space:nowrap;font-weight:500;
-  border:1px solid currentColor}
-.pill i{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
-.p-pass{color:var(--pass)} .p-fail{color:var(--fail)}
-.p-await{color:var(--await)} .p-ctrl{color:var(--control)}
-.starred{color:var(--pass);font-family:var(--mono);font-size:11px;font-weight:600}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:2px 8px;
+  border-radius:99px;white-space:nowrap;font-weight:500;border:1px solid currentColor}
+.pill i{width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
+.p-pass{color:var(--pass)}.p-fail{color:var(--fail)}
+.p-await{color:var(--await)}.p-ctrl{color:var(--control)}
+.star{color:var(--pass);font-size:11px}
 
-/* ── detail panel ─────────────────────────────────────────── */
-#detail{border-left:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:22px 24px 50px}
-#detail .empty{color:var(--ink-3);font-size:13px;margin-top:40px;text-align:center}
-#detail h2{font-family:var(--mono);font-size:19px;margin:0;font-weight:600;letter-spacing:-.01em}
-#detail .ctxline{color:var(--ink-2);font-size:12.5px;margin:2px 0 16px}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:12.5px;margin-bottom:18px}
+#detail{border-left:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:20px 20px 50px}
+#detail .empty{color:var(--ink-3);font-size:13px;margin-top:36px;text-align:center}
+#detail h3{font-family:var(--mono);font-size:18px;margin:0;font-weight:600;letter-spacing:-.02em}
+#detail .ctxline{color:var(--ink-2);font-size:12.5px;margin:2px 0 15px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:5px 13px;font-size:12.5px;margin-bottom:16px}
 .kv dt{color:var(--ink-3)}
 .kv dd{margin:0;font-family:var(--mono)}
-.blocked{background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--await);
-  border-radius:5px;padding:11px 13px;font-size:12.5px;margin-bottom:18px;line-height:1.45}
-.blocked.f{border-left-color:var(--fail)}
-.blocked.c{border-left-color:var(--control)}
-.blocked b{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
+.callout{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--await);
+  border-radius:var(--r);padding:11px 12px;font-size:12.5px;margin-bottom:15px;line-height:1.5}
+.callout.f{border-left-color:var(--fail)}.callout.c{border-left-color:var(--control)}
+.callout b{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
   color:var(--ink-3);margin-bottom:4px}
-.region{background:var(--paper);border:1px solid var(--line);border-radius:5px;
-  padding:11px 13px;margin-bottom:18px}
-.region .r{font-family:var(--mono);font-size:12px;line-height:1.5;word-break:break-word}
-h3.sec{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-3);
-  margin:0 0 10px;font-weight:600}
-.claim{border-left:2px solid var(--line-strong);padding:0 0 0 13px;margin-bottom:16px}
-.claim .sup{font-size:10.5px;font-family:var(--mono);letter-spacing:.02em;margin-bottom:4px;
-  display:inline-block;font-weight:600}
-.s-direct_experimental{color:var(--pass)}
-.s-genetic_functional{color:var(--control)}
-.s-computational_prediction{color:var(--await)}
-.s-inference{color:var(--ink-3)}
+.claim{border-left:2px solid var(--line-2);padding-left:12px;margin-bottom:15px}
+.claim .sup{font-size:10.5px;font-family:var(--mono);margin-bottom:4px;font-weight:600;display:inline-block}
+.s-direct_experimental{color:var(--pass)}.s-genetic_functional{color:var(--control)}
+.s-computational_prediction{color:var(--await)}.s-inference{color:var(--ink-3)}
 .claim p{margin:0 0 6px;font-size:12.5px;line-height:1.5}
-.claim .n{font-size:12px;color:var(--ink-2);font-style:italic;line-height:1.45;margin:0 0 6px}
-.claim a{font-family:var(--mono);font-size:11px;color:var(--control);
-  display:block;word-break:break-all;text-decoration:none}
+.claim .n{font-size:12px;color:var(--ink-2);font-style:italic;line-height:1.45}
+.claim a{font-family:var(--mono);font-size:11px;color:var(--control);display:block;
+  word-break:break-all;text-decoration:none}
 .claim a:hover{text-decoration:underline}
 
-/* ── structure ────────────────────────────────────────────── */
-#structure{grid-template-columns:1fr 340px}
+#v-structure{grid-template-columns:1fr 300px}
+#wrap3d{position:relative;overflow:hidden}
 #canvas3d{display:block;width:100%;height:100%;cursor:grab}
 #canvas3d:active{cursor:grabbing}
-.legend3{position:absolute;left:22px;top:20px;font-size:12px;background:var(--paper);
-  border:1px solid var(--line);border-radius:7px;padding:12px 14px}
-.legend3 .row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.legend3 .row:last-child{margin:0}
-.legend3 .sw{width:15px;height:3px;border-radius:2px;flex:none}
-.legend3 .lb{font-family:var(--mono);font-size:11.5px}
-.resid{display:flex;flex-wrap:wrap;gap:4px;margin-top:9px}
-.resid span{font-family:var(--mono);font-size:11px;padding:2px 6px;border-radius:3px;
-  background:var(--paper);border:1px solid var(--line)}
+.leg{position:absolute;left:18px;top:16px;font-size:12px;background:var(--glass);
+  backdrop-filter:blur(9px);border:1px solid var(--line);border-radius:var(--r);padding:11px 13px}
+.leg .row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.leg .row:last-child{margin:0}
+.leg .sw{width:14px;height:3px;border-radius:2px;flex:none}
+.leg .lb{font-family:var(--mono);font-size:11.5px}
+.resid{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.resid span{font-family:var(--mono);font-size:11px;padding:2px 6px;border-radius:5px;
+  background:var(--card);border:1px solid var(--line)}
 
-@media (max-width:1000px){
-  #landscape,#candidates,#structure{grid-template-columns:1fr;grid-template-rows:1fr auto}
-  aside,#detail{border-left:none;border-top:1px solid var(--line);max-height:44vh}
+@media (max-width:1240px){ .body{grid-template-columns:230px 1fr} .srcs{display:none} }
+@media (max-width:940px){
+  .body{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .rail{border-right:none;border-bottom:1px solid var(--line);max-height:180px}
+  #v-landscape,#v-candidates,#v-structure{grid-template-columns:1fr}
+  .side,#detail{display:none}
 }
-@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
-<header>
-  <h1>Dependency Scout <em>— TF–coactivator target discovery</em></h1>
-  <span class="prov" id="prov"></span>
-  <nav role="tablist">
-    <button role="tab" data-v="landscape" aria-current="true">Landscape</button>
-    <button role="tab" data-v="candidates">Candidates</button>
-    <button role="tab" data-v="structure">Structure</button>
-  </nav>
-  <button class="theme" id="theme">Dark</button>
-</header>
 
-<main>
-  <section class="view" id="landscape" data-on>
-    <div id="plotwrap">
-      <canvas id="plot"></canvas>
-      <div class="hint">Scroll to zoom · drag to pan · hover a point for its numbers</div>
-      <div class="zoomctl">
-        <button id="zin" title="Zoom in">+</button>
-        <button id="zout" title="Zoom out">−</button>
-        <button id="zrst" title="Reset view" style="width:auto;padding:0 9px;font-size:11px">Reset</button>
+<section id="landing">
+  <canvas id="ambient"></canvas>
+  <div class="land-in">
+    <div class="badge"><b>●</b> DepMap 24Q2 · Lambert TF catalogue · PMC full text</div>
+    <h1>Ask a disease question.<br><span>Watch the evidence decide.</span></h1>
+    <p class="lede">An agentic pipeline from disease biology to a testable drug hypothesis.
+      It gathers public genetic, structural and literature evidence, ranks what survives, and
+      says out loud what it rejected and why.</p>
+    <div class="askbox">
+      <div class="askrow">
+        <input id="q0" placeholder="Which transcription factors is small cell lung cancer selectively dependent on?" autocomplete="off">
+        <button class="go" id="go0" title="Run the pipeline">→</button>
       </div>
-      <div id="tip"></div>
+      <div class="chips" id="chips"></div>
     </div>
-    <aside>
-      <h2>Every transcription factor, one context</h2>
-      <p class="sub" id="lsub"></p>
-      <div class="stat"><span class="n" id="nTF"></span><div class="l">TFs screened</div></div>
-      <div class="stat"><span class="n zero" id="nPass"></span><div class="l">clear every gate</div></div>
-      <div class="bars">
-        <h3>Why the rest were rejected</h3>
-        <div id="whybars"></div>
-      </div>
-      <div class="gatebox">
-        <h3>Gate thresholds</h3>
-        <dl id="thr"></dl>
-      </div>
-      <p class="note" id="lnote"></p>
-    </aside>
-  </section>
+    <div class="land-foot">
+      <span><b>1,588</b> TFs screened</span>
+      <span><b>1,100</b> cell lines</span>
+      <span><b>8</b> stages, each abstains on its own</span>
+    </div>
+  </div>
+</section>
 
-  <section class="view" id="candidates">
-    <div class="tablewrap">
-      <table>
-        <caption>Candidates<div class="capsub" id="csub"></div></caption>
-        <thead><tr>
-          <th>TF</th><th>Context</th><th class="num">n</th><th class="num">median</th>
-          <th class="num">selectivity</th><th>Dependency</th><th>Contact</th><th class="num">score</th>
-        </tr></thead>
-        <tbody id="rows"></tbody>
-      </table>
+<div id="app">
+  <header>
+    <button class="logo" id="home">Dependency&nbsp;Scout <em>— target discovery</em></button>
+    <div class="qbar">
+      <span style="color:var(--ink-3);font-size:13px">⌕</span>
+      <input id="q1" placeholder="Ask another question…" autocomplete="off">
+      <button id="go1" title="Run">↵</button>
     </div>
-    <div id="detail"><p class="empty">Select a candidate to read its evidence.</p></div>
-  </section>
+    <nav>
+      <button data-v="landscape" aria-current="true">Landscape</button>
+      <button data-v="candidates">Candidates</button>
+      <button data-v="structure">Structure</button>
+    </nav>
+    <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
+  </header>
 
-  <section class="view" id="structure">
-    <div id="wrap3d" style="position:relative;overflow:hidden">
-      <canvas id="canvas3d"></canvas>
-      <div class="legend3" id="leg3"></div>
+  <div class="body">
+    <div class="rail">
+      <h2>Pipeline</h2>
+      <div id="stages"></div>
     </div>
-    <aside id="saside"></aside>
-  </section>
-</main>
+
+    <main>
+      <section class="view" id="v-landscape" data-on>
+        <div id="plotwrap">
+          <canvas id="plot"></canvas>
+          <div class="hint">scroll to zoom · drag to pan</div>
+          <div class="zoomctl">
+            <button id="zin">+</button><button id="zout">−</button>
+            <button id="zrst" style="width:auto;padding:0 9px;font-size:11px">Reset</button>
+          </div>
+          <div id="tip"></div>
+        </div>
+        <div class="side">
+          <h3>Every TF, one context</h3>
+          <p class="sub" id="lsub"></p>
+          <div class="metric"><span class="n" id="nTF"></span><div class="l">screened</div></div>
+          <div class="metric"><span class="n zero" id="nPass"></span><div class="l">clear every gate</div></div>
+          <div class="cap">Why the rest were rejected</div>
+          <div id="whybars"></div>
+          <div class="cap">Gate thresholds</div>
+          <div class="panel"><dl id="thr"></dl></div>
+          <p class="note" id="lnote"></p>
+        </div>
+      </section>
+
+      <section class="view" id="v-candidates">
+        <div class="tablewrap">
+          <table><caption>Candidates<div class="capsub" id="csub"></div></caption>
+            <thead><tr><th>TF</th><th>Context</th><th class="num">n</th><th class="num">median</th>
+              <th class="num">selectivity</th><th>Dependency</th><th>Contact</th><th class="num">score</th></tr></thead>
+            <tbody id="rows"></tbody></table>
+        </div>
+        <div id="detail"><p class="empty">Select a candidate to read its evidence.</p></div>
+      </section>
+
+      <section class="view" id="v-structure">
+        <div id="wrap3d"><canvas id="canvas3d"></canvas><div class="leg" id="leg"></div></div>
+        <div class="side" id="saside"></div>
+      </section>
+    </main>
+
+    <div class="srcs">
+      <h2>Sources</h2>
+      <div id="papers"><p class="empty">Papers retrieved during the run appear here, newest first.</p></div>
+    </div>
+  </div>
+</div>
 
 <script type="module">
 const $ = s => document.querySelector(s);
 const fmt = (v,d=2) => v===null||v===undefined ? '—' : v.toFixed(d);
 const D = await (await fetch('./data.json')).json();
+const T = D.thresholds, pts = D.landscape, C = D.candidates;
 
-/* ── theme ─────────────────────────────────────────────────── */
-const themeBtn = $('#theme');
-let booted = false;   // draw()/renderStructure() do not exist until their sections run
-const setTheme = t => { document.documentElement.dataset.theme = t;
-  themeBtn.textContent = t === 'dark' ? 'Light' : 'Dark'; localStorage.dsTheme = t;
-  if (booted) { draw(); if (renderStructure) renderStructure(); } };
-setTheme(localStorage.dsTheme ||
-  (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-themeBtn.onclick = () => setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+/* theme */
+let booted=false, renderStructure=null;
+const setTheme = t => { document.documentElement.dataset.theme=t; localStorage.dsTheme=t;
+  if(booted){ draw(); renderStructure?.(); } };
+setTheme(localStorage.dsTheme || (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
+$('#theme').onclick = () => setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
-/* ── nav ───────────────────────────────────────────────────── */
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-current', x===b));
-  document.querySelectorAll('.view').forEach(v => v.toggleAttribute('data-on', v.id===b.dataset.v));
-  if (b.dataset.v === 'landscape') { sizePlot(); draw(); }
-  if (b.dataset.v === 'structure') initStructure();
-});
-
-$('#prov').textContent = D.generated_from;
-
-/* ═══ LANDSCAPE ═══════════════════════════════════════════════
-   The signature view. Every TF placed by the two numbers the gate
-   actually tests, with the threshold drawn as a real boundary — so a
-   rejection is something you can see rather than take on trust. */
-const pts = D.landscape, T = D.thresholds;
-const cv = $('#plot'), ctx = cv.getContext('2d'), tip = $('#tip');
-let view = null, drag = null, hover = -1;
-
-const X = p => p.sel, Y = p => p.median;      // selectivity vs dependency strength
-// Fit the frame to the data, then make sure the gate lines stay inside it — a
-// boundary you cannot see is not a boundary.
-const EXT = (() => {
-  const xs = pts.map(X), ys = pts.map(Y), pad = v => (Math.max(...v)-Math.min(...v))*0.06;
-  return {
-    x0: Math.min(...xs) - pad(xs),
-    x1: Math.max(Math.max(...xs), T.selectivity_delta*1.25) + pad(xs),
-    y0: Math.min(...ys) - pad(ys),
-    y1: Math.max(Math.max(...ys), T.median_target_effect*0.4) + pad(ys),
-  };
-})();
-const STEP = (lo,hi) => { const raw=(hi-lo)/7, m=10**Math.floor(Math.log10(raw));
-  return [1,2,2.5,5,10].map(s=>s*m).find(s=>s>=raw) || m*10; };
-
-function sizePlot(){
-  const r = cv.parentElement.getBoundingClientRect(), dpr = devicePixelRatio||1;
-  cv.width = r.width*dpr; cv.height = r.height*dpr; cv.style.width=r.width+'px';
-  cv.style.height=r.height+'px'; ctx.setTransform(dpr,0,0,dpr,0,0);
-  if (!view) resetView();
+/* ══ LANDING: ambient particle field ═══════════════════════
+   Points drift in a slow torus, standing in for the sequence space the
+   pipeline searches. Ornamental — it encodes nothing, so it is kept quiet. */
+{
+  const c=$('#ambient'), g=c.getContext('2d'); let W,H,ps=[];
+  const size=()=>{const d=devicePixelRatio||1;W=innerWidth;H=innerHeight;
+    c.width=W*d;c.height=H*d;c.style.width=W+'px';c.style.height=H+'px';g.setTransform(d,0,0,d,0,0);};
+  size(); addEventListener('resize',size);
+  for(let i=0;i<170;i++) ps.push({a:Math.random()*6.28,r:0.28+Math.random()*0.5,
+    z:Math.random(),s:0.00028+Math.random()*0.0007});
+  let raf; (function tick(){
+    if($('#landing').hasAttribute('hidden-state')){cancelAnimationFrame(raf);return;}
+    g.clearRect(0,0,W,H);
+    const cx=W*0.5, cy=H*0.5, R=Math.min(W,H)*0.72;
+    for(const p of ps){ p.a+=p.s;
+      const x=cx+Math.cos(p.a)*R*p.r, y=cy+Math.sin(p.a)*R*p.r*0.42+ (p.z-0.5)*H*0.5;
+      g.beginPath(); g.arc(x,y,0.7+p.z*1.5,0,6.28);
+      g.fillStyle=css('--ink-3'); g.globalAlpha=0.10+p.z*0.16; g.fill();
+    }
+    g.globalAlpha=1; raf=requestAnimationFrame(tick);
+  })();
 }
-const M = { l:58, r:18, t:18, b:52 };   // margin so ticks and titles never sit on data
-function resetView(){
-  const r = cv.getBoundingClientRect();
-  const sx = (r.width-M.l-M.r)/(EXT.x1-EXT.x0), sy = (r.height-M.t-M.b)/(EXT.y1-EXT.y0);
-  view = { k: Math.min(sx,sy), x: M.l, y: M.t };
+
+const SUGGESTIONS = [
+  'Which transcription factors is small cell lung cancer selectively dependent on?',
+  'Is there a documented physical contact between IRF4 and any Mediator subunit?',
+  'What makes the ELK1–MED23 interface tractable for a small molecule?',
+];
+$('#chips').innerHTML = SUGGESTIONS.map(s=>`<button>${s}</button>`).join('');
+$('#chips').onclick = e => { const b=e.target.closest('button'); if(b) enter(b.textContent); };
+$('#go0').onclick = () => enter($('#q0').value || $('#q0').placeholder);
+$('#q0').onkeydown = e => { if(e.key==='Enter') enter($('#q0').value || $('#q0').placeholder); };
+$('#go1').onclick = () => run($('#q1').value);
+$('#q1').onkeydown = e => { if(e.key==='Enter') run($('#q1').value); };
+$('#home').onclick = () => { $('#landing').removeAttribute('hidden-state');
+  $('#app').removeAttribute('data-on'); };
+
+function enter(q){
+  $('#landing').setAttribute('hidden-state','');
+  $('#app').setAttribute('data-on','');
+  $('#q1').value = q;
+  setTimeout(()=>{ booted=true; sizePlot(); draw(); run(q); }, 380);
 }
-const sx = p => (X(p)-EXT.x0)*view.k + view.x;
-const sy = p => (EXT.y1-Y(p))*view.k + view.y;
+
+/* ══ PIPELINE TIMELINE ════════════════════════════════════ */
+const STAGES = [
+  ['question','Question'], ['literature','Literature'], ['discovery','Target discovery'],
+  ['ranking','Ranking & gates'], ['specificity','Specificity'], ['site','Druggable site'],
+  ['structure','Structural evaluation'], ['screening','Small-molecule screen'],
+  ['experiment','Next experiment'],
+];
+$('#stages').innerHTML = STAGES.map(([id,nm])=>
+  `<div class="stage" id="st-${id}" data-s="pending"><div class="dot"></div>
+    <div class="nm">${nm}</div><div class="dt"></div><div class="nt"></div></div>`).join('');
+
+function setStage({id,state,detail,note}){
+  const el=$('#st-'+id); if(!el) return;
+  el.dataset.s=state; el.classList.add('in');
+  el.querySelector('.dt').textContent = detail||'';
+  el.querySelector('.nt').textContent = note||'';
+}
+function addPaper(p){
+  const box=$('#papers'); box.querySelector('.empty')?.remove();
+  const a=document.createElement('a');
+  a.className='paper'; a.href=p.url||'#'; a.target='_blank'; a.rel='noopener';
+  a.innerHTML=`<div class="t">${p.title}</div>${p.abstract?`<div class="a">${p.abstract}</div>`:''}
+    <div class="id">${p.id}</div>`;
+  box.prepend(a);
+}
+
+let es=null;
+function run(q){
+  es?.close();
+  STAGES.forEach(([id])=>setStage({id,state:'pending',detail:'',note:''}));
+  $('#papers').innerHTML='';
+  const live = new EventSource('/api/run?q='+encodeURIComponent(q||''));
+  es = live;
+  let got=false;
+  live.addEventListener('stage', e => { got=true; setStage(JSON.parse(e.data)); });
+  live.addEventListener('paper', e => addPaper(JSON.parse(e.data)));
+  live.addEventListener('done', () => live.close());
+  live.onerror = () => { live.close(); if(!got) replay(q); };
+}
+
+/* Without the local server there is no live Paperclip call. Replay the recorded
+   run from data.json and label it, rather than animating a fiction. */
+function replay(q){
+  const land=pts, passed=land.filter(p=>p.pass);
+  const tally={}; land.forEach(p=>p.why.forEach(w=>tally[w]=(tally[w]||0)+1));
+  const mapped=C.filter(c=>c.region_mapped&&!c.control);
+  const scored=C.filter(c=>!c.awaiting);
+  const both=C.filter(c=>!c.awaiting&&c.involvement==='direct'&&!c.control);
+  const S=D.structure;
+  const seq=[
+    {id:'question',state:'done',detail:q||'recorded run',
+     note:'Recorded run — start ui/serve.py for a live Paperclip search.'},
+    {id:'literature',state:'done',detail:`${C.reduce((n,c)=>n+c.claims.length,0)} claims already on file`,
+     note:'Retrieved earlier and verified at source. Not a live search.'},
+    {id:'discovery',state:'done',detail:`${land.length} screened in ${D.landscape_context}`,
+     note:'DepMap 24Q2 Chronos, Lambert TF catalogue.'},
+    {id:'ranking',state:passed.length?'done':'abstained',
+     detail:`${passed.length} of ${land.length} clear every gate`,
+     note:Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,2).map(([w,n])=>`${n} × ${w}`).join('; ')},
+    {id:'specificity',state:scored.length?'done':'blocked',
+     detail:`${scored.length} candidates with a selective dependency`,
+     note:'Cancer-cell selectivity is not normal-tissue safety.'},
+    {id:'site',state:mapped.length?'done':'abstained',
+     detail:mapped.length?mapped.map(c=>`${c.gene}–${c.partner}`).join(', '):'no mapped interacting region',
+     note:'A whole-protein pull-down is association, not contact.'},
+    {id:'structure',state:S?'done':'blocked',
+     detail:S?`PDB ${S.pdb_id} at ${S.resolution_a} Å`:'no structure',
+     note:'A structure is not a binding claim.'},
+    {id:'screening',state:'pending',detail:'not run',
+     note:'Needs an approved-drug library and a defined box. Blocked until checkpoint 4 is signed.'},
+    {id:'experiment',state:'done',
+     detail:both.length?`${both.length} candidate(s) with both`:'no candidate has both a dependency and a mapped contact',
+     note:'Every ranked dependency lacks a documented contact; every mapped contact lacks numbers. That gap is the next experiment.'},
+  ];
+  seq.forEach((s,i)=>{
+    setTimeout(()=>{ if(i && seq[i-1]) setStage({...seq[i-1]});
+      setStage({...s,state:'running',note:''});
+      setTimeout(()=>setStage(s), 260);
+    }, i*300);
+  });
+}
+
+/* ══ LANDSCAPE ════════════════════════════════════════════ */
+const cv=$('#plot'), ctx=cv.getContext('2d'), tip=$('#tip');
+let view=null, drag=null, hover=-1;
+const X=p=>p.sel, Y=p=>p.median;
+const EXT=(()=>{ const xs=pts.map(X), ys=pts.map(Y), pd=v=>(Math.max(...v)-Math.min(...v))*0.06;
+  return { x0:Math.min(...xs)-pd(xs), x1:Math.max(Math.max(...xs),T.selectivity_delta*1.25)+pd(xs),
+           y0:Math.min(...ys)-pd(ys), y1:Math.max(Math.max(...ys),T.median_target_effect*0.4)+pd(ys) };})();
+const STEP=(lo,hi)=>{const raw=(hi-lo)/7,m=10**Math.floor(Math.log10(raw));
+  return [1,2,2.5,5,10].map(s=>s*m).find(s=>s>=raw)||m*10;};
+const M={l:56,r:16,t:16,b:48};
+function sizePlot(){ const r=cv.parentElement.getBoundingClientRect(), d=devicePixelRatio||1;
+  if(!r.width) return;
+  cv.width=r.width*d; cv.height=r.height*d; cv.style.width=r.width+'px'; cv.style.height=r.height+'px';
+  ctx.setTransform(d,0,0,d,0,0); if(!view) resetView(); }
+function resetView(){ const r=cv.getBoundingClientRect();
+  view={ k:Math.min((r.width-M.l-M.r)/(EXT.x1-EXT.x0),(r.height-M.t-M.b)/(EXT.y1-EXT.y0)),
+         x:M.l, y:M.t }; }
+const sx=p=>(X(p)-EXT.x0)*view.k+view.x, sy=p=>(EXT.y1-Y(p))*view.k+view.y;
 
 function draw(){
-  const r = cv.getBoundingClientRect(); if (!view) return;
+  const r=cv.getBoundingClientRect(); if(!view||!r.width) return;
   ctx.clearRect(0,0,r.width,r.height);
-  const gridC=css('--grid'), inkC=css('--ink-3'), lineC=css('--line-strong');
-
-  // grid + axes
-  const PL=M.l, PR=r.width-M.r, PT=M.t, PB=r.height-M.b;   // plot rect
+  const PL=M.l,PR=r.width-M.r,PT=M.t,PB=r.height-M.b;
   ctx.save(); ctx.beginPath(); ctx.rect(PL,PT,PR-PL,PB-PT); ctx.clip();
-
-  ctx.strokeStyle=gridC; ctx.lineWidth=1;
-  const dx=STEP(EXT.x0,EXT.x1), dy=STEP(EXT.y0,EXT.y1);
-  const ticks=[];
+  ctx.strokeStyle=css('--grid'); ctx.lineWidth=1;
+  const dx=STEP(EXT.x0,EXT.x1), dy=STEP(EXT.y0,EXT.y1), ticks=[];
   for(let v=Math.ceil(EXT.x0/dx)*dx; v<=EXT.x1; v+=dx){
     const x=(v-EXT.x0)*view.k+view.x; if(x<PL||x>PR) continue;
-    ctx.beginPath(); ctx.moveTo(x,PT); ctx.lineTo(x,PB); ctx.stroke();
-    ticks.push(['x', v, x, dx]);
-  }
+    ctx.beginPath(); ctx.moveTo(x,PT); ctx.lineTo(x,PB); ctx.stroke(); ticks.push(['x',v,x,dx]); }
   for(let v=Math.ceil(EXT.y0/dy)*dy; v<=EXT.y1; v+=dy){
     const y=(EXT.y1-v)*view.k+view.y; if(y<PT||y>PB) continue;
-    ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(PR,y); ctx.stroke();
-    ticks.push(['y', v, y, dy]);
-  }
+    ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(PR,y); ctx.stroke(); ticks.push(['y',v,y,dy]); }
 
-  // the gate boundary: the two thresholds this projection can show
-  const gx=(T.selectivity_delta-EXT.x0)*view.k+view.x;
-  const gy=(EXT.y1-T.median_target_effect)*view.k+view.y;
-  ctx.save();
-  ctx.fillStyle=css('--pass'); ctx.globalAlpha=0.06;
-  ctx.fillRect(gx,PT,PR-gx,gy-PT);
-  ctx.restore();
+  const gx=(T.selectivity_delta-EXT.x0)*view.k+view.x, gy=(EXT.y1-T.median_target_effect)*view.k+view.y;
+  ctx.save(); ctx.fillStyle=css('--pass'); ctx.globalAlpha=.06; ctx.fillRect(gx,PT,PR-gx,gy-PT); ctx.restore();
   ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle=css('--pass'); ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.moveTo(gx,PT); ctx.lineTo(gx,gy); ctx.lineTo(PR,gy); ctx.stroke();
-  ctx.restore();
+  ctx.beginPath(); ctx.moveTo(gx,PT); ctx.lineTo(gx,gy); ctx.lineTo(PR,gy); ctx.stroke(); ctx.restore();
   ctx.fillStyle=css('--pass'); ctx.font='600 11px '+css('--sans'); ctx.textAlign='left';
-  if (gx < PR-130) ctx.fillText('passes both gates →', gx+9, Math.max(PT+14, gy-9));
+  if(gx<PR-130) ctx.fillText('passes both gates →', gx+9, Math.max(PT+14, gy-9));
 
-  // points, smallest first so the interesting ones land on top
   const order=[...pts.keys()].sort((a,b)=>(pts[a].pass?1:0)-(pts[b].pass?1:0));
-  for(const i of order){
-    const p=pts[i], x=sx(p), y=sy(p);
-    if(x<-10||x>r.width+10||y<-10||y>r.height+10) continue;
-    const on = i===hover;
-    ctx.beginPath(); ctx.arc(x,y, on?5.5:(p.pass?4:2.4), 0, 6.284);
-    if(p.pass){ ctx.fillStyle=css('--pass'); ctx.globalAlpha=1; }
-    else if(p.low_n){ ctx.fillStyle=css('--await'); ctx.globalAlpha=on?1:.55; }
-    else { ctx.fillStyle=css('--fail'); ctx.globalAlpha=on?1:.3; }
+  for(const i of order){ const p=pts[i], x=sx(p), y=sy(p);
+    if(x<PL-10||x>PR+10||y<PT-10||y>PB+10) continue;
+    const on=i===hover;
+    ctx.beginPath(); ctx.arc(x,y, on?5.5:(p.pass?4:2.4),0,6.284);
+    if(p.pass){ctx.fillStyle=css('--pass');ctx.globalAlpha=1;}
+    else if(p.low_n){ctx.fillStyle=css('--await');ctx.globalAlpha=on?1:.55;}
+    else {ctx.fillStyle=css('--fail');ctx.globalAlpha=on?1:.3;}
     ctx.fill(); ctx.globalAlpha=1;
-    if(on){ ctx.strokeStyle=css('--paper'); ctx.lineWidth=2; ctx.stroke(); }
+    if(on){ctx.strokeStyle=css('--bg');ctx.lineWidth=2;ctx.stroke();}
   }
-  ctx.restore();   // end plot clip; ticks and titles live in the margin
-
-  // name the landmarks — the pan-essentials are the argument. Nudge each label
-  // off any already placed so two names never sit on top of each other.
   ctx.font='600 11.5px '+css('--mono'); ctx.textAlign='left';
   const placed=[];
   for(const g of ['CTCF','MYC','GTF2B','ASCL1','POU2F3','INSM1']){
     const p=pts.find(q=>q.gene===g); if(!p) continue;
     const x=sx(p)+8; let y=sy(p)+4;
     if(x<PL||x>PR-58||y<PT+10||y>PB) continue;
-    while(placed.some(q=>Math.abs(q.y-y)<13 && Math.abs(q.x-x)<58)) y+=13;
+    while(placed.some(q=>Math.abs(q.y-y)<13&&Math.abs(q.x-x)<58)) y+=13;
     placed.push({x,y});
-    ctx.strokeStyle=css('--paper'); ctx.lineWidth=3; ctx.strokeText(g,x,y);
+    ctx.strokeStyle=css('--bg'); ctx.lineWidth=3; ctx.strokeText(g,x,y);
     ctx.fillStyle=css('--ink-2'); ctx.fillText(g,x,y);
   }
+  ctx.restore();
 
-  // ticks and titles, in the margin
-  ctx.font='11px '+css('--mono'); ctx.fillStyle=inkC;
+  // ticks in the margin, skipping any that would collide at this zoom
+  ctx.font='11px '+css('--mono'); ctx.fillStyle=css('--ink-3');
+  let lastX=-1e9, lastY=-1e9;
   for(const [ax,v,pos,step] of ticks){
-    const s = v.toFixed(step<0.1?2:1);
-    if(ax==='x'){ ctx.textAlign='center'; ctx.fillText(s, pos, PB+16); }
-    else { ctx.textAlign='right'; ctx.fillText(s, PL-9, pos+4); }
+    const s=v.toFixed(step<0.1?2:1);
+    // ticks arrive in ascending value, which runs DOWN the y axis — compare distance,
+    // not signed difference, or every label after the first is skipped.
+    if(ax==='x'){ if(Math.abs(pos-lastX)<46) continue; lastX=pos;
+      ctx.textAlign='center'; ctx.fillText(s,pos,PB+16); }
+    else { if(Math.abs(pos-lastY)<20) continue; lastY=pos;
+      ctx.textAlign='right'; ctx.fillText(s,PL-9,pos+4); }
   }
-  ctx.strokeStyle=lineC; ctx.lineWidth=1;
+  ctx.strokeStyle=css('--line-2'); ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(PL,PT); ctx.lineTo(PL,PB); ctx.lineTo(PR,PB); ctx.stroke();
-  ctx.font='11px '+css('--sans'); ctx.fillStyle=inkC; ctx.textAlign='center';
-  ctx.fillText('selectivity Δ   (other − target median · higher = more selective)',
-    (PL+PR)/2, PB+36);
-  ctx.save(); ctx.translate(15, (PT+PB)/2); ctx.rotate(-Math.PI/2); ctx.textAlign='center';
+  ctx.font='11px '+css('--sans'); ctx.fillStyle=css('--ink-3'); ctx.textAlign='center';
+  ctx.fillText('selectivity Δ   (other − target median · higher = more selective)',(PL+PR)/2,PB+34);
+  ctx.save(); ctx.translate(14,(PT+PB)/2); ctx.rotate(-Math.PI/2); ctx.textAlign='center';
   ctx.fillText('median gene effect   (lower = more dependent)',0,0); ctx.restore();
 }
 
-/* interaction: zoom, pan, hover */
-cv.addEventListener('wheel', e => { e.preventDefault();
+cv.addEventListener('wheel',e=>{e.preventDefault();
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
-  const f=Math.exp(-e.deltaY*0.0016), nk=Math.max(20, Math.min(4000, view.k*f));
-  view.x = mx-(mx-view.x)*(nk/view.k); view.y = my-(my-view.y)*(nk/view.k);
-  view.k = nk; draw(); }, {passive:false});
-cv.addEventListener('pointerdown', e => { drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y};
-  cv.setPointerCapture(e.pointerId); });
-cv.addEventListener('pointerup', () => drag=null);
-cv.addEventListener('pointermove', e => {
+  const nk=Math.max(20,Math.min(4000,view.k*Math.exp(-e.deltaY*0.0016)));
+  view.x=mx-(mx-view.x)*(nk/view.k); view.y=my-(my-view.y)*(nk/view.k); view.k=nk; draw();
+},{passive:false});
+cv.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y};
+  cv.setPointerCapture(e.pointerId);});
+cv.addEventListener('pointerup',()=>drag=null);
+cv.addEventListener('pointermove',e=>{
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
-  if(drag){ view.x=drag.vx+(e.clientX-drag.x); view.y=drag.vy+(e.clientY-drag.y); draw(); return; }
-  let best=-1, bd=13*13;
-  for(let i=0;i<pts.length;i++){ const dx=sx(pts[i])-mx, dy=sy(pts[i])-my, d=dx*dx+dy*dy;
-    if(d<bd){bd=d;best=i;} }
-  if(best!==hover){ hover=best; draw(); }
-  if(best<0){ tip.removeAttribute('data-on'); return; }
+  if(drag){view.x=drag.vx+(e.clientX-drag.x);view.y=drag.vy+(e.clientY-drag.y);draw();return;}
+  let best=-1,bd=169;
+  for(let i=0;i<pts.length;i++){const a=sx(pts[i])-mx,b=sy(pts[i])-my,d=a*a+b*b; if(d<bd){bd=d;best=i;}}
+  if(best!==hover){hover=best;draw();}
+  if(best<0){tip.removeAttribute('data-on');return;}
   const p=pts[best];
-  tip.innerHTML = `<div class="g">${p.gene}</div><dl>
-    <dt>median effect</dt><dd>${fmt(p.median)}</dd>
-    <dt>selectivity Δ</dt><dd>${fmt(p.sel)}</dd>
+  tip.innerHTML=`<div class="g">${p.gene}</div><dl>
+    <dt>median effect</dt><dd>${fmt(p.median)}</dd><dt>selectivity Δ</dt><dd>${fmt(p.sel)}</dd>
     <dt>dependent here</dt><dd>${Math.round(p.tfrac*100)}%</dd>
     <dt>dependent elsewhere</dt><dd>${Math.round(p.ofrac*100)}%</dd>
-    <dt>cell lines</dt><dd>${p.n}</dd></dl>`
-    + (p.pass ? '' : `<div class="why">${p.why.join('<br>')}</div>`);
+    <dt>cell lines</dt><dd>${p.n}</dd></dl>`+(p.pass?'':`<div class="why">${p.why.join('<br>')}</div>`);
   tip.setAttribute('data-on','');
-  const tw=tip.offsetWidth, th=tip.offsetHeight;
-  tip.style.left = Math.min(mx+16, r.width-tw-10)+'px';
-  tip.style.top  = Math.max(8, Math.min(my-th/2, r.height-th-10))+'px';
+  tip.style.left=Math.min(mx+16,r.width-tip.offsetWidth-10)+'px';
+  tip.style.top=Math.max(8,Math.min(my-tip.offsetHeight/2,r.height-tip.offsetHeight-10))+'px';
 });
-cv.addEventListener('pointerleave', ()=>{ tip.removeAttribute('data-on'); hover=-1; draw(); });
-$('#zin').onclick = ()=>{ view.k=Math.min(4000,view.k*1.5); draw(); };
-$('#zout').onclick= ()=>{ view.k=Math.max(20,view.k/1.5); draw(); };
-$('#zrst').onclick= ()=>{ resetView(); draw(); };
-addEventListener('resize', ()=>{ sizePlot(); draw(); if(renderStructure) renderStructure(); });
+cv.addEventListener('pointerleave',()=>{tip.removeAttribute('data-on');hover=-1;draw();});
+$('#zin').onclick=()=>{view.k=Math.min(4000,view.k*1.5);draw();};
+$('#zout').onclick=()=>{view.k=Math.max(20,view.k/1.5);draw();};
+$('#zrst').onclick=()=>{resetView();draw();};
+addEventListener('resize',()=>{sizePlot();draw();renderStructure?.();});
 
-/* landscape sidebar */
-const nPass = pts.filter(p=>p.pass).length;
-$('#lsub').textContent = `${D.landscape_context} lineage · DepMap 24Q2 Chronos`;
-$('#nTF').textContent = pts.length.toLocaleString();
-$('#nPass').textContent = nPass;
-if (nPass) $('#nPass').classList.remove('zero');
-const tally = {};
-pts.forEach(p=>p.why.forEach(w=>tally[w]=(tally[w]||0)+1));
-$('#whybars').innerHTML = Object.entries(tally).sort((a,b)=>b[1]-a[1]).map(([w,n])=>
+const nPass=pts.filter(p=>p.pass).length;
+$('#lsub').textContent=`${D.landscape_context} · DepMap 24Q2 Chronos`;
+$('#nTF').textContent=pts.length.toLocaleString();
+$('#nPass').textContent=nPass; if(nPass) $('#nPass').classList.remove('zero');
+const tally={}; pts.forEach(p=>p.why.forEach(w=>tally[w]=(tally[w]||0)+1));
+$('#whybars').innerHTML=Object.entries(tally).sort((a,b)=>b[1]-a[1]).map(([w,n])=>
   `<div class="bar"><div class="lab"><span>${w}</span><span>${n}</span></div>
    <div class="track"><div class="fill" style="width:${n/pts.length*100}%"></div></div></div>`).join('');
-$('#thr').innerHTML = `
-  <dt>median effect ≤</dt><dd>${T.median_target_effect}</dd>
+$('#thr').innerHTML=`<dt>median effect ≤</dt><dd>${T.median_target_effect}</dd>
   <dt>dependent here ≥</dt><dd>${T.target_dependent_fraction*100}%</dd>
   <dt>dependent elsewhere ≤</dt><dd>${T.other_dependent_fraction*100}%</dd>
   <dt>selectivity Δ ≥</dt><dd>${T.selectivity_delta}</dd>
   <dt>cell lines ≥</dt><dd>${T.confidence_floor}</dd>`;
-$('#lnote').innerHTML = `<b>Amber</b> marks fewer than ${T.confidence_floor} cell lines — measured
+$('#lnote').innerHTML=`<b>Amber</b> marks fewer than ${T.confidence_floor} cell lines — measured
   too sparsely to trust, whatever the effect size. <b>The shaded corner is the only region that
-  passes</b>, and in this lineage it is empty: no TF here is selectively required relative to every
-  other lineage pooled. Other lineages do contain hits.`;
+  passes</b>, and in this lineage it is empty. Other lineages do contain hits.`;
 
-booted = true; sizePlot(); draw();
-
-/* ═══ CANDIDATES ══════════════════════════════════════════════ */
-const C = D.candidates;
-$('#csub').textContent =
-  `${C.length} across DepMap 24Q2 lineages · real dependency numbers joined to typed interface evidence`;
-const dep = c => c.awaiting ? ['p-await','awaiting data']
-  : c.gate_pass ? ['p-pass','passes'] : ['p-fail','rejected'];
-const con = c => c.control ? ['p-ctrl','control']
-  : c.involvement==='direct' ? ['p-pass','direct']
-  : c.involvement==='unknown' ? ['p-fail','none found'] : ['p-await',c.involvement];
-
-$('#rows').innerHTML = C.map((c,i)=>{
-  const [dc,dl]=dep(c), [cc,cl]=con(c);
-  return `<tr data-i="${i}" tabindex="0">
-    <td class="gene">${c.gene}${c.shortlisted?' <span class="starred">★</span>':''}</td>
-    <td class="ctx">${c.context}</td>
-    <td class="num">${c.n??'—'}</td>
-    <td class="num">${fmt(c.median)}</td>
-    <td class="num">${fmt(c.sel)}</td>
-    <td><span class="pill ${dc}"><i></i>${dl}</span></td>
-    <td><span class="pill ${cc}"><i></i>${cl}</span>${c.partner!=='MED23'?` <span class="ctx">${c.partner}</span>`:''}</td>
-    <td class="num">${c.score===null?'—':fmt(c.score,3)}</td></tr>`;
-}).join('');
-
+/* ══ CANDIDATES ═══════════════════════════════════════════ */
+$('#csub').textContent=`${C.length} across DepMap 24Q2 lineages · dependency numbers joined to typed interface evidence`;
+const dep=c=>c.awaiting?['p-await','awaiting data']:c.gate_pass?['p-pass','passes']:['p-fail','rejected'];
+const con=c=>c.control?['p-ctrl','control']:c.involvement==='direct'?['p-pass','direct']
+  :c.involvement==='unknown'?['p-fail','none found']:['p-await',c.involvement];
+$('#rows').innerHTML=C.map((c,i)=>{const [dc,dl]=dep(c),[cc,cl]=con(c);
+  return `<tr data-i="${i}" tabindex="0"><td class="gene">${c.gene}${c.shortlisted?' <span class="star">★</span>':''}</td>
+  <td class="ctx">${c.context}</td><td class="num">${c.n??'—'}</td><td class="num">${fmt(c.median)}</td>
+  <td class="num">${fmt(c.sel)}</td><td><span class="pill ${dc}"><i></i>${dl}</span></td>
+  <td><span class="pill ${cc}"><i></i>${cl}</span>${c.partner!=='MED23'?` <span class="ctx">${c.partner}</span>`:''}</td>
+  <td class="num">${c.score===null?'—':fmt(c.score,3)}</td></tr>`;}).join('');
 function select(i){
-  document.querySelectorAll('#rows tr').forEach(r=>r.setAttribute('aria-selected', r.dataset.i==i));
-  const c=C[i], [dc,dl]=dep(c);
-  const cls = c.control?'c':(c.awaiting?'':'f');
-  $('#detail').innerHTML = `
-    <h2>${c.gene}</h2>
+  document.querySelectorAll('#rows tr').forEach(r=>r.setAttribute('aria-selected',r.dataset.i==i));
+  const c=C[i], cls=c.control?'c':(c.awaiting?'':'f');
+  const rest=c.concerns.filter(x=>x!==c.blocked_because);
+  $('#detail').innerHTML=`<h3>${c.gene}</h3>
     <p class="ctxline">${c.context} · contact partner ${c.partner}</p>
-    <dl class="kv">
-      ${c.n!==null?`<dt>cell lines</dt><dd>${c.n}</dd>
-      <dt>median effect</dt><dd>${fmt(c.median)}</dd>
-      <dt>selectivity Δ</dt><dd>${fmt(c.sel)}</dd>
+    <dl class="kv">${c.n!==null?`<dt>cell lines</dt><dd>${c.n}</dd>
+      <dt>median effect</dt><dd>${fmt(c.median)}</dd><dt>selectivity Δ</dt><dd>${fmt(c.sel)}</dd>
       <dt>dependent here</dt><dd>${Math.round(c.tfrac*100)}%</dd>
       <dt>dependent elsewhere</dt><dd>${Math.round(c.ofrac*100)}%</dd>`:''}
       <dt>contact</dt><dd>${c.involvement}</dd>
-      <dt>interface</dt><dd>${c.tractability.replace(/_/g,' ')}</dd>
-    </dl>
-    ${c.blocked_because?`<div class="blocked ${cls}"><b>Not shortlisted</b>${c.blocked_because}</div>`:''}
-    ${(() => {   // a concern already stated as the blocking reason is not news
-      const rest = c.concerns.filter(x => x !== c.blocked_because);
-      return rest.length ? `<div class="blocked"><b>Screening concerns</b>${rest.join('<br>')}</div>` : '';
-    })()}
-    ${c.region?`<div class="region"><h3 class="sec">Mapped interacting region</h3>
-      <div class="r">${c.region}</div></div>`:''}
-    <h3 class="sec">Evidence — ${c.claims.length} claim${c.claims.length===1?'':'s'}</h3>
-    ${c.claims.length? c.claims.map(cl=>`<div class="claim">
-        <div class="sup s-${cl.support}">${cl.support.replace(/_/g,' ')}</div>
-        <p>${cl.statement}</p>
-        ${cl.note?`<p class="n">${cl.note}</p>`:''}
-        ${cl.citations.map(u=>`<a href="${u}" target="_blank" rel="noopener">${u}</a>`).join('')}
-      </div>`).join('')
-     : `<p class="empty" style="text-align:left;margin:0">No contact evidence retrieved.
-        A search returning nothing is a result: this TF has a real dependency and no
-        documented coactivator contact.</p>`}`;
-  $('#detail').scrollTop = 0;
+      <dt>interface</dt><dd>${c.tractability.replace(/_/g,' ')}</dd></dl>
+    ${c.blocked_because?`<div class="callout ${cls}"><b>Not shortlisted</b>${c.blocked_because}</div>`:''}
+    ${rest.length?`<div class="callout"><b>Screening concerns</b>${rest.join('<br>')}</div>`:''}
+    ${c.region?`<div class="callout" style="border-left-color:var(--pass)"><b>Mapped interacting region</b>
+      <span style="font-family:var(--mono);font-size:12px">${c.region}</span></div>`:''}
+    <div class="cap">Evidence — ${c.claims.length} claim${c.claims.length===1?'':'s'}</div>
+    ${c.claims.length?c.claims.map(cl=>`<div class="claim">
+      <div class="sup s-${cl.support}">${cl.support.replace(/_/g,' ')}</div>
+      <p>${cl.statement}</p>${cl.note?`<p class="n">${cl.note}</p>`:''}
+      ${cl.citations.map(u=>`<a href="${u}" target="_blank" rel="noopener">${u}</a>`).join('')}</div>`).join('')
+    :`<p style="font-size:12.5px;color:var(--ink-2);line-height:1.5;margin:0">No contact evidence
+      retrieved. A search returning nothing is a result: this TF has a real dependency and no
+      documented coactivator contact.</p>`}`;
+  $('#detail').scrollTop=0;
 }
-$('#rows').addEventListener('click', e => { const r=e.target.closest('tr'); if(r) select(r.dataset.i); });
-$('#rows').addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' '){
-  const r=e.target.closest('tr'); if(r){ e.preventDefault(); select(r.dataset.i); } }});
+$('#rows').addEventListener('click',e=>{const r=e.target.closest('tr'); if(r) select(r.dataset.i);});
+$('#rows').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){
+  const r=e.target.closest('tr'); if(r){e.preventDefault();select(r.dataset.i);}}});
 
-/* ═══ STRUCTURE ═══════════════════════════════════════════════ */
-let renderStructure = null, structInit = false;
+/* ══ NAV ══════════════════════════════════════════════════ */
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.setAttribute('aria-current',x===b));
+  document.querySelectorAll('.view').forEach(v=>v.toggleAttribute('data-on',v.id==='v-'+b.dataset.v));
+  if(b.dataset.v==='landscape'){sizePlot();draw();}
+  if(b.dataset.v==='structure') initStructure();
+});
+
+/* ══ STRUCTURE ════════════════════════════════════════════ */
+let structInit=false;
 async function initStructure(){
-  if (structInit) return; structInit = true;
-  const S = D.structure;
-  if (!S){ $('#saside').innerHTML='<h2>Structure</h2><p class="sub">No local mmCIF. Run scripts/build_ui_data.py with network access.</p>'; return; }
-  const THREE = await import('./vendor/three.module.min.js');
-  const { OrbitControls } = await import('./vendor/OrbitControls.js');
-  const cvs = $('#canvas3d');
-  const scene = new THREE.Scene();
-  const cam = new THREE.PerspectiveCamera(38, 1, 1, 5000);
-  const rend = new THREE.WebGLRenderer({canvas:cvs, antialias:true, alpha:true});
-  const controls = new OrbitControls(cam, cvs);
-  controls.enableDamping = true; controls.dampingFactor = 0.08;
+  if(structInit) return; structInit=true;
+  const S=D.structure;
+  if(!S){ $('#saside').innerHTML='<h3>Structure</h3><p class="sub">No local mmCIF. Run scripts/build_ui_data.py with network access.</p>'; return; }
+  const THREE=await import('./vendor/three.module.min.js');
+  const {OrbitControls}=await import('./vendor/OrbitControls.js');
+  const cvs=$('#canvas3d'), scene=new THREE.Scene();
+  const cam=new THREE.PerspectiveCamera(38,1,1,5000);
+  const rend=new THREE.WebGLRenderer({canvas:cvs,antialias:true,alpha:true});
+  const controls=new OrbitControls(cam,cvs);
+  controls.enableDamping=true; controls.dampingFactor=.08; controls.autoRotate=true;
+  controls.autoRotateSpeed=.45;
   scene.add(new THREE.AmbientLight(0xffffff,1.7));
-  const key = new THREE.DirectionalLight(0xffffff,1.5); key.position.set(1,1,1); scene.add(key);
-  const rim = new THREE.DirectionalLight(0xffffff,0.5); rim.position.set(-1,-.5,-1); scene.add(rim);
-
-  const A = S.trace.A, B = S.trace.B;
-  const motif = new Set(S.motif_residues), pocket = new Set(S.pocket_residues);
-  const all = [...A,...B];
-  const c0 = all.reduce((a,p)=>[a[0]+p[1],a[1]+p[2],a[2]+p[3]],[0,0,0]).map(v=>v/all.length);
-  const V = p => new THREE.Vector3(p[1]-c0[0], p[2]-c0[1], p[3]-c0[2]);
-  const grp = new THREE.Group(); scene.add(grp);
-
-  function tube(pts, color, radius){
-    if (pts.length < 2) return;
-    const curve = new THREE.CatmullRomCurve3(pts);
-    const g = new THREE.TubeGeometry(curve, Math.max(24,pts.length*2), radius, 8, false);
-    grp.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial(
-      {color, roughness:.55, metalness:.05})));
-  }
-  function spheres(list, color, radius){
-    const g = new THREE.SphereGeometry(radius, 18, 14);
-    const m = new THREE.MeshStandardMaterial({color, roughness:.4, metalness:.1});
-    const mesh = new THREE.InstancedMesh(g, m, list.length);
-    const o = new THREE.Object3D();
-    list.forEach((p,i)=>{ o.position.copy(V(p)); o.updateMatrix(); mesh.setMatrixAt(i,o.matrix); });
-    grp.add(mesh);
-  }
-
-  renderStructure = () => {
-    const CO = { med:new THREE.Color(css('--ink-3')), motif:new THREE.Color(css('--fail')),
-                 pocket:new THREE.Color(css('--control')) };
-    grp.clear();
-    // MED23 backbone, split at chain breaks so gaps are not bridged with fiction
-    let run=[];
-    for (let i=0;i<A.length;i++){
-      run.push(V(A[i]));
-      const brk = i+1>=A.length || A[i+1][0]-A[i][0] > 1;
-      if (brk){ tube(run, CO.med, 0.55); run=[]; }
-    }
-    spheres(A.filter(p=>pocket.has(p[0])), CO.pocket, 2.1);
-    tube(B.map(V), CO.motif, 1.5);
-    spheres(B.filter(p=>motif.has(p[0])), CO.motif, 1.9);
-    rend.render(scene, cam);
+  const k=new THREE.DirectionalLight(0xffffff,1.5); k.position.set(1,1,1); scene.add(k);
+  const rim=new THREE.DirectionalLight(0xffffff,.5); rim.position.set(-1,-.5,-1); scene.add(rim);
+  const A=S.trace.A,B=S.trace.B,all=[...A,...B];
+  const motif=new Set(S.motif_residues), pocket=new Set(S.pocket_residues);
+  const c0=all.reduce((a,p)=>[a[0]+p[1],a[1]+p[2],a[2]+p[3]],[0,0,0]).map(v=>v/all.length);
+  const V=p=>new THREE.Vector3(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2]);
+  const grp=new THREE.Group(); scene.add(grp);
+  const tube=(ps,color,rad)=>{ if(ps.length<2) return;
+    grp.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(ps),
+      Math.max(24,ps.length*2),rad,8,false),
+      new THREE.MeshStandardMaterial({color,roughness:.55,metalness:.05}))); };
+  const balls=(list,color,rad)=>{ if(!list.length) return;
+    const m=new THREE.InstancedMesh(new THREE.SphereGeometry(rad,18,14),
+      new THREE.MeshStandardMaterial({color,roughness:.4,metalness:.1}),list.length);
+    const o=new THREE.Object3D();
+    list.forEach((p,i)=>{o.position.copy(V(p));o.updateMatrix();m.setMatrixAt(i,o.matrix);});
+    grp.add(m); };
+  renderStructure=()=>{
+    const CO={med:new THREE.Color(css('--ink-3')),motif:new THREE.Color(css('--fail')),
+              pocket:new THREE.Color(css('--control'))};
+    grp.clear(); let run=[];
+    for(let i=0;i<A.length;i++){ run.push(V(A[i]));
+      if(i+1>=A.length||A[i+1][0]-A[i][0]>1){ tube(run,CO.med,.55); run=[]; } }
+    balls(A.filter(p=>pocket.has(p[0])),CO.pocket,2.1);
+    tube(B.map(V),CO.motif,1.5);
+    balls(B.filter(p=>motif.has(p[0])),CO.motif,1.9);
   };
-
-  function size(){
-    const r = cvs.parentElement.getBoundingClientRect();
-    rend.setPixelRatio(Math.min(2, devicePixelRatio||1));
-    rend.setSize(r.width, r.height, false);
-    cam.aspect = r.width/r.height; cam.updateProjectionMatrix();
-  }
+  const size=()=>{ const r=cvs.parentElement.getBoundingClientRect();
+    rend.setPixelRatio(Math.min(2,devicePixelRatio||1)); rend.setSize(r.width,r.height,false);
+    cam.aspect=r.width/r.height; cam.updateProjectionMatrix(); };
   size();
-  const span = Math.max(...all.map(p=>Math.hypot(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2])));
-  cam.position.set(span*1.5, span*0.7, span*1.6); cam.lookAt(0,0,0);
-  controls.target.set(0,0,0);
+  const span=Math.max(...all.map(p=>Math.hypot(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2])));
+  cam.position.set(span*1.5,span*.65,span*1.5); controls.target.set(0,0,0);
   renderStructure();
-  (function loop(){ requestAnimationFrame(loop); controls.update(); rend.render(scene,cam); })();
-  addEventListener('resize', ()=>{ size(); renderStructure(); });
-
-  $('#leg3').innerHTML = `
-    <div class="row"><span class="sw" style="background:var(--ink-3)"></span>
+  (function loop(){requestAnimationFrame(loop);controls.update();rend.render(scene,cam);})();
+  addEventListener('resize',()=>{size();renderStructure();});
+  $('#leg').innerHTML=`<div class="row"><span class="sw" style="background:var(--ink-3)"></span>
       <span class="lb">${S.chains.A} backbone</span></div>
     <div class="row"><span class="sw" style="background:var(--fail)"></span>
       <span class="lb">ELK1 motif 374–384</span></div>
     <div class="row"><span class="sw" style="background:var(--control)"></span>
       <span class="lb">MED23 pocket residues</span></div>`;
-  $('#saside').innerHTML = `
-    <h2>The contact, at 3.0 Å</h2>
-    <p class="sub">PDB ${S.pdb_id} · ${S.method} · drag to rotate, scroll to zoom</p>
-    <dl class="kv">
-      <dt>resolution</dt><dd>${S.resolution_a} Å</dd>
+  $('#saside').innerHTML=`<h3>The contact, at ${S.resolution_a} Å</h3>
+    <p class="sub">PDB ${S.pdb_id} · ${S.method} · drag to rotate</p>
+    <div class="panel"><dl><dt>resolution</dt><dd>${S.resolution_a} Å</dd>
       <dt>${S.chains.A} residues</dt><dd>${A.length}</dd>
-      <dt>motif residues</dt><dd>${B.length}</dd>
-    </dl>
-    <h3 class="sec">ELK1 MED23-binding motif</h3>
-    <div class="region"><div class="r">PSIHFWSTLS(p)P — residues 374–384 of the
-      transactivation domain. F378 buries deepest.</div></div>
-    <h3 class="sec">MED23 residues lining the pocket</h3>
-    <div class="resid">${S.pocket_residues.map(r=>`<span>${r}</span>`).join('')}</div>
-    <p class="note">The concave face at the HR2/HR3 interface. An eleven-residue motif in a
-    defined groove is the tractable case — compare a folded-domain interface, which presents
-    no comparable site. <b>A structure is not a binding claim.</b></p>
+      <dt>motif residues</dt><dd>${B.length}</dd></dl></div>
+    <div class="cap">ELK1 MED23-binding motif</div>
+    <div class="panel" style="font-family:var(--mono);font-size:12px;line-height:1.5">
+      PSIHFWSTLS(p)P — residues 374–384 of the transactivation domain. F378 buries deepest.</div>
+    <div class="cap">MED23 residues lining the pocket</div>
+    <div class="resid">${S.pocket_residues.map(x=>`<span>${x}</span>`).join('')}</div>
+    <p class="note">The concave face at the HR2/HR3 interface. An eleven-residue motif in a defined
+      groove is the tractable case — a folded-domain interface presents no comparable site.
+      <b>A structure is not a binding claim.</b></p>
     <p class="note"><a href="${S.citation}" target="_blank" rel="noopener"
       style="color:var(--control);font-family:var(--mono);font-size:11px">${S.citation}</a></p>`;
 }
