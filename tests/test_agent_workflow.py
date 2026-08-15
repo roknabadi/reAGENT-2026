@@ -21,6 +21,14 @@ from reagent_workflow.benchflow_export import (
     validate_record,
     validate_with_benchflow,
 )
+from reagent_workflow.adapters import (
+    INTERPRETATION_TO_SUPPORT,
+    SUPPORT_TO_INTERPRETATION,
+    ConversionRefused,
+    hypothesis_to_ranked,
+    ranked_to_hypothesis,
+    ranked_to_input_bundle,
+)
 from reagent_workflow.config import RunConfig
 from reagent_workflow.demo_export import (
     DEMO_SCHEMA_VERSION,
@@ -1077,6 +1085,210 @@ class DemoJsonTests(TempRunCase):
         self.assertEqual(
             DemoPayload.model_validate(payload).model_dump(mode="json"), payload
         )
+
+
+class AdapterTests(TempRunCase):
+    """TASKS.md #3 — a candidate built in one package is consumable by the other.
+
+    The two packages share no types by design; this is the translation layer.
+    Refusals and losses are part of the contract, not failures of it.
+    """
+
+    EXAMPLES = REPO_ROOT / "examples"
+
+    def _link(self, name: str) -> Any:
+        from dependency_scout import models as ds  # noqa: PLC0415
+
+        path = self.EXAMPLES / f"mediator_link_{name}_med23.json"
+        return ds.MediatorLink.model_validate(
+            json.loads(path.read_text(encoding="utf-8"))
+        )
+
+    def _dependency(self, gene: str = "RUNX2", context: str = "Osteosarcoma") -> Any:
+        from dependency_scout import models as ds  # noqa: PLC0415
+
+        return ds.DependencyEvidence(
+            gene=gene, disease_context=context,
+            n_target_models=15, n_other_models=400,
+            median_target_effect=-0.95, median_other_effect=-0.10,
+            target_dependent_fraction=0.80, other_dependent_fraction=0.05,
+            selectivity_delta=-0.85, mann_whitney_p=1e-7,
+            source=ds.SourceRecord(
+                name="DepMap", version="24Q2",
+                url="https://depmap.org/portal/", tier=ds.EvidenceTier.PUBLIC_PRIMARY,
+            ),
+        )
+
+    def _ranked(self, name: str = "runx2", *, with_dependency: bool = True) -> Any:
+        from dependency_scout import models as ds  # noqa: PLC0415
+
+        return ds.RankedCandidate(
+            gene=name.upper(),
+            dependency=self._dependency(name.upper()) if with_dependency else None,
+            mediator=self._link(name),
+        )
+
+    # ------------------------------------------------------------- refusals
+    def test_candidate_awaiting_dependency_data_is_refused_not_invented(self):
+        result = ranked_to_hypothesis(self._ranked("runx2", with_dependency=False))
+        self.assertFalse(result.ok)
+        self.assertIn("awaiting quantitative dependency data", result.refusal or "")
+
+    def test_calibration_control_is_refused_by_default(self):
+        """ELK1 is a positive control. It must never arrive as a result."""
+        result = ranked_to_hypothesis(self._ranked("elk1"))
+        self.assertFalse(result.ok)
+        self.assertIn("calibration control", result.refusal or "")
+
+    def test_calibration_control_converts_only_when_asked_explicitly(self):
+        elk1 = self._ranked("elk1")
+        elk1.dependency = self._dependency("ELK1", "Calibration context")
+        result = ranked_to_hypothesis(elk1, allow_calibration_only=True)
+        self.assertTrue(result.ok)
+
+    def test_all_round01_examples_are_refused_today(self):
+        """None have DepMap numbers yet, so none can become a hypothesis."""
+        from dependency_scout import models as ds  # noqa: PLC0415
+
+        for path in sorted(self.EXAMPLES.glob("mediator_link_*_med23.json")):
+            name = path.stem.split("_")[2]
+            with self.subTest(candidate=name):
+                ranked = ds.RankedCandidate(
+                    gene=name.upper(), mediator=self._link(name)
+                )
+                result = ranked_to_hypothesis(ranked)
+                self.assertFalse(result.ok)
+                self.assertTrue(result.refusal)
+
+    # ------------------------------------------------------------ conversion
+    def test_conversion_preserves_the_mapped_contact(self):
+        result = ranked_to_hypothesis(self._ranked("runx2"))
+        self.assertTrue(result.ok)
+        candidate = result.candidate
+        assert candidate is not None
+        self.assertTrue(candidate.mediator.interacting_region_mapped)
+        self.assertEqual(candidate.mediator.interaction_type, "direct_binding")
+        self.assertTrue(candidate.mediator.tf_region)
+        self.assertTrue(candidate.mediator.ready_for_structural_modeling)
+
+    def test_derived_support_value_states_where_it_came_from(self):
+        """An invented number that clears a gate is the failure mode here."""
+        result = ranked_to_hypothesis(self._ranked("runx2"))
+        candidate = result.candidate
+        assert candidate is not None
+        self.assertEqual(candidate.mediator.interaction_support, 0.8)
+        provenance = " ".join(candidate.mediator.limitations)
+        self.assertIn("derived from the strongest claim type", provenance)
+        self.assertIn("not measured", provenance)
+        self.assertTrue(any("derived" in loss for loss in result.losses))
+
+    def test_screening_concerns_survive_the_crossing(self):
+        result = ranked_to_hypothesis(self._ranked("runx2"))
+        candidate = result.candidate
+        assert candidate is not None
+        self.assertTrue(
+            any("folded-domain" in limit for limit in candidate.mediator.limitations),
+            msg="the folded-domain tractability warning was lost in conversion",
+        )
+
+    def test_vocabulary_maps_are_bijective(self):
+        self.assertEqual(
+            set(SUPPORT_TO_INTERPRETATION.values()),
+            set(INTERPRETATION_TO_SUPPORT),
+        )
+        for support, interpretation in SUPPORT_TO_INTERPRETATION.items():
+            self.assertEqual(INTERPRETATION_TO_SUPPORT[interpretation], support)
+
+    # ------------------------------------------------------------ round trip
+    def test_round_trip_preserves_involvement_and_tractability(self):
+        original = self._link("runx2")
+        result = ranked_to_hypothesis(self._ranked("runx2"))
+        candidate = result.candidate
+        assert candidate is not None
+        back = hypothesis_to_ranked(
+            candidate,
+            evidence={record.evidence_id: record for record in result.evidence},
+            sources={source.source_id: source for source in result.sources},
+        )
+        self.assertEqual(back.mediator.involvement, original.involvement)
+        self.assertEqual(back.mediator.tractability, original.tractability)
+        self.assertEqual(
+            back.mediator.ready_for_structural_modeling,
+            original.ready_for_structural_modeling,
+        )
+        self.assertEqual(back.mediator.screening_concerns, original.screening_concerns)
+
+    def test_round_trip_keeps_the_slim_versus_folded_distinction(self):
+        """The distinction that decides small-molecule tractability."""
+        from dependency_scout import models as ds  # noqa: PLC0415
+
+        link = self._link("runx2")
+        link.tractability = ds.InterfaceTractability.SHORT_LINEAR_MOTIF
+        ranked = ds.RankedCandidate(
+            gene="RUNX2", dependency=self._dependency(), mediator=link
+        )
+        result = ranked_to_hypothesis(ranked)
+        candidate = result.candidate
+        assert candidate is not None
+        back = hypothesis_to_ranked(
+            candidate,
+            evidence={r.evidence_id: r for r in result.evidence},
+            sources={s.source_id: s for s in result.sources},
+        )
+        self.assertEqual(
+            back.mediator.tractability, ds.InterfaceTractability.SHORT_LINEAR_MOTIF
+        )
+
+    def test_ids_are_deterministic_across_conversions(self):
+        first = ranked_to_hypothesis(self._ranked("runx2"))
+        second = ranked_to_hypothesis(self._ranked("runx2"))
+        assert first.candidate and second.candidate
+        self.assertEqual(first.candidate.candidate_id, second.candidate.candidate_id)
+        self.assertEqual(
+            [r.evidence_id for r in first.evidence],
+            [r.evidence_id for r in second.evidence],
+        )
+        self.assertEqual(
+            [s.source_id for s in first.sources], [s.source_id for s in second.sources]
+        )
+
+    # --------------------------------------------------------- end-to-end
+    def test_agent_runs_on_dependency_scout_output(self):
+        """The done-when: consumable by the other package, end to end."""
+        bundle, refusals, _ = ranked_to_input_bundle([self._ranked("runx2")])
+        self.assertEqual(refusals, [])
+
+        orchestrator = self.make_orchestrator("adapter-e2e")
+        orchestrator.init_run(bundle)
+        checkpoint = orchestrator.run_until_checkpoint()
+
+        self.assertEqual(checkpoint.recommended_candidate_id, "CAND-RUNX2-MED23")
+        self.assertEqual(orchestrator.store.load_state().status, "awaiting_human")
+        card = orchestrator.load_scorecards()[0]
+        self.assertGreater(card.total_score, 0.0)
+        # No normal-cell evidence crossed over, so it must score as missing.
+        self.assertIn("normal_cell_completeness", card.missing_components)
+
+    def test_bundle_refuses_when_nothing_converts(self):
+        with self.assertRaises(ConversionRefused) as ctx:
+            ranked_to_input_bundle([self._ranked("runx2", with_dependency=False)])
+        self.assertIn("awaiting quantitative dependency data", str(ctx.exception))
+
+    def test_bundle_marks_itself_a_fixture_when_sources_are_synthetic(self):
+        from dependency_scout import models as ds  # noqa: PLC0415
+
+        ranked = self._ranked("runx2")
+        ranked.dependency.source = ds.SourceRecord(
+            name="synthetic", version="1", url="synthetic://test",
+            tier=ds.EvidenceTier.SYNTHETIC,
+        )
+        bundle, _, _ = ranked_to_input_bundle([ranked])
+        self.assertTrue(bundle.fixture)
+        self.assertTrue(bundle.fixture_note)
+
+    def test_public_bundle_is_not_marked_a_fixture(self):
+        bundle, _, _ = ranked_to_input_bundle([self._ranked("runx2")])
+        self.assertFalse(bundle.fixture)
 
 
 class MediatorContractParityTests(unittest.TestCase):
