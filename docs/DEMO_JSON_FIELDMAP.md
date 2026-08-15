@@ -1,4 +1,18 @@
-# `demo.json` — frozen UI contract
+# `demo.json` — field map
+
+> **Read `docs/DEMO_JSON.md` first — it is the current contract.** This document
+> is the field-by-field map of where each number in `demo.json` comes from, and
+> it describes the earlier `reagent-demo/1` shape. Verified 2026-08-15 against
+> `runs/*/demo.json`: the emitter now writes `schema_version: "1.1"`, whose
+> candidate rows are keyed `target_gene` / `partner_gene` / `target_region` with
+> `transcription_factor` / `mediator_subunit` / `tf_region` still emitted beside
+> them as **deprecated aliases**. Where this file names a source field in
+> `src/`, that is an internal code symbol, not the vocabulary of the pipeline.
+
+The pipeline this file projects is general: a candidate is a **target** and its
+**interaction partner**, whatever class those two proteins belong to. The worked
+example throughout this document is the TF–Mediator case, because it is the one
+with real literature evidence assembled so far. It is an example, not the scope.
 
 One file. Amir's orchestrator writes it, Vraj's single static HTML reads it.
 No server, no build step, no network call at demo time.
@@ -80,11 +94,16 @@ Array order **is** the ranking. Emitter order: eligible-and-scored by score
 descending, then `awaiting_dependency`, then `rejected`, then `calibration_only`.
 The UI may re-sort; it must not assume any field is non-null.
 
+A row is a target and its interaction partner. `MediatorLink`,
+`MediatorEvidence`, `CandidateHypothesis.transcription_factor` and friends in
+the **From** column are historical *code symbol* names for exactly that pair —
+they are what to import, not what the pipeline is limited to.
+
 | Field | Type | Req | From (`dependency_scout` / `reagent_workflow`) |
 |---|---|---|---|
 | `id` | str | yes | `CandidateHypothesis.candidate_id`; for interface-only rows, `<gene>-<partner>` |
-| `gene` | str | yes | `RankedCandidate.name` / `CandidateHypothesis.transcription_factor` |
-| `partner_gene` | str \| `null` | yes | `MediatorLink.partner_gene` / `CandidateHypothesis.mediator_subunit` |
+| `gene` | str | yes | the **target** gene: `RankedCandidate.name` / `CandidateHypothesis.transcription_factor` (legacy field name; emitted as `target_gene` in schema 1.1) |
+| `partner_gene` | str \| `null` | yes | the **interaction partner**: `MediatorLink.partner_gene` / `CandidateHypothesis.mediator_subunit` (legacy field name) |
 | `disease_context` | str | yes | `RankedCandidate.disease_context` (returns `"not yet quantified"` when there is no dependency) / `CandidateHypothesis.disease_context` |
 | `status` | enum | yes | derived, see precedence below |
 | `score` | float 0–1 \| `null` | yes | `RankedCandidate.final_score` / `CandidateScorecard.total_score`. `null` = not scored |
@@ -92,7 +111,7 @@ The UI may re-sort; it must not assume any field is non-null.
 | `missing_evidence` | [str] | yes | `CandidateScorecard.missing_components`; `[]` when nothing is missing. Unscored candidates have no scorecard and use the coarse tokens `"dependency"` and `"interacting_region"` |
 | `involvement` | `direct`\|`indirect`\|`predicted`\|`unknown` | yes | `MediatorLink.involvement` (derived property) / mapped, see below |
 | `region_mapped` | bool | yes | `.interacting_region_mapped` (same name in both) |
-| `tf_region` | str \| `null` | yes | `.tf_region` (same name in both) |
+| `tf_region` | str \| `null` | yes | the mapped region on the target: `.tf_region` (same name in both; emitted as `target_region` in schema 1.1, with `tf_region` kept as a deprecated alias) |
 | `tractability` | `short_linear_motif`\|`folded_domain`\|`unknown` | yes | `MediatorLink.tractability`; `"unknown"` for `MediatorEvidence`, which has no such field |
 | `ready_for_structural_modeling` | bool | yes | `.ready_for_structural_modeling` (derived property in both) |
 | `dependency` | object \| `null` | yes | `DependencyEvidence`; **`null` is normal**, see missing data |
@@ -167,9 +186,15 @@ its source is what marks it as a fixture, not the support type.
 | `failed_gates` | [str] | yes | `GateOutcome.failed_gates`; `[]` from `dependency_scout`, which records reasons only |
 | `reasons` | [str] | yes | `GateOutcome.reasons` / `GateResult.failures` |
 
-Gate names are the seven in `gates.py:GATE_NAMES`: `dependency_strength`,
-`sample_support`, `broad_essentiality`, `disease_specificity`,
-`mediator_support`, `mediator_region_mapped`, `provenance`.
+Seven gates. As emitted today (verified in `runs/*/demo.json`):
+`dependency_strength`, `sample_support`, `broad_essentiality`,
+`disease_specificity`, `interaction_support`, `interface_region_mapped`,
+`provenance`. The last two were named `mediator_support` and
+`mediator_region_mapped` before the vocabulary was generalised, and still appear
+under those names in artifacts written earlier. Nothing about the rules changed:
+`interaction_support` asks whether a named assay and source back the claimed
+target–partner interaction, and `interface_region_mapped` asks whether the
+contact is localised to a region rather than asserted for whole proteins.
 
 ---
 
@@ -199,9 +224,11 @@ candidate rejections at all.
 | `pending` | Excluded from the shortlist without being wrong: awaiting dependency data, or a calibration control. | `RankedCandidate.shortlistable[1]` |
 
 Every eligible candidate with a non-empty `screening_concerns` produces an
-`advisory` row **as well as** its normal candidate row. RUNX2 is the case that
-matters: it passes the contact rule mechanically and is still the wrong
-molecule to screen against.
+`advisory` row **as well as** its normal candidate row. In the worked example,
+RUNX2–MED23 is the case that matters: it passes the contact rule mechanically
+and is still the wrong molecule to screen against — a large folded-domain
+interface. That shape of concern is not specific to Mediator partners; it is
+what the field exists to carry for any target–partner pair.
 
 ---
 
@@ -289,13 +316,18 @@ data is an explicit `null`/`[]`, so the UI reads a fixed shape.
 
 ---
 
-## Complete example
+## Complete example — one worked example, the TF–Mediator case
+
+This is the file for **one** run, on the case the pipeline was first exercised
+on. Nothing in the shape is specific to it: the same keys carry a kinase and its
+substrate, or a scaffold and its client. Read the row shape, not the biology.
 
 Round-01 literature candidates (ELK1, RUNX2, CEBPB, ETV1 — real, from
 `examples/*.json`) plus the synthetic DepMap fixture candidates from
 `src/reagent_workflow/fixtures/candidates.fixture.json`. Scores computed with
-the default weights in `config.py`. Claim text is abbreviated here; the
-authoritative text is in `examples/`.
+the default weights in `config.py`. Claim text, outcome lists, and limitation
+lists are abbreviated here; the authoritative claim text is in `examples/`, and
+a real emitted file is at `runs/<run_id>/demo.json`.
 
 ```json
 {
@@ -331,8 +363,8 @@ authoritative text is in `examples/`.
   "candidates": [
     {
       "id": "CAND-SELECTIVE",
-      "gene": "TFDEMOA",
-      "partner_gene": "MEDDEMO1",
+      "gene": "TGTDEMOA",
+      "partner_gene": "PTNDEMO1",
       "disease_context": "Synthetic epithelial carcinoma (fixture)",
       "status": "hero",
       "score": 0.804,
@@ -357,13 +389,13 @@ authoritative text is in `examples/`.
       },
       "claims": [
         {
-          "statement": "Crosslinking mass spectrometry in a synthetic fixture places TFDEMOA residues 22-33 in direct contact with the MEDDEMO1 core, identifying the interacting region rather than only the association.",
+          "statement": "Crosslinking mass spectrometry in a synthetic fixture places TGTDEMOA residues 22-33 in direct contact with the PTNDEMO1 core, identifying the interacting region rather than only the association.",
           "support": "direct_experimental",
           "citations": ["synthetic://fixtures/interaction"],
           "note": "Synthetic record. A mapped crosslink is not a solved interface structure."
         },
         {
-          "statement": "TFDEMOA shows a strong selective dependency in synthetic epithelial carcinoma models (median gene effect -1.05) relative to all other lineages (-0.12).",
+          "statement": "TGTDEMOA shows a strong selective dependency in synthetic epithelial carcinoma models (median gene effect -1.05) relative to all other lineages (-0.12).",
           "support": "genetic_functional",
           "citations": ["synthetic://fixtures/dependency"],
           "note": "Synthetic values; no experimental measurement underlies them."
@@ -372,15 +404,15 @@ authoritative text is in `examples/`.
       "screening_concerns": [],
       "gate": {
         "eligible": true,
-        "passed_gates": ["dependency_strength", "sample_support", "broad_essentiality", "disease_specificity", "mediator_support", "mediator_region_mapped", "provenance"],
+        "passed_gates": ["dependency_strength", "sample_support", "broad_essentiality", "disease_specificity", "interaction_support", "interface_region_mapped", "provenance"],
         "failed_gates": [],
         "reasons": []
       }
     },
     {
       "id": "CAND-INCOMPLETE-EVIDENCE",
-      "gene": "TFDEMOD",
-      "partner_gene": "MEDDEMO1",
+      "gene": "TGTDEMOD",
+      "partner_gene": "PTNDEMO1",
       "disease_context": "Synthetic sarcoma (fixture)",
       "status": "eligible",
       "score": 0.421,
@@ -405,7 +437,7 @@ authoritative text is in `examples/`.
       },
       "claims": [
         {
-          "statement": "A synthetic peptide array maps TFDEMOD residues 41-52 as the fragment retained by MEDDEMO1.",
+          "statement": "A synthetic peptide array maps TGTDEMOD residues 41-52 as the fragment retained by PTNDEMO1.",
           "support": "direct_experimental",
           "citations": ["synthetic://fixtures/interaction"],
           "note": "Synthetic record. A peptide array tests isolated fragments, not the intact proteins."
@@ -414,7 +446,7 @@ authoritative text is in `examples/`.
       "screening_concerns": [],
       "gate": {
         "eligible": true,
-        "passed_gates": ["dependency_strength", "sample_support", "broad_essentiality", "disease_specificity", "mediator_support", "mediator_region_mapped", "provenance"],
+        "passed_gates": ["dependency_strength", "sample_support", "broad_essentiality", "disease_specificity", "interaction_support", "interface_region_mapped", "provenance"],
         "failed_gates": [],
         "reasons": []
       }
@@ -522,8 +554,8 @@ authoritative text is in `examples/`.
     },
     {
       "id": "CAND-PULLDOWN-ONLY",
-      "gene": "TFDEMOE",
-      "partner_gene": "MEDDEMO1",
+      "gene": "TGTDEMOE",
+      "partner_gene": "PTNDEMO1",
       "disease_context": "Synthetic melanoma (fixture)",
       "status": "rejected",
       "score": null,
@@ -548,7 +580,7 @@ authoritative text is in `examples/`.
       },
       "claims": [
         {
-          "statement": "TFDEMOE co-precipitates with MEDDEMO1 in a synthetic whole-protein pull-down. The pull-down used full-length protein and identifies no interacting region.",
+          "statement": "TGTDEMOE co-precipitates with PTNDEMO1 in a synthetic whole-protein pull-down. The pull-down used full-length protein and identifies no interacting region.",
           "support": "direct_experimental",
           "citations": ["synthetic://fixtures/interaction"],
           "note": "A whole-protein pull-down reports association, not a contact point. No interacting region is mapped, so there is nothing to model or screen."
@@ -557,15 +589,15 @@ authoritative text is in `examples/`.
       "screening_concerns": [],
       "gate": {
         "eligible": false,
-        "passed_gates": ["dependency_strength", "sample_support", "broad_essentiality", "disease_specificity", "mediator_support", "provenance"],
-        "failed_gates": ["mediator_region_mapped"],
-        "reasons": ["TF-Mediator contact is not mapped (TFDEMOE-MEDDEMO1): synthetic whole-protein pull-down fixture establishes association but identifies no interacting region, so there is no contact point to model or screen against"]
+        "passed_gates": ["dependency_strength", "sample_support", "broad_essentiality", "disease_specificity", "interaction_support", "provenance"],
+        "failed_gates": ["interface_region_mapped"],
+        "reasons": ["target-partner contact is not mapped (TGTDEMOE-PTNDEMO1): synthetic whole-protein pull-down fixture establishes association but identifies no interacting region, so there is no contact point to model or screen against"]
       }
     },
     {
       "id": "CAND-BROAD",
-      "gene": "TFDEMOB",
-      "partner_gene": "MEDDEMO1",
+      "gene": "TGTDEMOB",
+      "partner_gene": "PTNDEMO1",
       "disease_context": "Synthetic epithelial carcinoma (fixture)",
       "status": "rejected",
       "score": null,
@@ -590,7 +622,7 @@ authoritative text is in `examples/`.
       },
       "claims": [
         {
-          "statement": "TFDEMOB is required in 91% of all models across every lineage tested, consistent with a broadly essential gene rather than a selective dependency.",
+          "statement": "TGTDEMOB is required in 91% of all models across every lineage tested, consistent with a broadly essential gene rather than a selective dependency.",
           "support": "genetic_functional",
           "citations": ["synthetic://fixtures/dependency"],
           "note": "Synthetic values."
@@ -599,19 +631,19 @@ authoritative text is in `examples/`.
       "screening_concerns": [],
       "gate": {
         "eligible": false,
-        "passed_gates": ["dependency_strength", "sample_support", "mediator_support", "provenance"],
-        "failed_gates": ["broad_essentiality", "disease_specificity", "mediator_region_mapped"],
+        "passed_gates": ["dependency_strength", "sample_support", "interaction_support", "provenance"],
+        "failed_gates": ["broad_essentiality", "disease_specificity", "interface_region_mapped"],
         "reasons": [
           "dependency is too broad: 91% of other models are also dependent, maximum is 50%",
           "weak disease specificity: selectivity delta -0.130, required at or below -0.300",
-          "TF-Mediator contact is not mapped (TFDEMOB-MEDDEMO1): synthetic co-immunoprecipitation fixture establishes association but identifies no interacting region, so there is no contact point to model or screen against"
+          "target-partner contact is not mapped (TGTDEMOB-PTNDEMO1): synthetic co-immunoprecipitation fixture establishes association but identifies no interacting region, so there is no contact point to model or screen against"
         ]
       }
     },
     {
       "id": "CAND-OVEREXPRESSED",
-      "gene": "TFDEMOF",
-      "partner_gene": "MEDDEMO1",
+      "gene": "TGTDEMOF",
+      "partner_gene": "PTNDEMO1",
       "disease_context": "Synthetic colorectal carcinoma (fixture)",
       "status": "rejected",
       "score": null,
@@ -636,13 +668,13 @@ authoritative text is in `examples/`.
       },
       "claims": [
         {
-          "statement": "TFDEMOF is strongly overexpressed in synthetic colorectal models relative to matched normal tissue (log2 fold change 4.2).",
+          "statement": "TGTDEMOF is strongly overexpressed in synthetic colorectal models relative to matched normal tissue (log2 fold change 4.2).",
           "support": "direct_experimental",
           "citations": ["synthetic://fixtures/normal-tissue"],
           "note": "Overexpression is not evidence of dependency."
         },
         {
-          "statement": "Despite strong overexpression, TFDEMOF shows no dependency signal in synthetic colorectal models (median gene effect -0.18, indistinguishable from other lineages at -0.11).",
+          "statement": "Despite strong overexpression, TGTDEMOF shows no dependency signal in synthetic colorectal models (median gene effect -0.18, indistinguishable from other lineages at -0.11).",
           "support": "genetic_functional",
           "citations": ["synthetic://fixtures/dependency"],
           "note": "Contradicts the overexpression claim. Synthetic values."
@@ -651,7 +683,7 @@ authoritative text is in `examples/`.
       "screening_concerns": [],
       "gate": {
         "eligible": false,
-        "passed_gates": ["sample_support", "broad_essentiality", "mediator_support", "mediator_region_mapped", "provenance"],
+        "passed_gates": ["sample_support", "broad_essentiality", "interaction_support", "interface_region_mapped", "provenance"],
         "failed_gates": ["dependency_strength", "disease_specificity"],
         "reasons": [
           "weak dependency: median effect -0.180 in Synthetic colorectal carcinoma (fixture) is above the required -0.500",
@@ -710,17 +742,17 @@ authoritative text is in `examples/`.
   "rejections": [
     {
       "candidate_id": "CAND-PULLDOWN-ONLY",
-      "gene": "TFDEMOE",
+      "gene": "TGTDEMOE",
       "kind": "gate",
       "stage": "GATE",
-      "failed_gates": ["mediator_region_mapped"],
-      "reasons": ["TF-Mediator contact is not mapped (TFDEMOE-MEDDEMO1): synthetic whole-protein pull-down fixture establishes association but identifies no interacting region, so there is no contact point to model or screen against"],
+      "failed_gates": ["interface_region_mapped"],
+      "reasons": ["target-partner contact is not mapped (TGTDEMOE-PTNDEMO1): synthetic whole-protein pull-down fixture establishes association but identifies no interacting region, so there is no contact point to model or screen against"],
       "citations": [],
       "rejected_at": "2026-08-15T18:39:41.118Z"
     },
     {
       "candidate_id": "CAND-OVEREXPRESSED",
-      "gene": "TFDEMOF",
+      "gene": "TGTDEMOF",
       "kind": "gate",
       "stage": "GATE",
       "failed_gates": ["dependency_strength", "disease_specificity"],
@@ -733,14 +765,14 @@ authoritative text is in `examples/`.
     },
     {
       "candidate_id": "CAND-BROAD",
-      "gene": "TFDEMOB",
+      "gene": "TGTDEMOB",
       "kind": "gate",
       "stage": "GATE",
-      "failed_gates": ["broad_essentiality", "disease_specificity", "mediator_region_mapped"],
+      "failed_gates": ["broad_essentiality", "disease_specificity", "interface_region_mapped"],
       "reasons": [
         "dependency is too broad: 91% of other models are also dependent, maximum is 50%",
         "weak disease specificity: selectivity delta -0.130, required at or below -0.300",
-        "TF-Mediator contact is not mapped (TFDEMOB-MEDDEMO1): synthetic co-immunoprecipitation fixture establishes association but identifies no interacting region, so there is no contact point to model or screen against"
+        "target-partner contact is not mapped (TGTDEMOB-PTNDEMO1): synthetic co-immunoprecipitation fixture establishes association but identifies no interacting region, so there is no contact point to model or screen against"
       ],
       "citations": [],
       "rejected_at": "2026-08-15T18:39:41.120Z"
@@ -823,40 +855,40 @@ authoritative text is in `examples/`.
     "compounds": []
   },
   "summary": {
-    "headline": "In synthetic epithelial carcinoma models, the selective dependency on TFDEMOA is carried by its interaction with the Mediator subunit MEDDEMO1, making that interface a candidate point of intervention. FIXTURE HYPOTHESIS: synthetic data, no scientific claim.",
+    "headline": "In synthetic epithelial carcinoma models, the selective dependency on TGTDEMOA is carried by its interaction with the Mediator subunit PTNDEMO1, making that interface a candidate point of intervention. FIXTURE HYPOTHESIS: synthetic data, no scientific claim.",
     "confidence": "low",
     "chain": [
       {"label": "Disease state", "value": "Synthetic epithelial carcinoma (fixture)"},
-      {"label": "Target", "value": "TFDEMOA — selective dependency, median gene effect -1.05 vs -0.12"},
-      {"label": "Partner", "value": "MEDDEMO1 — direct contact, region mapped"},
+      {"label": "Target", "value": "TGTDEMOA — selective dependency, median gene effect -1.05 vs -0.12"},
+      {"label": "Partner", "value": "PTNDEMO1 — direct contact, region mapped"},
       {"label": "Druggable site", "value": "activation domain, residues 22-33 (synthetic)"},
       {"label": "Compounds", "value": "—"}
     ],
     "next_experiment": {
-      "scientific_question": "In Synthetic epithelial carcinoma (fixture) models, does the selective dependency on TFDEMOA require its interaction with the Mediator subunit MEDDEMO1, rather than TFDEMOA abundance alone?",
-      "perturbation": "Two arms in Synthetic epithelial carcinoma (fixture) models and a non-dependent control lineage: (1) degron-tagged TFDEMOA for acute depletion; (2) separation-of-function TFDEMOA point mutants that disrupt the predicted MEDDEMO1 interface while preserving DNA binding, re-expressed in TFDEMOA-depleted cells.",
-      "readout": "Viability and proliferation over 7-10 days, paired with nascent transcription (PRO-seq or TT-seq) of the TFDEMOA target program, plus co-immunoprecipitation of TFDEMOA with MEDDEMO1 to confirm the mutants lose the interaction but retain chromatin binding (CUT&RUN).",
+      "scientific_question": "In Synthetic epithelial carcinoma (fixture) models, does the selective dependency on the target TGTDEMOA require its interaction with its interaction partner PTNDEMO1, rather than TGTDEMOA abundance alone?",
+      "perturbation": "Two arms in Synthetic epithelial carcinoma (fixture) models and a non-dependent control lineage: (1) degron-tagged TGTDEMOA for acute depletion; (2) separation-of-function TGTDEMOA point mutants that disrupt the predicted PTNDEMO1 interface while preserving folding and the target's other activities (for a DNA-binding target, its DNA binding), re-expressed in TGTDEMOA-depleted cells.",
+      "readout": "Viability and proliferation over 7-10 days, paired with a direct readout of the TGTDEMOA downstream program (nascent transcription by PRO-seq or TT-seq where that program is transcriptional), plus co-immunoprecipitation of TGTDEMOA with PTNDEMO1 to confirm the mutants lose the interaction but retain the target's other activities (for a DNA-binding target, chromatin occupancy by CUT&RUN).",
       "positive_controls": [
-        "Acute TFDEMOA degradation, which should reduce viability in Synthetic epithelial carcinoma (fixture) models (median gene effect -1.05 gene_effect_score).",
+        "Acute TGTDEMOA degradation, which should reduce viability in Synthetic epithelial carcinoma (fixture) models (median gene effect -1.05 gene_effect_score).",
         "A pan-essential gene knockdown, to confirm assay sensitivity in every lineage tested."
       ],
       "negative_controls": [
-        "Non-dependent lineages, where TFDEMOA loss should not reduce viability (out-of-context median -0.12 gene_effect_score).",
-        "TFDEMOA mutants outside the predicted interface, which should retain both MEDDEMO1 binding and rescue activity.",
+        "Non-dependent lineages, where TGTDEMOA loss should not reduce viability (out-of-context median -0.12 gene_effect_score).",
+        "TGTDEMOA mutants outside the predicted interface, which should retain both PTNDEMO1 binding and rescue activity.",
         "Non-targeting guide and vehicle-only degron arms."
       ],
       "possible_outcomes": [
         {
-          "outcome": "Interface mutants fail to rescue viability and the TFDEMOA target program stays off, while DNA binding is intact.",
-          "interpretation_change": "Supports the hypothesis that the TFDEMOA-MEDDEMO1 interaction, not TFDEMOA abundance, carries the dependency."
+          "outcome": "Interface mutants fail to rescue viability and the TGTDEMOA downstream program stays off, while the target's other activities are intact.",
+          "interpretation_change": "Supports the hypothesis that the TGTDEMOA-PTNDEMO1 interaction, not TGTDEMOA abundance, carries the dependency. Promotes the interface to a target-definition hypothesis worth structural follow-up."
         },
         {
-          "outcome": "Interface mutants rescue viability and transcription as well as wild-type TFDEMOA.",
-          "interpretation_change": "Refutes the MEDDEMO1-dependence of the phenotype. This candidate should be withdrawn from structure-based follow-up."
+          "outcome": "Interface mutants rescue viability and the downstream program as well as wild-type TGTDEMOA.",
+          "interpretation_change": "Refutes the PTNDEMO1-dependence of the phenotype. The dependency on TGTDEMOA would be real but independent of the PTNDEMO1 interaction, and this candidate should be withdrawn from structure-based follow-up."
         }
       ],
       "limitations": [
-        "Cell-line models do not reproduce the tumour microenvironment, and a dependency that holds in culture may not hold in vivo."
+        "Cell-line models do not reproduce the disease tissue microenvironment, and a dependency that holds in culture may not hold in vivo."
       ]
     },
     "limitations": [
@@ -933,11 +965,18 @@ a `reagent-demo/2` conversation with Amir, not a UI workaround.
    contract freezes the negative convention; the adapter negates
    `dependency_scout` values, or `ranking.py` gets fixed. Either way, one of the
    two files is wrong and it is not this one.
-2. **No `tractability` in `reagent_workflow`.** `MediatorEvidence` has no
-   equivalent of `MediatorLink.tractability`, so every `reagent_workflow`
-   candidate emits `"unknown"` and no `screening_concerns`. This is the schema
-   gap Andrey recorded at checkpoint 2: "mapped but not tractable" (RUNX2)
-   exists only on the `dependency_scout` side.
+2. **No `tractability` in `reagent_workflow` — closed by the 1.1 emitter.**
+   This used to read: `MediatorEvidence` has no equivalent of
+   `MediatorLink.tractability`, so every `reagent_workflow` candidate emits
+   `"unknown"` and no `screening_concerns`. Verified 2026-08-15 against
+   `runs/*/demo.json`, that is no longer true: candidate rows carry
+   `interface_tractability` (`folded_domain` / `short_linear_motif` /
+   `unknown`) and non-empty `screening_concerns` on the `reagent_workflow`
+   side. The gap Andrey recorded at checkpoint 2 — "mapped but not tractable",
+   which in the worked example is RUNX2–MED23 — is representable on both sides
+   now. Whether the interface is a groove for a short linear motif or a large
+   folded-domain surface is a target-class-independent question, which is why
+   the field is not named after either partner.
 3. **`docking_score` has no upstream field name.** `proto_bridge.py` compiles
    `VinaDockingInput` and never reads an output. The key is defined here; the
    mapping from the Vina output is Vraj's.

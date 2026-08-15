@@ -18,10 +18,10 @@ A ready-to-build-against file exists now, from a fixture run:
 
 ## Schema 1.1 — target-agnostic vocabulary
 
-The pipeline is now general across target classes; TF–Mediator is one test case.
-Candidate rows name a `target_gene` and a `partner_gene`, plus optional free-text
-`target_class` / `partner_class` ("transcription factor", "Mediator subunit",
-"kinase"), which may be `null`.
+The pipeline is general across diseases and target classes; TF–Mediator is one
+worked example. Candidate rows name a `target_gene` and a `partner_gene`, plus
+optional free-text `target_class` / `partner_class` ("transcription factor",
+"Mediator subunit", "kinase"), which may be `null`.
 
 **Nothing you have already built breaks, except the two chain steps below.**
 Every renamed field is *also* still emitted under its old name with an identical
@@ -41,7 +41,15 @@ Two gate names also changed, which shows up in `gate_failures[].gate`:
 `interface_region_mapped`.
 
 Migrate when convenient; say the word and I will drop the aliases once the
-screens read the new names.
+screens read the new names. Until then they are **deprecated aliases kept for
+the UI being built right now**, not a second vocabulary — treat `target_gene` /
+`partner_gene` / `target_region` as the real names.
+
+One boundary that is *not* deprecated and does not move: the frozen BenchFlow
+task `reagent/tf-mediator-hero` keeps `hero.transcription_factor` and
+`hero.mediator_subunit` because its verifier reads those keys and the project is
+scored on that task. That is the evaluation trace (`benchflow/README.md`), a
+different artifact from this one.
 
 ## Two guarantees you can build on
 
@@ -86,8 +94,8 @@ Both arrays hold the identical object, so one render function does both.
   "candidate_id": "CAND-SELECTIVE",
   "rank": 1,                       // null when rejected
   "status": "hero",                // "hero" | "eligible" | "rejected"
-  "target_gene": "TFDEMOA",          // alias also emitted: transcription_factor
-  "partner_gene": "MEDDEMO1",        // alias also emitted: mediator_subunit
+  "target_gene": "TGTDEMOA",          // alias also emitted: transcription_factor
+  "partner_gene": "PTNDEMO1",        // alias also emitted: mediator_subunit
   "target_class": null,              // free text, e.g. "transcription factor"
   "partner_class": null,
   "disease_context": "…",
@@ -114,7 +122,7 @@ Both arrays hold the identical object, so one render function does both.
   "target_region": "activation domain, residues 22-33",  // alias: tf_region
   "interface_tractability": "folded_domain",  // short_linear_motif | folded_domain | unknown
   "screening_concerns": ["…"],     // advisory, not a gate
-  "calibration_only": false,       // ELK1/ELF3 controls — never show as a result
+  "calibration_only": false,       // true on calibration controls (ELK1/ELF3) — never show as a result
 
   "gate_eligible": true,
   "gate_failures": [               // [] when eligible
@@ -144,10 +152,13 @@ PROJECT.md:
 
 | Candidate | Gate | Why it is here |
 |---|---|---|
-| `CAND-BROAD` | `broad_essentiality` | pan-essential TF |
+| `CAND-BROAD` | `broad_essentiality` | broadly essential target, not a selective one |
 | `CAND-OVEREXPRESSED` | `dependency_strength` | overexpressed, no dependency |
 | `CAND-PULLDOWN-ONLY` | `interface_region_mapped` | association, no mapped contact |
-| `CAND-UNSUPPORTED-MEDIATOR` | `interaction_support` | no assay, no source |
+| `CAND-UNSUPPORTED-INTERACTION` | `interaction_support` | no assay, no source |
+
+The candidate ids are fixture ids and are not renamed here; the gates they fire
+are target-class-agnostic and read the same way for any target–partner pair.
 
 ## `structure` — screen #12
 
@@ -211,8 +222,8 @@ Five hops, in order, each with a status so you can colour the arrow:
 
 ```jsonc
 [ { "step": "disease",         "value": "…", "status": "established", "detail": "…" },
-  { "step": "target",          "value": "TFDEMOA", "status": "established" },
-  { "step": "partner_contact", "value": "TFDEMOA-MEDDEMO1", "status": "established" },
+  { "step": "target",          "value": "TGTDEMOA", "status": "established" },
+  { "step": "partner_contact", "value": "TGTDEMOA-PTNDEMO1", "status": "established" },
   { "step": "interface",       "value": "inconsistent", "status": "predicted" },
   { "step": "compounds",       "value": "not_run", "status": "blocked" } ]
 ```

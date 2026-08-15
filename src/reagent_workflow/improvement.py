@@ -55,10 +55,11 @@ def _has_nonempty(artifact: dict[str, Any], key: str) -> float:
 NEXT_EXPERIMENT_RUBRIC: tuple[Criterion, ...] = (
     Criterion(
         "question_is_specific", 0.15,
-        "The scientific question names the disease context, the TF, and the Mediator subunit.",
+        "The scientific question names the disease context, the target gene, and "
+        "its interaction partner.",
         lambda a: 1.0 if len(str(a.get("scientific_question", "")).split()) >= 12 else 0.0,
-        "Restate the question so it names the context, the TF, the Mediator subunit, "
-        "and the measured relationship.",
+        "Restate the question so it names the context, the target gene, its "
+        "interaction partner, and the measured relationship.",
         "explanation",
     ),
     Criterion(

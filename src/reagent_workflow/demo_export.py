@@ -15,9 +15,9 @@ Two rules make it safe to render without defensive code everywhere:
    URLs and claims so the UI never joins tables.
 
 The vocabulary is target-agnostic: a candidate names a `target_gene` and a
-`partner_gene`, not a transcription factor and a Mediator subunit. TF-Mediator
-is the test case the pipeline is being exercised on, not what it is limited to.
-Schema 1.1 renames those fields and keeps the old names as **deprecated
+`partner_gene`, never one particular class of protein. Whatever pair the
+pipeline is currently being exercised on is a test case, not what it is limited
+to. Schema 1.1 renames those fields and keeps the old names as **deprecated
 aliases**, populated with identical values so the UI can migrate on its own
 schedule. The aliases are marked at each declaration and will be dropped once
 the screens read the new names.
@@ -135,9 +135,9 @@ class DemoCandidate(DemoBase):
     target_gene: str
     partner_gene: str
     target_class: str | None = None
-    """Free text, e.g. "transcription factor". Absent when uncharacterised."""
+    """Free text, e.g. "kinase". Absent when uncharacterised."""
     partner_class: str | None = None
-    """Free text, e.g. "Mediator subunit". Absent when uncharacterised."""
+    """Free text, e.g. "substrate". Absent when uncharacterised."""
     disease_context: str
     hypothesis: str | None = None
 
@@ -332,28 +332,28 @@ class DemoPayload(DemoBase):
 
 
 # ----------------------------------------------------------------- projection
-def _involvement(mediator: Any) -> str:
+def _involvement(interaction: Any) -> str:
     """Mirror `dependency_scout.Involvement`, derived rather than stored."""
-    if not mediator.is_supported:
+    if not interaction.is_supported:
         return "unknown"
-    if mediator.interacting_region_mapped:
+    if interaction.interacting_region_mapped:
         return "direct"
-    if mediator.interaction_type in {"complex_member", "genetic"}:
+    if interaction.interaction_type in {"complex_member", "genetic"}:
         return "indirect"
-    if mediator.interaction_type == "inferred":
+    if interaction.interaction_type == "inferred":
         return "predicted"
     return "indirect"
 
 
-def _screening_concerns(mediator: Any, tractability: Any) -> list[str]:
+def _screening_concerns(interaction: Any, tractability: Any) -> list[str]:
     concerns: list[str] = []
-    if mediator.interacting_region_mapped and not tractability.domain_bounded:
+    if interaction.interacting_region_mapped and not tractability.domain_bounded:
         concerns.append("interface tractability not assessed")
-    if not mediator.interacting_region_mapped:
+    if not interaction.interacting_region_mapped:
         concerns.append(
             "no mapped interacting region: nothing to define a pocket against"
         )
-    for limitation in mediator.limitations:
+    for limitation in interaction.limitations:
         concerns.append(limitation)
     return concerns
 
@@ -392,7 +392,7 @@ def _candidate_row(
     sources: dict[str, Any],
 ) -> DemoCandidate:
     dependency = candidate.dependency
-    mediator = candidate.mediator
+    interaction = candidate.interaction
     return DemoCandidate(
         candidate_id=candidate.candidate_id,
         rank=rank_index,
@@ -426,14 +426,14 @@ def _candidate_row(
             unit=dependency.effect_unit,
             awaiting_dependency_data=False,
         ),
-        involvement=_involvement(mediator),
-        interacting_region_mapped=mediator.interacting_region_mapped,
-        target_region=mediator.target_region,
+        involvement=_involvement(interaction),
+        interacting_region_mapped=interaction.interacting_region_mapped,
+        target_region=interaction.target_region,
         interface_tractability=(
             "folded_domain" if candidate.tractability.domain_bounded
             else "unknown"
         ),
-        screening_concerns=_screening_concerns(mediator, candidate.tractability),
+        screening_concerns=_screening_concerns(interaction, candidate.tractability),
         calibration_only=False,
         gate_eligible=status != "rejected",
         gate_failures=gate_failures,
@@ -456,7 +456,7 @@ def _build_chain(
             step="disease", value="none selected", status="missing",
             detail="No candidate survived the gates, or the run abstained.",
         )]
-    mediator = hero.mediator
+    interaction = hero.interaction
     return [
         DemoChainLink(
             step="disease", value=hero.disease_context, status="established",
@@ -473,10 +473,10 @@ def _build_chain(
         DemoChainLink(
             step="partner_contact",
             value=f"{hero.target_gene}-{hero.partner_gene}",
-            status="established" if mediator.interacting_region_mapped else "missing",
+            status="established" if interaction.interacting_region_mapped else "missing",
             detail=(
-                f"mapped region: {mediator.target_region}"
-                if mediator.interacting_region_mapped
+                f"mapped region: {interaction.target_region}"
+                if interaction.interacting_region_mapped
                 else "no interacting region mapped"
             ),
         ),
@@ -552,7 +552,7 @@ def build_demo_payload(orchestrator: Any) -> DemoPayload:
         structure.status = "predicted"
     hero = candidates.get(state.hero_candidate_id or "")
     if hero is not None:
-        structure.set_target_region(hero.mediator.target_region)
+        structure.set_target_region(hero.interaction.target_region)
 
     # -- compounds: Vraj's slot, shape present before the run exists --------
     compounds = DemoCompounds(

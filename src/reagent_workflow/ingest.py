@@ -114,20 +114,23 @@ def _validate_candidate(
         )
     if candidate.dependency.disease_context != candidate.disease_context:
         problems.append("dependency disease context does not match the candidate context")
-    if candidate.mediator.target_gene != candidate.target_gene:
+    if candidate.interaction.target_gene != candidate.target_gene:
         problems.append("interaction evidence names a different target gene")
-    if candidate.mediator.partner_gene != candidate.partner_gene:
+    if candidate.interaction.partner_gene != candidate.partner_gene:
         problems.append("interaction evidence names a different partner gene")
 
     if candidate.dependency.source_id not in sources:
         problems.append(f"dependency cites unknown source {candidate.dependency.source_id!r}")
-    if candidate.mediator.source_id and candidate.mediator.source_id not in sources:
-        problems.append(f"interaction evidence cites unknown source {candidate.mediator.source_id!r}")
+    if candidate.interaction.source_id and candidate.interaction.source_id not in sources:
+        problems.append(
+            "interaction evidence cites unknown source "
+            f"{candidate.interaction.source_id!r}"
+        )
 
     all_ids = (
         list(candidate.evidence_ids)
         + list(candidate.dependency.evidence_ids)
-        + list(candidate.mediator.evidence_ids)
+        + list(candidate.interaction.evidence_ids)
         + list(candidate.normal_cell_evidence_ids)
         + list(candidate.contradicting_evidence_ids)
     )

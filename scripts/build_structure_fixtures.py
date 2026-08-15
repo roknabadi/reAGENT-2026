@@ -29,17 +29,19 @@ from reagent_workflow.structure import build_requests  # noqa: E402
 FIXTURE_DIR = REPO_ROOT / "src" / "reagent_workflow" / "fixtures"
 CACHE_DIR = FIXTURE_DIR / "structure_cache"
 
-# Synthetic confidence values, chosen to exercise a specific comparison outcome:
-# a plausible complex prediction paired with one partner that is only weakly
-# ordered in isolation, so the comparison reports a real disagreement rather
-# than a uniformly confident and uninformative "consistent".
-# Keyed by chain role. The roles are now target/partner rather than
-# transcription_factor/mediator_subunit; the values stay glued to the chains
-# they described. The target chain is the deliberately low-confidence one
-# (pLDDT 0.62 against the partner's 0.88) — that asymmetry is what makes the
-# comparison report a real disagreement instead of a uniformly confident and
-# uninformative "consistent". Swapping these two silently changes the demo's
-# scientific outcome.
+# Synthetic confidence values, keyed by chain role (target/partner), chosen to
+# exercise a specific comparison outcome: a plausible complex prediction paired
+# with one chain that is only weakly ordered in isolation. The target chain is
+# the deliberately low-confidence one (pLDDT 0.62 against the partner's 0.88) —
+# that asymmetry is what makes the comparison report a real disagreement instead
+# of a uniformly confident and uninformative "consistent". Swapping these two
+# silently changes the demo's scientific outcome, so the values stay glued to
+# the roles they describe.
+#
+# The roles are target/partner, not a target class: the fixture bundle pairs a
+# transcription factor with a Mediator subunit, a kinase with a scaffold
+# protein, and a nuclear receptor with a coactivator, and the same two chain
+# roles carry all of them.
 CONFIDENCE = {
     "boltz2": {"plddt": 0.81, "ptm": 0.74, "iptm": 0.66, "avg_pae": 8.4},
     "esmfold2:target": {"plddt": 0.62, "ptm": 0.58, "avg_pae": 12.1},
