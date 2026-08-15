@@ -24,6 +24,7 @@ from .benchflow_export import (
 )
 from .config import RunConfig
 from .context import PromptTooLargeError
+from .demo_export import DEMO_SCHEMA_VERSION, export_demo_json
 from .improvement import evaluate
 from .models import Stage
 from .orchestrator import CheckpointBlocked, Orchestrator, StageError, load_bundle_file
@@ -243,6 +244,25 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export_demo(args: argparse.Namespace) -> int:
+    """Emit demo.json — the single artifact the UI reads (TASKS.md #2)."""
+    orchestrator = _orchestrator(args)
+    path = export_demo_json(orchestrator, Path(args.output) if args.output else None)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    _print({
+        "demo_json": str(path),
+        "schema_version": payload["schema_version"],
+        "candidates": len(payload["candidates"]),
+        "rejected": len(payload["rejected"]),
+        "evidence": len(payload["evidence"]),
+        "structure_results": len(payload["structure"]["results"]),
+        "poses": len(payload["compounds"]["poses"]),
+        "bytes": path.stat().st_size,
+        "note": "self-contained; the UI reads this file with no live calls",
+    })
+    return 0
+
+
 def cmd_trace(args: argparse.Namespace) -> int:
     store = _store(args)
     events = store.read_jsonl(store.internal_trace_path)
@@ -348,6 +368,9 @@ def cmd_demo(args: argparse.Namespace) -> int:
         report = orchestrator.run_complete()
         print(f"\n== report ==\nstatus={report.status} confidence={report.confidence}")
 
+    demo_path = export_demo_json(orchestrator)
+    print(f"\n== demo.json (schema {DEMO_SCHEMA_VERSION}) ==\n{demo_path}")
+
     export_trace(orchestrator.store, task_id=args.task_id)
     manifest = build_trace_manifest(orchestrator.store, task_id=args.task_id, repo_root=Path.cwd())
     orchestrator.store.write_model(
@@ -418,6 +441,12 @@ def build_parser() -> argparse.ArgumentParser:
     report = with_run(sub.add_parser("report", help="write the final report"))
     report.add_argument("--json", action="store_true")
     report.set_defaults(func=cmd_report)
+
+    export_demo = with_run(sub.add_parser(
+        "export-demo", help="emit demo.json, the single artifact the UI reads"
+    ))
+    export_demo.add_argument("--output", help="write elsewhere than the run directory")
+    export_demo.set_defaults(func=cmd_export_demo)
 
     trace = sub.add_parser("trace", help="internal and BenchFlow traces")
     trace_sub = trace.add_subparsers(dest="trace_command", required=True)

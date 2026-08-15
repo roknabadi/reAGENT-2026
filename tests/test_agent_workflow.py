@@ -22,6 +22,11 @@ from reagent_workflow.benchflow_export import (
     validate_with_benchflow,
 )
 from reagent_workflow.config import RunConfig
+from reagent_workflow.demo_export import (
+    DEMO_SCHEMA_VERSION,
+    DemoPayload,
+    export_demo_json,
+)
 from reagent_workflow.context import (
     ContextBudgetManager,
     EvidenceSummary,
@@ -927,6 +932,151 @@ class FrozenBenchFlowTaskTests(TempRunCase):
         self.assertIn('schema_version: "1.3"', text)
         self.assertIn("name: reagent/tf-mediator-hero", text)
         self.assertTrue(self.VERIFIER.exists())
+
+
+class DemoJsonTests(TempRunCase):
+    """TASKS.md #2 — the single artifact the UI reads.
+
+    Done-when: the shape is agreed with Vraj, one file loads standalone, and
+    there are no live calls. These tests pin the parts the six UI screens in
+    band 3 depend on.
+    """
+
+    def _completed(self, run_id: str = "demo-json") -> Orchestrator:
+        orchestrator = self.make_orchestrator(run_id)
+        orchestrator.init_run(self.bundle)
+        checkpoint = orchestrator.run_until_checkpoint()
+        orchestrator.resolve_checkpoint(
+            checkpoint.checkpoint_id, "approve", resolved_by="tester"
+        )
+        orchestrator.run_structure()
+        orchestrator.run_next_experiment()
+        orchestrator.run_complete()
+        return orchestrator
+
+    def test_file_loads_standalone_with_only_the_json_module(self):
+        orchestrator = self._completed()
+        path = export_demo_json(orchestrator)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["schema_version"], DEMO_SCHEMA_VERSION)
+        self.assertTrue(payload["generated_at"])
+
+    def test_every_top_level_key_is_always_present(self):
+        """Screen #9's done-when is "no crash on missing fields"."""
+        expected = {
+            "schema_version", "generated_at", "run", "summary", "candidates",
+            "rejected", "evidence", "sources", "structure", "compounds",
+            "checkpoints", "next_experiment", "limitations",
+        }
+        # A run stopped at the checkpoint has no structure, report, or experiment.
+        partial = self.make_orchestrator("partial")
+        partial.init_run(self.bundle)
+        partial.run_until_checkpoint()
+        payload = json.loads(export_demo_json(partial).read_text(encoding="utf-8"))
+
+        self.assertEqual(set(payload), expected)
+        # The absent stages are empty, not missing.
+        self.assertEqual(payload["structure"]["results"], [])
+        self.assertEqual(payload["structure"]["status"], "none")
+        self.assertEqual(payload["compounds"]["poses"], [])
+        self.assertIsNone(payload["next_experiment"]["scientific_question"])
+        self.assertTrue(payload["candidates"])
+
+    def test_rejection_view_has_a_gate_and_a_reason_for_every_control(self):
+        """Screen #11 — the one that wins. Both negative controls, with reasons."""
+        orchestrator = self._completed("rejections")
+        payload = json.loads(export_demo_json(orchestrator).read_text(encoding="utf-8"))
+        rejected = {row["candidate_id"]: row for row in payload["rejected"]}
+
+        for control in ("CAND-BROAD", "CAND-OVEREXPRESSED", "CAND-PULLDOWN-ONLY"):
+            with self.subTest(candidate=control):
+                self.assertIn(control, rejected)
+                failures = rejected[control]["gate_failures"]
+                self.assertTrue(failures, "a rejected candidate must say which gate fired")
+                for failure in failures:
+                    self.assertTrue(failure["gate"])
+                    self.assertTrue(failure["reason"])
+                self.assertFalse(rejected[control]["gate_eligible"])
+
+    def test_every_claim_carries_its_support_type_and_citations(self):
+        """Screen #10 — each claim traceable to a real URL."""
+        orchestrator = self._completed("claims")
+        payload = json.loads(export_demo_json(orchestrator).read_text(encoding="utf-8"))
+        hero = next(c for c in payload["candidates"] if c["status"] == "hero")
+        self.assertTrue(hero["claims"])
+        valid_support = {
+            "direct_experimental", "genetic_functional",
+            "computational_prediction", "inference",
+        }
+        for claim in hero["claims"]:
+            self.assertIn(claim["support"], valid_support)
+            self.assertTrue(claim["statement"])
+            self.assertTrue(claim["citations"])
+
+    def test_candidate_table_has_what_screen_nine_sorts_on(self):
+        orchestrator = self._completed("table")
+        payload = json.loads(export_demo_json(orchestrator).read_text(encoding="utf-8"))
+        ranks = [row["rank"] for row in payload["candidates"]]
+        self.assertEqual(ranks, sorted(ranks))
+        for row in payload["candidates"]:
+            for key in ("transcription_factor", "disease_context", "involvement", "score"):
+                self.assertIsNotNone(row[key], msg=f"{row['candidate_id']} missing {key}")
+            self.assertIsNotNone(row["selectivity"]["selectivity_delta"])
+
+    def test_one_screen_summary_chain_covers_disease_to_compounds(self):
+        """Screen #14 — the hypothesis chain, each hop labelled."""
+        orchestrator = self._completed("chain")
+        payload = json.loads(export_demo_json(orchestrator).read_text(encoding="utf-8"))
+        steps = [link["step"] for link in payload["summary"]["chain"]]
+        self.assertEqual(
+            steps,
+            ["disease", "transcription_factor", "mediator_contact", "interface", "compounds"],
+        )
+        for link in payload["summary"]["chain"]:
+            self.assertIn(
+                link["status"], {"established", "predicted", "missing", "blocked"}
+            )
+
+    def test_compounds_slot_exists_before_the_docking_run_does(self):
+        """Screen #13 can be built today; the docking stage fills poses later."""
+        orchestrator = self._completed("compounds")
+        payload = json.loads(export_demo_json(orchestrator).read_text(encoding="utf-8"))
+        compounds = payload["compounds"]
+        self.assertIn(compounds["status"], {"not_run", "blocked", "screened"})
+        self.assertEqual(compounds["poses"], [])
+        self.assertIn("not a binding affinity", compounds["caveat"])
+        self.assertTrue(compounds["blockers"])
+
+    def test_predictions_are_never_labelled_as_observations(self):
+        orchestrator = self._completed("labels")
+        payload = json.loads(export_demo_json(orchestrator).read_text(encoding="utf-8"))
+        self.assertTrue(payload["structure"]["caveats"])
+        joined = " ".join(payload["structure"]["caveats"]).lower()
+        self.assertIn("not experimental validation", joined)
+        interface = next(
+            link for link in payload["summary"]["chain"] if link["step"] == "interface"
+        )
+        self.assertEqual(interface["status"], "predicted")
+
+    def test_fixture_run_is_flagged_for_the_ui(self):
+        orchestrator = self._completed("flagged")
+        payload = json.loads(export_demo_json(orchestrator).read_text(encoding="utf-8"))
+        self.assertTrue(payload["run"]["fixture_run"])
+        self.assertIn("FIXTURE", (payload["summary"]["headline_limitation"] or "").upper())
+
+    def test_no_credentials_reach_the_ui_payload(self):
+        orchestrator = self._completed("clean-demo")
+        blob = export_demo_json(orchestrator).read_text(encoding="utf-8")
+        for marker in ("hf_", "sk-", "ghp_", "TAMARIND_API_KEY", "BEGIN PRIVATE KEY"):
+            self.assertNotIn(marker, blob)
+
+    def test_payload_round_trips_through_its_own_model(self):
+        """The shape is frozen: extra="forbid" catches an undeclared field."""
+        orchestrator = self._completed("roundtrip")
+        payload = json.loads(export_demo_json(orchestrator).read_text(encoding="utf-8"))
+        self.assertEqual(
+            DemoPayload.model_validate(payload).model_dump(mode="json"), payload
+        )
 
 
 class MediatorContractParityTests(unittest.TestCase):
