@@ -133,7 +133,12 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
   border-radius:8px;cursor:pointer;flex:none;display:grid;place-items:center;font-size:13px}
 .icon-btn:hover{color:var(--ink);border-color:var(--line-2)}
 
+/* No transition on grid-template-columns: it interpolates unreliably here and
+   leaves the track stuck at its old width. The rail fades instead. */
 .body{display:grid;grid-template-columns:264px 1fr 300px;min-height:0;overflow:hidden}
+.body[data-src=off]{grid-template-columns:264px 1fr 42px}
+.srcs #papers{transition:opacity .2s}
+.body[data-src=off] .srcs #papers{opacity:0}
 .body > *{min-width:0;min-height:0}
 
 /* ── timeline rail ── */
@@ -161,7 +166,22 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 @keyframes slideIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 
 /* ── sources rail ── */
-.srcs{border-left:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:18px 0 30px}
+.srcs{border-left:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:18px 0 30px;
+  position:relative}
+.srcs h2{display:flex;align-items:center;gap:8px;padding-right:12px}
+.srcs h2 .cnt{font-family:var(--mono);color:var(--ink-2);letter-spacing:0}
+.srcs-toggle{margin-left:auto;background:none;border:1px solid var(--line);color:var(--ink-3);
+  width:22px;height:22px;border-radius:6px;cursor:pointer;display:grid;place-items:center;
+  font-size:11px;line-height:1;flex:none;transition:color .15s,border-color .15s}
+.srcs-toggle:hover{color:var(--ink);border-color:var(--line-2)}
+/* collapsed: a 42px spine that still says what is behind it */
+.body[data-src=off] .srcs{overflow:hidden;padding:14px 0}
+.body[data-src=off] .srcs h2{flex-direction:column;align-items:center;gap:14px;padding:0;margin:0}
+.body[data-src=off] .srcs h2 .lbl{writing-mode:vertical-rl;letter-spacing:.14em;order:2}
+.body[data-src=off] .srcs h2 .cnt{order:3;writing-mode:vertical-rl}
+.body[data-src=off] .srcs-toggle{margin:0;order:1}
+.body[data-src=off] #papers{display:none}
+.srcs h2 .lbl{white-space:nowrap}
 .paper{margin:0 14px 9px;background:var(--card);border:1px solid var(--line);
   border-radius:var(--r);padding:11px 12px;animation:slideIn .45s ease both;
   text-decoration:none;display:block;transition:border-color .15s}
@@ -224,7 +244,7 @@ main{position:relative;overflow:hidden}
 
 /* candidates */
 #v-candidates{grid-template-columns:1fr 380px}
-.tablewrap{overflow:auto;padding:20px 0 40px 22px}
+.tablewrap{overflow:auto;padding:20px 20px 40px 22px}
 table{border-collapse:collapse;width:100%;font-size:13px}
 caption{text-align:left;font-size:15px;font-weight:600;padding-bottom:2px;letter-spacing:-.015em}
 .capsub{text-align:left;color:var(--ink-3);font-size:12.5px;padding-bottom:14px;font-weight:400}
@@ -232,7 +252,10 @@ th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.06e
   color:var(--ink-3);font-weight:600;padding:0 13px 7px 0;border-bottom:1px solid var(--line-2);
   white-space:nowrap;position:sticky;top:0;background:var(--bg)}
 th.num,td.num{text-align:right;font-family:var(--mono)}
-td{padding:9px 13px 9px 0;border-bottom:1px solid var(--line);vertical-align:top}
+/* One line per row. Wrapping a context or a partner name doubled the row height
+   and left the score column past the right edge. */
+td{padding:7px 13px 7px 0;border-bottom:1px solid var(--line);vertical-align:middle;
+  white-space:nowrap}
 tbody tr{cursor:pointer}
 tbody tr:hover{background:var(--sunk)}
 tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var(--control)}
@@ -397,7 +420,9 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
     </main>
 
     <div class="srcs">
-      <h2>Sources</h2>
+      <h2><span class="lbl">Sources</span><span class="cnt" id="srcCount"></span>
+        <button class="srcs-toggle" id="srcToggle" aria-expanded="true"
+                aria-controls="papers" title="Hide sources">›</button></h2>
       <div id="papers"><p class="empty">Papers retrieved during the run appear here, newest first.</p></div>
     </div>
   </div>
@@ -645,6 +670,21 @@ function setStage({id,state,detail,note}){
   el.querySelector('.dt').textContent = detail||'';
   el.querySelector('.nt').textContent = note||'';
 }
+/* sources rail: collapses to a spine so the plot can have the width */
+{
+  const body=document.querySelector('.body'), btn=$('#srcToggle');
+  const apply=off=>{
+    body.dataset.src = off ? 'off' : 'on';
+    btn.textContent = off ? '‹' : '›';
+    btn.setAttribute('aria-expanded', String(!off));
+    btn.title = off ? 'Show sources' : 'Hide sources';
+    if(booted){ sizePlot(); draw(); }
+  };
+  apply(localStorage.dsSrc === 'off');
+  btn.onclick = () => { const off = body.dataset.src !== 'off';
+    localStorage.dsSrc = off ? 'off' : 'on'; apply(off);
+    setTimeout(()=>{ sizePlot(); draw(); renderStructure?.(); }, 340); };
+}
 function addPaper(p){
   const box=$('#papers'); box.querySelector('.empty')?.remove();
   const a=document.createElement('a');
@@ -652,13 +692,15 @@ function addPaper(p){
   a.innerHTML=`<div class="t">${p.title}</div>${p.abstract?`<div class="a">${p.abstract}</div>`:''}
     <div class="id">${p.id}</div>`;
   box.prepend(a);
+  const n=box.querySelectorAll('.paper').length;
+  document.querySelector('#srcCount').textContent = n ? n : '';
 }
 
 let es=null;
 function run(q){
   es?.close();
   STAGES.forEach(([id])=>setStage({id,state:'pending',detail:'',note:''}));
-  $('#papers').innerHTML='';
+  $('#papers').innerHTML=''; $('#srcCount').textContent='';
   const live = new EventSource('/api/run?q='+encodeURIComponent(q||''));
   es = live;
   let got=false;
