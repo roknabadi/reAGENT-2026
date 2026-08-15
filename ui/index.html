@@ -36,11 +36,51 @@ button{font:inherit}
 ::selection{background:color-mix(in srgb,var(--control) 22%,transparent)}
 
 /* ══ LANDING ══════════════════════════════════════════════ */
-#landing{position:fixed;inset:0;z-index:20;display:grid;place-items:center;
-  background:var(--bg);transition:opacity .5s ease,visibility .5s}
+#landing{position:fixed;inset:0;z-index:20;background:var(--bg);overflow-y:auto;
+  transition:opacity .55s ease,visibility .55s}
 #landing[hidden-state]{opacity:0;visibility:hidden;pointer-events:none}
-#ambient{position:absolute;inset:0;width:100%;height:100%}
-.land-in{position:relative;z-index:2;width:min(720px,90vw);text-align:left}
+.hero{min-height:100vh;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);
+  align-items:center;gap:40px;padding:0 0 0 clamp(28px,6vw,90px)}
+.stage3d{position:relative;height:100vh;min-width:0}
+#hero3d{display:block;width:100%;height:100%}
+.stage3d::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(70% 60% at 60% 45%,transparent 40%,var(--bg) 88%)}
+.load3d{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--mono);
+  font-size:11.5px;color:var(--ink-3);transition:opacity .5s}
+.load3d[done]{opacity:0}
+.cap3d{position:absolute;left:0;right:0;bottom:38px;text-align:center;z-index:2;
+  font-family:var(--mono);font-size:11px;color:var(--ink-3);pointer-events:none;
+  opacity:0;animation:fadeUp .9s 1.1s ease forwards}
+.cap3d b{color:var(--ink-2);font-weight:500}
+@keyframes fadeUp{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+.land-in{position:relative;z-index:2;max-width:600px;text-align:left;padding:60px 0}
+.land-in > *{opacity:0;animation:fadeUp .7s ease forwards}
+.land-in > *:nth-child(1){animation-delay:.05s}
+.land-in > *:nth-child(2){animation-delay:.14s}
+.land-in > *:nth-child(3){animation-delay:.23s}
+.land-in > *:nth-child(4){animation-delay:.32s}
+.land-in > *:nth-child(5){animation-delay:.42s}
+
+/* ── flow section ── */
+.flow{display:block;width:100%;padding:clamp(70px,10vh,110px) clamp(28px,6vw,90px) 100px;
+  border-top:1px solid var(--line);background:var(--sunk);position:relative}
+.flow-in{position:relative;max-width:1180px;margin:0 auto;width:100%}
+.flow h2{font-size:clamp(26px,3.3vw,38px);font-weight:600;letter-spacing:-.028em;margin:0 0 12px}
+.flow p.l{color:var(--ink-2);font-size:15.5px;max-width:58ch;margin:0 0 44px;line-height:1.6}
+#flowsvg{width:100%;height:auto;display:block;overflow:visible}
+.fl-lab{font-family:var(--sans);font-size:12.5px;font-weight:500;fill:var(--ink)}
+.fl-sub{font-family:var(--mono);font-size:10.5px;fill:var(--ink-3)}
+.fl-tag{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em}
+.fl-card{fill:var(--card);stroke:var(--line-2);stroke-width:1}
+.fl-draw{stroke-dasharray:var(--len);stroke-dashoffset:var(--len);fill:none;stroke-width:1.6}
+.flow.revealed .fl-draw{animation:drawIn 1.05s cubic-bezier(.62,.03,.31,1) forwards}
+@keyframes drawIn{to{stroke-dashoffset:0}}
+.fl-node{opacity:0}
+.flow.revealed .fl-node{animation:popIn .5s cubic-bezier(.2,1.3,.4,1) forwards}
+@keyframes popIn{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:scale(1)}}
+.fl-pulse{fill:var(--pass);opacity:0}
+.flow.revealed .fl-pulse{animation:runDot 3.6s 0.5s cubic-bezier(.5,0,.5,1) infinite}
+@keyframes runDot{0%{opacity:0}6%{opacity:1}94%{opacity:1}100%{opacity:0}}
 .badge{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:500;
   color:var(--ink-2);border:1px solid var(--line);background:var(--glass);
   backdrop-filter:blur(9px);padding:5px 11px;border-radius:99px;margin-bottom:26px}
@@ -254,26 +294,44 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
 <body>
 
 <section id="landing">
-  <canvas id="ambient"></canvas>
-  <div class="land-in">
-    <div class="badge"><b>●</b> DepMap 24Q2 · Lambert TF catalogue · PMC full text</div>
-    <h1>Ask a disease question.<br><span>Watch the evidence decide.</span></h1>
-    <p class="lede">An agentic pipeline from disease biology to a testable drug hypothesis.
-      It gathers public genetic, structural and literature evidence, ranks what survives, and
-      says out loud what it rejected and why.</p>
-    <div class="askbox">
-      <div class="askrow">
-        <input id="q0" placeholder="Which transcription factors is small cell lung cancer selectively dependent on?" autocomplete="off">
-        <button class="go" id="go0" title="Run the pipeline">→</button>
+  <div class="hero">
+    <div class="land-in">
+      <div class="badge"><b>●</b> DepMap 24Q2 · Lambert TF catalogue · PMC full text</div>
+      <h1>Ask a disease question.<br><span>Watch the evidence decide.</span></h1>
+      <p class="lede">An agentic pipeline from disease biology to a testable drug hypothesis.
+        It gathers public genetic, structural and literature evidence, ranks what survives, and
+        says out loud what it rejected and why.</p>
+      <div class="askbox">
+        <div class="askrow">
+          <input id="q0" placeholder="Which transcription factors is small cell lung cancer selectively dependent on?" autocomplete="off">
+          <button class="go" id="go0" title="Run the pipeline">→</button>
+        </div>
+        <div class="chips" id="chips"></div>
       </div>
-      <div class="chips" id="chips"></div>
+      <div class="land-foot">
+        <span><b>1,588</b> TFs screened</span>
+        <span><b>1,100</b> cell lines</span>
+        <span><b>8</b> stages, each abstains on its own</span>
+      </div>
     </div>
-    <div class="land-foot">
-      <span><b>1,588</b> TFs screened</span>
-      <span><b>1,100</b> cell lines</span>
-      <span><b>8</b> stages, each abstains on its own</span>
+    <div class="stage3d">
+      <canvas id="hero3d"></canvas>
+      <div class="load3d" id="load3d">loading structure…</div>
+      <div class="cap3d">PDB <b>9F6Y</b> · MED23 with the phosphorylated ELK1 motif · 3.0 Å cryo-EM</div>
     </div>
   </div>
+
+  <section class="flow" id="flow">
+    <div class="flow-in">
+      <h2>Every candidate is a branch that can close</h2>
+      <p class="l">The run is one line. Each candidate leaves it, meets the gate it has to clear,
+        and either merges back as a shortlisted hypothesis or closes with the reason recorded.
+        Nothing disappears quietly.</p>
+      <svg id="flowsvg" viewBox="0 0 1340 460" role="img"
+           aria-label="Pipeline timeline: candidates branch off, pass or fail their gate, and merge or close.">
+      </svg>
+    </div>
+  </section>
 </section>
 
 <div id="app">
@@ -351,35 +409,202 @@ const fmt = (v,d=2) => v===null||v===undefined ? '—' : v.toFixed(d);
 const D = await (await fetch('./data.json')).json();
 const T = D.thresholds, pts = D.landscape, C = D.candidates;
 
-/* theme */
-let booted=false, renderStructure=null;
+/* theme — declared before setTheme runs, or the first call hits the TDZ */
+let booted=false, renderStructure=null, heroRetheme=null;
 const setTheme = t => { document.documentElement.dataset.theme=t; localStorage.dsTheme=t;
-  if(booted){ draw(); renderStructure?.(); } };
+  if(booted){ draw(); renderStructure?.(); } heroRetheme?.(); };
 setTheme(localStorage.dsTheme || (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
 $('#theme').onclick = () => setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
-/* ══ LANDING: ambient particle field ═══════════════════════
-   Points drift in a slow torus, standing in for the sequence space the
-   pipeline searches. Ornamental — it encodes nothing, so it is kept quiet. */
-{
-  const c=$('#ambient'), g=c.getContext('2d'); let W,H,ps=[];
-  const size=()=>{const d=devicePixelRatio||1;W=innerWidth;H=innerHeight;
-    c.width=W*d;c.height=H*d;c.style.width=W+'px';c.style.height=H+'px';g.setTransform(d,0,0,d,0,0);};
-  size(); addEventListener('resize',size);
-  for(let i=0;i<170;i++) ps.push({a:Math.random()*6.28,r:0.28+Math.random()*0.5,
-    z:Math.random(),s:0.00028+Math.random()*0.0007});
-  let raf; (function tick(){
-    if($('#landing').hasAttribute('hidden-state')){cancelAnimationFrame(raf);return;}
-    g.clearRect(0,0,W,H);
-    const cx=W*0.5, cy=H*0.5, R=Math.min(W,H)*0.72;
-    for(const p of ps){ p.a+=p.s;
-      const x=cx+Math.cos(p.a)*R*p.r, y=cy+Math.sin(p.a)*R*p.r*0.42+ (p.z-0.5)*H*0.5;
-      g.beginPath(); g.arc(x,y,0.7+p.z*1.5,0,6.28);
-      g.fillStyle=css('--ink-3'); g.globalAlpha=0.10+p.z*0.16; g.fill();
+/* ══ HERO: the real structure, slowly read ═════════════════
+   The same coordinates the Structure view uses — MED23 with the ELK1 motif in
+   its pocket. A light sweeps the backbone on a loop, the way the pipeline reads
+   a structure rather than admiring it. Degrades to a still caption without WebGL. */
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const MOBILE = /iPhone|iPad|Android/i.test(navigator.userAgent);
+async function heroScene(){
+  const S = D.structure, cvs = $('#hero3d');
+  const done = () => $('#load3d').setAttribute('done','');
+  if(!S){ $('#load3d').textContent = 'structure unavailable'; return; }
+  let THREE;
+  try { THREE = await import('./vendor/three.module.min.js'); }
+  catch { $('#load3d').textContent = 'WebGL unavailable — 3D view disabled'; return; }
+
+  const scene = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(34, 1, 1, 6000);
+  let rend;
+  try { rend = new THREE.WebGLRenderer({canvas:cvs, antialias:!MOBILE, alpha:true}); }
+  catch { $('#load3d').textContent = 'WebGL unavailable — 3D view disabled'; return; }
+  rend.setPixelRatio(Math.min(MOBILE?1:2, devicePixelRatio||1));
+
+  scene.add(new THREE.AmbientLight(0xffffff, 1.15));
+  const key = new THREE.DirectionalLight(0xffffff, 2.0); key.position.set(2,3,2); scene.add(key);
+  const rim = new THREE.DirectionalLight(0xffffff, 1.1); rim.position.set(-3,-1,-2); scene.add(rim);
+
+  const A=S.trace.A, B=S.trace.B, all=[...A,...B];
+  const motif=new Set(S.motif_residues), pocket=new Set(S.pocket_residues);
+  const c0=all.reduce((a,p)=>[a[0]+p[1],a[1]+p[2],a[2]+p[3]],[0,0,0]).map(v=>v/all.length);
+  const V=p=>new THREE.Vector3(p[1]-c0[0], p[2]-c0[1], p[3]-c0[2]);
+  const span=Math.max(...all.map(p=>Math.hypot(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2])));
+
+  const grp=new THREE.Group(); scene.add(grp);
+  const mats=[];   // rebuilt on theme change
+
+  function build(){
+    grp.clear(); mats.length=0;
+    const inkC=new THREE.Color(css('--ink-3')), accC=new THREE.Color(css('--fail')),
+          pockC=new THREE.Color(css('--control'));
+
+    // backbone, split at chain breaks so no gap is bridged with fiction
+    let run=[];
+    const addTube=(ps,color,rad,opacity=1)=>{
+      if(ps.length<2) return;
+      const m=new THREE.MeshStandardMaterial({color,roughness:.62,metalness:.08,
+        transparent:opacity<1,opacity});
+      mats.push(m);
+      grp.add(new THREE.Mesh(new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3(ps), Math.max(20,ps.length*(MOBILE?1:2)), rad, MOBILE?5:8, false), m));
+    };
+    for(let i=0;i<A.length;i++){
+      run.push(V(A[i]));
+      if(i+1>=A.length || A[i+1][0]-A[i][0]>1){ addTube(run, inkC, .52, .92); run=[]; }
     }
-    g.globalAlpha=1; raf=requestAnimationFrame(tick);
+    const ball=(list,color,rad,emissive)=>{
+      if(!list.length) return;
+      const m=new THREE.MeshStandardMaterial({color,roughness:.35,metalness:.15,
+        emissive:color,emissiveIntensity:emissive});
+      mats.push(m);
+      const mesh=new THREE.InstancedMesh(new THREE.SphereGeometry(rad,16,12),m,list.length);
+      const o=new THREE.Object3D();
+      list.forEach((p,i)=>{o.position.copy(V(p));o.updateMatrix();mesh.setMatrixAt(i,o.matrix);});
+      grp.add(mesh);
+    };
+    ball(A.filter(p=>pocket.has(p[0])), pockC, 2.3, .45);
+    addTube(B.map(V), accC, 1.6);
+    ball(B.filter(p=>motif.has(p[0])), accC, 2.0, .55);
+
+    // sequence-space dust: ornamental, encodes nothing, kept faint
+    const n=MOBILE?260:520, pos=new Float32Array(n*3);
+    for(let i=0;i<n;i++){
+      const t=Math.random()*6.283, u=Math.acos(2*Math.random()-1), r=span*(1.25+Math.random()*1.5);
+      pos[i*3]=r*Math.sin(u)*Math.cos(t); pos[i*3+1]=r*Math.sin(u)*Math.sin(t)*.55; pos[i*3+2]=r*Math.cos(u);
+    }
+    const gg=new THREE.BufferGeometry();
+    gg.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    const pm=new THREE.PointsMaterial({color:inkC,size:span*.011,transparent:true,opacity:.5,
+      sizeAttenuation:true,depthWrite:false});
+    mats.push(pm); grp.add(new THREE.Points(gg,pm));
+  }
+  build();
+
+  const size=()=>{ const r=cvs.parentElement.getBoundingClientRect();
+    if(!r.width) return;
+    rend.setSize(r.width,r.height,false);
+    cam.aspect=r.width/r.height; cam.updateProjectionMatrix(); };
+  size();
+  const fit = () => {   // frame the whole complex whatever the panel aspect is
+    const r = cvs.parentElement.getBoundingClientRect();
+    const vFov = cam.fov*Math.PI/180;
+    const hFov = 2*Math.atan(Math.tan(vFov/2)*(r.width/Math.max(r.height,1)));
+    const dist = span*1.15/Math.tan(Math.min(vFov,hFov)/2);
+    cam.position.set(dist*.42, dist*.24, dist*.82); cam.lookAt(0,0,0);
+    scene.fog.near = dist*.72; scene.fog.far = dist*2.3;
+  };
+  scene.fog = new THREE.Fog(new THREE.Color(css('--bg')), 1, 2);
+  fit();
+
+  done();
+  let t=0, raf;
+  (function loop(){
+    if($('#landing').hasAttribute('hidden-state')){ cancelAnimationFrame(raf); return; }
+    raf=requestAnimationFrame(loop);
+    if(!REDUCED){ t+=0.0022; grp.rotation.y = t; grp.rotation.x = Math.sin(t*.55)*.11; }
+    key.position.set(Math.cos(t*1.4)*3, 3, Math.sin(t*1.4)*3);   // light sweeps the surface
+    rend.render(scene,cam);
   })();
+  addEventListener("resize", ()=>{ size(); fit(); });
+  heroRetheme = () => { build(); scene.fog.color.set(css('--bg')); };
+}
+heroScene();
+
+/* ══ FLOW: candidates as branches off the run ══════════════
+   Real rows from data.json, not a decorative graphic. A branch that closes
+   carries the gate that closed it. */
+{
+  const svg=$("#flowsvg"), W=1340, MAIN=250;
+  // Three branches chosen to be the three real outcomes, not the first three rows.
+  const bestDep = C.filter(c=>!c.awaiting && c.gate_pass && c.involvement==='unknown')
+                   .sort((a,b)=>b.score-a.score)[0];
+  const panEss  = pts.filter(p=>!p.pass && p.ofrac>0.85)
+                     .sort((a,b)=>a.median-b.median)[0];
+  // the success branch must actually be tractable, not merely mapped
+  const tractable = C.filter(c=>c.involvement==='direct' && !c.control
+                               && c.tractability==='short_linear_motif')[0]
+                 || C.filter(c=>c.involvement==='direct' && !c.control)[0];
+  const nice = s => (s||'').replace(/_/g,' ');
+
+  const BR = [
+    { x:200, up:true, gene:bestDep?.gene||'IRF4',
+      sub:bestDep?`selectivity Δ ${bestDep.sel.toFixed(2)} · ${bestDep.context}`:'',
+      ok:false, gate:'no documented contact' },
+    { x:500, up:false, gene:panEss?.gene||'CTCF',
+      sub:panEss?`dependent in ${Math.round(panEss.ofrac*100)}% of all other lines`:'',
+      ok:false, gate:'not disease-selective' },
+    { x:735, up:true, gene:tractable?.gene||'POU2F3',
+      sub:tractable?`${nice(tractable.tractability)} · ${tractable.partner}`:'',
+      ok:true, gate:'merges to shortlist' },
+  ];
+  const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+  let d='';
+  // spine
+  d+=`<line class="fl-draw" style="--len:1340" x1="60" y1="${MAIN}" x2="${W-40}" y2="${MAIN}"
+      stroke="var(--line-2)"/>`;
+  d+=`<g class="fl-node" style="animation-delay:.1s">
+      <rect class="fl-card" x="0" y="${MAIN-19}" width="150" height="38" rx="9"/>
+      <rect x="10" y="${MAIN-10}" width="42" height="20" rx="5" fill="var(--pass)"/>
+      <text class="fl-tag" x="31" y="${MAIN+4}" text-anchor="middle" fill="#fff">RUN</text>
+      <text class="fl-lab" x="62" y="${MAIN+4}">Pipeline</text></g>`;
+
+  BR.forEach((b,i)=>{
+    const y = b.up ? MAIN-150 : MAIN+150, sgn = b.up ? -1 : 1;
+    const col = b.ok ? 'var(--pass)' : 'var(--fail)';
+    const dly = .35 + i*.42;
+    // branch out (dashed), then the verdict leg (solid, coloured)
+    d+=`<path class="fl-draw" style="--len:300;animation-delay:${dly}s" stroke="var(--line-2)"
+        stroke-dasharray="4 4" d="M ${b.x} ${MAIN} L ${b.x} ${y+sgn*34} Q ${b.x} ${y} ${b.x+34} ${y}"/>`;
+    d+=`<g class="fl-node" style="animation-delay:${dly+.35}s">
+        <rect class="fl-card" x="${b.x+34}" y="${y-21}" width="286" height="42" rx="10"/>
+        <rect x="${b.x+44}" y="${y-11}" width="66" height="22" rx="5" fill="var(--ink)"/>
+        <text class="fl-tag" x="${b.x+77}" y="${y+4}" text-anchor="middle" fill="var(--bg)">BRANCH</text>
+        <text class="fl-lab" x="${b.x+120}" y="${y-1}">${esc(b.gene)}</text>
+        <text class="fl-sub" x="${b.x+120}" y="${y+13}">${esc(b.sub)}</text></g>`;
+    d+=`<path class="fl-draw" style="--len:150;animation-delay:${dly+.5}s" stroke="${col}"
+        d="M ${b.x+320} ${y} L ${b.x+372} ${y}"/>`;
+    d+=`<g class="fl-node" style="animation-delay:${dly+.9}s">
+        <circle cx="${b.x+394}" cy="${y}" r="17" fill="none" stroke="${col}" stroke-width="1.6"/>
+        <text x="${b.x+394}" y="${y+5}" text-anchor="middle" font-size="15" fill="${col}"
+          >${b.ok?'✓':'✕'}</text>
+        <text class="fl-sub" x="${b.x+394}" y="${y+sgn*36}" text-anchor="middle"
+          >${esc(b.gate)}</text></g>`;
+    if(b.ok){  // the one branch that returns to the spine
+      d+=`<path class="fl-draw" style="--len:260;animation-delay:${dly+1.1}s" stroke="${col}"
+          d="M ${b.x+411} ${y} L ${b.x+540} ${y} Q ${b.x+572} ${y} ${b.x+572} ${y-sgn*34}
+             L ${b.x+572} ${MAIN}"/>`;
+    }
+    d+=`<circle class="fl-node" style="animation-delay:${dly}s" cx="${b.x}" cy="${MAIN}" r="4.5"
+        fill="var(--pass)"/>`;
+  });
+  d+=`<circle class="fl-pulse" r="5"><animateMotion dur="3.6s" begin="0.5s" repeatCount="indefinite"
+      path="M 60 ${MAIN} L ${W-40} ${MAIN}"/></circle>`;
+  svg.innerHTML=d;
+
+  // IntersectionObserver does not fire reliably against a position:fixed root,
+  // which #landing is. A scroll check on the container always does.
+  const L=$('#landing'), F=$('#flow');
+  const check=()=>{ if(F.getBoundingClientRect().top < innerHeight*0.82){
+    F.classList.add('revealed'); L.removeEventListener('scroll',check); } };
+  L.addEventListener('scroll',check,{passive:true}); check();
 }
 
 const SUGGESTIONS = [
