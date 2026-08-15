@@ -291,6 +291,55 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_biorisk_check(args: argparse.Namespace) -> int:
+    """Screen text or a bundle without starting a run.
+
+    Exit codes are meaningful so this can gate a script: 0 permitted,
+    6 review required, 7 refused.
+    """
+    from .biorisk import RiskTier, screen, screen_bundle  # noqa: PLC0415
+
+    if args.text:
+        assessment = screen(args.text, subject="cli text")
+    elif args.input:
+        assessment = screen_bundle(load_bundle_file(Path(args.input)))
+    else:
+        print("error: pass --text or --input", file=sys.stderr)
+        return 2
+
+    _print({
+        "tier": str(assessment.tier),
+        "subject": assessment.subject,
+        "countermeasure_context": assessment.countermeasure_context,
+        "rationale": assessment.rationale,
+        "flags": [
+            {"category": str(f.category), "tier": str(f.tier),
+             "description": f.description, "matched": f.matched_text}
+            for f in assessment.flags
+        ],
+        "policy_version": assessment.policy_version,
+        "policy_hash": assessment.policy_hash,
+        "note": (
+            "A permitted verdict means nothing known fired, not that the work "
+            "was reviewed and approved."
+        ),
+    })
+    return {
+        RiskTier.PERMITTED: 0, RiskTier.REVIEW_REQUIRED: 6, RiskTier.REFUSED: 7
+    }[assessment.tier]
+
+
+def cmd_biorisk_show(args: argparse.Namespace) -> int:
+    """Show the recorded assessment for a run."""
+    store = _store(args)
+    path = store.path("biosafety", "assessment.json")
+    if not path.exists():
+        print(f"error: no biorisk assessment for run {args.run_id!r}", file=sys.stderr)
+        return 2
+    _print(store.read_json(path))
+    return 0
+
+
 def cmd_export_demo(args: argparse.Namespace) -> int:
     """Emit demo.json — the single artifact the UI reads (TASKS.md #2)."""
     orchestrator = _orchestrator(args)
@@ -503,6 +552,19 @@ def build_parser() -> argparse.ArgumentParser:
     report = with_run(sub.add_parser("report", help="write the final report"))
     report.add_argument("--json", action="store_true")
     report.set_defaults(func=cmd_report)
+
+    biorisk = sub.add_parser("biorisk", help="biosecurity gateway")
+    biorisk_sub = biorisk.add_subparsers(dest="biorisk_command", required=True)
+    br_check = biorisk_sub.add_parser(
+        "check", help="screen text or a bundle without starting a run"
+    )
+    br_check.add_argument("--text", help="free text to screen")
+    br_check.add_argument("--input", help="path to a candidates bundle")
+    br_check.set_defaults(func=cmd_biorisk_check, run_id="__none__")
+    br_show = with_run(biorisk_sub.add_parser(
+        "show", help="show the recorded assessment for a run"
+    ))
+    br_show.set_defaults(func=cmd_biorisk_show)
 
     export_demo = with_run(sub.add_parser(
         "export-demo", help="emit demo.json, the single artifact the UI reads"
