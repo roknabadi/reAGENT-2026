@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -u
 
-ROOT="/Users/amir/Documents/reAGENT-2026"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="$ROOT/bin:$ROOT/.venv/bin:$PATH"
 export PROTO_HOME="$ROOT/.proto"
 export PROTO_MODEL_CACHE="$ROOT/.proto/models"

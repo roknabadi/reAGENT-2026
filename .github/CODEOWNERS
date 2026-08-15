@@ -1,0 +1,30 @@
+# GitHub auto-requests review from the owner of every path a PR touches.
+# Roles are in team/ROLES.md. Owners need write access on the repo for this
+# to take effect.
+
+# Default: repo owner sees everything.
+*                       @roknabadi
+
+# Science direction — Andrey decides.
+/PROJECT.md             @andreyf2022
+/team/ROLES.md          @andreyf2022
+/team/CHECKPOINTS.md    @andreyf2022
+/team/DECISIONS.md      @andreyf2022
+/SOURCES.md             @andreyf2022 @Kyung-TaeLee
+
+# Pipeline, typed contracts, screening.
+/src/                   @vraj00222 @roknabadi
+/tests/                 @vraj00222
+/examples/              @vraj00222 @roknabadi
+/scripts/               @vraj00222
+
+# Agent workflow and the Proto handoff.
+/docs/ARCHITECTURE.md   @roknabadi
+/CLAUDE.md              @roknabadi
+/.mcp.json              @roknabadi
+
+# Policy — needs the lead and the repo owner.
+/SOURCE_POLICY.md       @roknabadi @andreyf2022
+
+# Your own status file is yours. No owner = no review needed, merge it.
+/team/status/

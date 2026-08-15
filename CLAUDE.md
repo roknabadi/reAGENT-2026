@@ -16,3 +16,7 @@
 - Use the frozen BenchFlow task for agent comparisons; do not present ad hoc
   logs as comparable evaluations. Ask before publishing trace artifacts.
 - Never commit secrets. Run relevant tests before handoff.
+- Coordinate through `team/` — read `team/README.md`, post what you did and any
+  blocker to `team/status/<name>.md`, and log decisions with their evidence in
+  `team/DECISIONS.md`. Do not proceed past an `OPEN` gate in
+  `team/CHECKPOINTS.md`; abstain and post a blocker instead.
