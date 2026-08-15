@@ -305,18 +305,22 @@ def validate_record(record: dict[str, Any], index: int) -> list[str]:
     else:
         errors.append(f"{prefix}: outcome must be an object")
 
+    # Always scanned. This used to be skipped for any record already containing
+    # a redaction marker, so one redacted field disabled credential checking for
+    # every other field in the same record — and redaction elsewhere says
+    # nothing about the field you have not looked at yet.
+    #
+    # Shaped patterns, not bare prefixes: a bare "sk-" substring match
+    # false-positives on ordinary words like "risk-" or "task-" (a run_id
+    # containing "biorisk" tripped exactly this). Reuse the same key-shaped
+    # pattern store.redact() uses, so a real credential is still caught but an
+    # English word never is.
     blob = json.dumps(record, default=str)
-    if "[REDACTED]" not in blob:
-        # Shaped patterns, not bare prefixes: a bare "sk-" substring match
-        # false-positives on ordinary words like "risk-" or "task-" (a run_id
-        # containing "biorisk" tripped exactly this before the fix). Reuse the
-        # same key-shaped pattern store.redact() uses, so a real credential is
-        # still caught but an English word never is.
-        match = _SECRET_VALUE_RE.search(blob)
-        if match:
-            errors.append(f"{prefix}: possible credential material ({match.group()[:8]}...)")
-        elif "BEGIN PRIVATE KEY" in blob:
-            errors.append(f"{prefix}: possible credential material (BEGIN PRIVATE KEY)")
+    match = _SECRET_VALUE_RE.search(blob)
+    if match:
+        errors.append(f"{prefix}: possible credential material ({match.group()[:8]}...)")
+    elif "BEGIN PRIVATE KEY" in blob:
+        errors.append(f"{prefix}: possible credential material (BEGIN PRIVATE KEY)")
     return errors
 
 

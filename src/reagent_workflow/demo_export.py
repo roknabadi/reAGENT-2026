@@ -345,6 +345,26 @@ def _involvement(interaction: Any) -> str:
     return "indirect"
 
 
+def _interface_tractability(tractability: Any) -> str:
+    """Recover the real interface class rather than guessing from a boolean.
+
+    `domain_bounded` is True for BOTH a short linear motif and a folded domain,
+    so mapping it to "folded_domain" inverted the meaning for every SLiM — the
+    one case that is actually tractable for a small molecule was reported to the
+    UI as the case that is not. The adapter preserves the real enum in `notes`
+    under a documented prefix; read that.
+    """
+    from .adapters import TRACTABILITY_NOTE_PREFIX  # noqa: PLC0415
+
+    for note in getattr(tractability, "notes", []):
+        if note.startswith(TRACTABILITY_NOTE_PREFIX):
+            return note[len(TRACTABILITY_NOTE_PREFIX):]
+    if tractability.domain_bounded:
+        # Bounded, but which kind was never recorded. Say so rather than guess.
+        return "bounded_unspecified"
+    return "unknown"
+
+
 def _screening_concerns(interaction: Any, tractability: Any) -> list[str]:
     concerns: list[str] = []
     if interaction.interacting_region_mapped and not tractability.domain_bounded:
@@ -429,10 +449,7 @@ def _candidate_row(
         involvement=_involvement(interaction),
         interacting_region_mapped=interaction.interacting_region_mapped,
         target_region=interaction.target_region,
-        interface_tractability=(
-            "folded_domain" if candidate.tractability.domain_bounded
-            else "unknown"
-        ),
+        interface_tractability=_interface_tractability(candidate.tractability),
         screening_concerns=_screening_concerns(interaction, candidate.tractability),
         calibration_only=False,
         gate_eligible=status != "rejected",

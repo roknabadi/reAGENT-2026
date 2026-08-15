@@ -107,12 +107,33 @@ RUBRICS: dict[Stage, tuple[Criterion, ...]] = {
 }
 
 
+def _check_fingerprint(check: Callable[[dict[str, Any]], float]) -> str:
+    """Fingerprint the scoring function itself, not just its label.
+
+    Hashing only name/weight/description left the anti-tamper check defeated by
+    the exact attack it exists to stop: swapping ``check`` for ``lambda a: 1.0``
+    scores every criterion perfect while the hash is unchanged. Bytecode plus
+    constants catches a substituted function body.
+    """
+    code = getattr(check, "__code__", None)
+    if code is None:
+        return f"non-function:{type(check).__name__}"
+    consts = [c for c in code.co_consts if isinstance(c, str | int | float | bool | None)]
+    return content_hash({
+        "bytecode": code.co_code.hex(),
+        "names": list(code.co_names),
+        "consts": consts,
+        "argcount": code.co_argcount,
+    })
+
+
 def rubric_hash(stage: Stage) -> str:
-    """Stable hash of the rubric, so tampering is detectable."""
+    """Stable hash of the rubric, including each criterion's scoring function."""
     criteria = RUBRICS.get(stage, ())
     return content_hash([
         {"name": c.name, "weight": c.weight, "description": c.description,
-         "remedy": c.remedy, "target": c.revision_target}
+         "remedy": c.remedy, "target": c.revision_target,
+         "check": _check_fingerprint(c.check)}
         for c in criteria
     ])
 
