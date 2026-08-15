@@ -63,6 +63,7 @@ from reagent_workflow.improvement import (
 from reagent_workflow.ingest import InputBundle, ingest
 from reagent_workflow.models import (
     ChainSpec,
+    ConfidenceInterval,
     InteractionEvidence,
     RunState,
     Stage,
@@ -70,10 +71,16 @@ from reagent_workflow.models import (
     StructuralModelResult,
 )
 from reagent_workflow.orchestrator import CheckpointBlocked, Orchestrator
+from reagent_workflow.reporting import write_run_report
 from reagent_workflow.scoring import rank, score_candidate
 from reagent_workflow.soul import load_soul
 from reagent_workflow.store import RunExistsError, RunLockError, RunStore, redact
-from reagent_workflow.structure import build_requests, compare_models, validate_request
+from reagent_workflow.structure import (
+    build_requests,
+    compare_models,
+    confidence_interval,
+    validate_request,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = REPO_ROOT / "src" / "reagent_workflow" / "fixtures" / "candidates.fixture.json"
@@ -535,6 +542,207 @@ class BioriskTests(TempRunCase):
         self.assertEqual(assessment.policy_hash, policy_hash())
 
 
+class RunReportTests(TempRunCase):
+    """The prompt / research / conclusions document.
+
+    Reconstructed from artifacts on disk, so it cannot narrate something the run
+    did not record.
+    """
+
+    def _completed(self, run_id: str = "report") -> Orchestrator:
+        orchestrator = self.make_orchestrator(run_id)
+        orchestrator.init_run(self.bundle)
+        checkpoint = orchestrator.run_until_checkpoint()
+        orchestrator.resolve_checkpoint(
+            checkpoint.checkpoint_id, "approve", resolved_by="tester"
+        )
+        orchestrator.run_structure()
+        orchestrator.run_next_experiment()
+        orchestrator.run_complete()
+        return orchestrator
+
+    def test_report_has_the_three_sections_asked_for(self):
+        text = write_run_report(self._completed()).read_text(encoding="utf-8")
+        self.assertIn("## 1. The prompt", text)
+        self.assertIn("## 2. What it researched", text)
+        self.assertIn("## 3. What it concluded", text)
+
+    def test_prompt_section_shows_the_rules_actually_in_force(self):
+        text = write_run_report(self._completed("rules")).read_text(encoding="utf-8")
+        self.assertIn("Rules in force, by stage", text)
+        self.assertIn("**BIORISK**", text)
+        self.assertIn("Human review is required before structural execution", text)
+
+    def test_research_section_names_sources_and_contradictions(self):
+        text = write_run_report(self._completed("research")).read_text(encoding="utf-8")
+        self.assertIn("Contradicting evidence, stated rather than dropped", text)
+        self.assertIn("EV-CONTRA-A1", text)
+        self.assertIn("synthetic://fixtures/dependency", text)
+
+    def test_conclusions_show_every_rejection_with_its_gate(self):
+        text = write_run_report(self._completed("rejects")).read_text(encoding="utf-8")
+        for candidate in ("CAND-BROAD", "CAND-OVEREXPRESSED", "CAND-PULLDOWN-ONLY"):
+            self.assertIn(candidate, text)
+        self.assertIn("interface_region_mapped", text)
+
+    def test_report_states_what_is_not_claimed(self):
+        text = write_run_report(self._completed("claims")).read_text(encoding="utf-8")
+        self.assertIn("What this does not claim", text)
+        self.assertIn("evidence of binding, safety, efficacy", text)
+
+    def test_fixture_run_is_flagged_at_the_top(self):
+        text = write_run_report(self._completed("flagged")).read_text(encoding="utf-8")
+        self.assertIn("FIXTURE RUN", text.split("## 1.")[0])
+
+    def test_report_works_on_a_run_that_stopped_at_the_checkpoint(self):
+        """It must describe an incomplete run rather than crash on absent artifacts."""
+        orchestrator = self.make_orchestrator("partial-report")
+        orchestrator.init_run(self.bundle)
+        orchestrator.run_until_checkpoint()
+        text = write_run_report(orchestrator).read_text(encoding="utf-8")
+        self.assertIn("**None.**", text)
+        self.assertIn("awaiting_human", text)
+
+    def test_empty_rejection_table_is_called_out_as_suspicious(self):
+        """A run that only says yes has not demonstrated judgement."""
+        from reagent_workflow.reporting import RunReporter  # noqa: PLC0415
+
+        orchestrator = self._completed("no-rejects")
+        orchestrator.rejections_path.unlink(missing_ok=True)
+        text = RunReporter(orchestrator).render()
+        self.assertIn("has not demonstrated", text)
+
+
+class ThreeModelConsensusTests(TempRunCase):
+    """Boltz2 + AlphaFold2 vote on the interface; ESMFold2 checks monomers.
+
+    Agreement is judged on overlapping confidence intervals, not point
+    estimates, so replicate noise is not mistaken for disagreement.
+    """
+
+    def _interface(self, model: str, iptm: float, plddt: float,
+                   half: float = 0.03) -> StructuralModelResult:
+        def ci(metric: str, value: float) -> ConfidenceInterval:
+            return ConfidenceInterval(
+                metric=metric, point=value, lo=value - half, hi=value + half,
+                n=3, method="test",
+            )
+        return StructuralModelResult(
+            request_id=f"r-{model}", candidate_id="c", model=model,  # type: ignore[arg-type]
+            status="cached", source="fixture",
+            confidence={"iptm": iptm, "plddt": plddt},
+            confidence_ci={"iptm": ci("iptm", iptm), "plddt": ci("plddt", plddt)},
+            input_hash="h", output_hash="o",
+        )
+
+    def test_both_interface_models_are_requested(self):
+        candidates = {c.candidate_id: c for c in self.bundle.candidates}
+        requests = build_requests(candidates["CAND-SELECTIVE"], RunConfig())
+        models = sorted(r.model for r in requests)
+        self.assertEqual(models, ["alphafold2", "boltz2", "esmfold2", "esmfold2"])
+        for request in requests:
+            if request.model in ("boltz2", "alphafold2"):
+                self.assertEqual(request.purpose, "complex_interface")
+                self.assertEqual(len(request.chains), 2)
+            else:
+                self.assertEqual(request.purpose, "monomer_confidence")
+
+    def test_esmfold2_cannot_be_an_interface_predictor(self):
+        """The third model must not be conjured by promoting the monomer check."""
+        with self.assertRaises(ValueError):
+            StructuralModelRequest(
+                request_id="r", candidate_id="c", model="esmfold2",
+                proto_tool_key="esmfold2-prediction", purpose="complex_interface",
+                chains=[
+                    ChainSpec(chain_id="A", role="target", sequence="MKAL"),
+                    ChainSpec(chain_id="B", role="partner", sequence="MQVL"),
+                ],
+                input_hash="h",
+            )
+
+    def test_esmfold2_does_not_vote_on_the_interface(self):
+        boltz = self._interface("boltz2", iptm=0.75, plddt=0.80)
+        alphafold = self._interface("alphafold2", iptm=0.72, plddt=0.79)
+        esm = StructuralModelResult(
+            request_id="e", candidate_id="c", model="esmfold2", status="cached",
+            source="fixture", confidence={"plddt": 0.85}, input_hash="h2",
+            output_hash="o2", chain_map={"A": "target"},
+        )
+        comparison = compare_models("c", boltz, [esm], alphafold)
+        self.assertEqual(comparison.interface_models, ["alphafold2", "boltz2"])
+        self.assertNotIn("esmfold2", comparison.interface_models)
+        self.assertEqual(comparison.interface_models_available, 2)
+        self.assertIn("esmfold2", comparison.models_compared)
+
+    def test_unanimous_needs_both_interface_models(self):
+        boltz = self._interface("boltz2", iptm=0.75, plddt=0.80)
+        alphafold = self._interface("alphafold2", iptm=0.72, plddt=0.79)
+        comparison = compare_models("c", boltz, [], alphafold)
+        self.assertEqual(comparison.consensus, "unanimous")
+        self.assertEqual(comparison.interface_votes, 2)
+
+    def test_one_model_alone_is_never_unanimous(self):
+        boltz = self._interface("boltz2", iptm=0.75, plddt=0.80)
+        comparison = compare_models("c", boltz, [], None)
+        self.assertNotEqual(comparison.consensus, "unanimous")
+        self.assertEqual(comparison.interface_models_available, 1)
+
+    def test_overlapping_intervals_count_as_agreement(self):
+        boltz = self._interface("boltz2", iptm=0.70, plddt=0.80, half=0.05)
+        alphafold = self._interface("alphafold2", iptm=0.68, plddt=0.79, half=0.05)
+        comparison = compare_models("c", boltz, [], alphafold)
+        self.assertTrue(comparison.ci_overlap["iptm"])
+        self.assertTrue(any("intervals overlap" in a for a in comparison.agreements))
+
+    def test_disjoint_intervals_are_a_disagreement(self):
+        boltz = self._interface("boltz2", iptm=0.85, plddt=0.90, half=0.01)
+        alphafold = self._interface("alphafold2", iptm=0.62, plddt=0.65, half=0.01)
+        comparison = compare_models("c", boltz, [], alphafold)
+        self.assertFalse(comparison.ci_overlap["iptm"])
+        self.assertEqual(comparison.verdict, "inconsistent")
+
+    def test_unanimity_is_labelled_as_correlated_not_independent(self):
+        boltz = self._interface("boltz2", iptm=0.75, plddt=0.80)
+        alphafold = self._interface("alphafold2", iptm=0.72, plddt=0.79)
+        comparison = compare_models("c", boltz, [], alphafold)
+        joined = " ".join(comparison.limitations) + comparison.caveat
+        self.assertIn("not independent confirmation", joined)
+        self.assertIn("correlated", comparison.caveat)
+
+    def test_confidence_interval_from_replicates(self):
+        ci = confidence_interval("iptm", [0.70, 0.74, 0.72])
+        self.assertAlmostEqual(ci.point, 0.72, places=6)
+        self.assertLess(ci.lo, ci.point)
+        self.assertGreater(ci.hi, ci.point)
+        self.assertEqual(ci.n, 3)
+
+    def test_single_replicate_reports_no_spread(self):
+        ci = confidence_interval("iptm", [0.70])
+        self.assertEqual((ci.lo, ci.hi), (0.70, 0.70))
+        self.assertIn("no spread is measurable", ci.method)
+
+    def test_interval_bounds_must_bracket_the_point(self):
+        with self.assertRaises(ValueError):
+            ConfidenceInterval(
+                metric="iptm", point=0.9, lo=0.1, hi=0.5, n=3, method="bad"
+            )
+
+    def test_fixture_run_produces_a_three_model_comparison(self):
+        orchestrator = self.make_orchestrator("three-model")
+        orchestrator.init_run(self.bundle)
+        checkpoint = orchestrator.run_until_checkpoint()
+        orchestrator.resolve_checkpoint(
+            checkpoint.checkpoint_id, "approve", resolved_by="tester"
+        )
+        comparison = orchestrator.run_structure()
+        assert comparison is not None
+        self.assertEqual(
+            sorted(comparison.models_compared), ["alphafold2", "boltz2", "esmfold2"]
+        )
+        self.assertEqual(comparison.interface_models_available, 2)
+        self.assertTrue(comparison.ci_overlap)
+
+
 class AdversarialReviewRegressionTests(TempRunCase):
     """Defects found by the adversarial review. Each test is the probe that
     reproduced the bug before it was fixed."""
@@ -797,7 +1005,12 @@ class StructureTests(TempRunCase):
     @needs_proto
     def test_requests_use_the_installed_proto_contracts(self):
         requests = build_requests(self.candidates["CAND-SELECTIVE"], self.config)
-        self.assertEqual(len(requests), 3)
+        # boltz2 complex + alphafold2 complex + one esmfold2 monomer per chain
+        self.assertEqual(len(requests), 4)
+        self.assertEqual(
+            sorted(r.model for r in requests),
+            ["alphafold2", "boltz2", "esmfold2", "esmfold2"],
+        )
         for request in requests:
             report = validate_request(request)
             self.assertTrue(report["valid"], msg=report["blockers"])
@@ -806,6 +1019,7 @@ class StructureTests(TempRunCase):
                 {
                     "proto_tools.tools.structure_prediction.boltz2.Boltz2Input",
                     "proto_tools.tools.structure_prediction.esmfold2.ESMFold2Input",
+                    "proto_tools.tools.structure_prediction.alphafold2.AlphaFold2Input",
                 },
             )
             self.assertIn("modal_target", report)
@@ -1053,7 +1267,7 @@ class WorkflowTests(TempRunCase):
             for p in orchestrator.store.path("structure").rglob("*.json")
             if p.name.startswith("CAND-")
         ]
-        self.assertEqual(len(results), 3)
+        self.assertEqual(len(results), 4)
         for result in results:
             self.assertEqual(result["status"], "cached")
             self.assertEqual(result["source"], "fixture")

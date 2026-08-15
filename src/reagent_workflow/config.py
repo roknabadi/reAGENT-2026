@@ -86,5 +86,23 @@ class RunConfig(BaseModel):
 
     max_improvement_iterations: int = Field(default=2, ge=0, le=2)
 
+    enable_alphafold2: bool = True
+    """Second independent interface predictor alongside Boltz2.
+
+    Both take the whole complex and pair heterocomplex MSAs, so both can vote on
+    the interface. ESMFold2 stays monomer-only and never votes.
+    """
+
+    structure_replicates: int = Field(default=3, ge=1, le=10)
+    """Replicate predictions per model, varying only the seed.
+
+    One prediction is a point estimate from a stochastic process. Replicates
+    give a spread, which is what makes "the models agree" checkable rather than
+    an impression. Costs N GPU jobs per model, so it is configurable — and every
+    replicate beyond the first only runs on the live path.
+    """
+
+    ci_confidence_level: float = Field(default=0.95, gt=0, lt=1)
+
     def hash(self) -> str:
         return content_hash(self.model_dump(mode="json"))
