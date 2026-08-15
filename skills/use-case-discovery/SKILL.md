@@ -105,9 +105,10 @@ after a week of analysis.
 
 ## Working notes
 
-- TF–Mediator is the case the pipeline was first exercised on. It is a
-  reasonable candidate, but it starts with no advantage over the alternatives
-  and must earn its place on the same eight dimensions.
+- TF–Mediator is one worked example — the case the pipeline was first exercised
+  on, with ELK1–MED23 as its calibration control. It is a reasonable candidate,
+  but it starts with no advantage over the alternatives and must earn its place
+  on the same eight dimensions.
 - Record every use case considered and rejected, with the dimension that killed
   it. The rejected list is evidence that the recommendation was a choice rather
   than a default.

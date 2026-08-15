@@ -10,9 +10,9 @@ disease state → target discovery → target ranking → specificity
 ```
 
 The pipeline is designed to be general across diseases and target classes.
-**TF–Mediator interactions are one biologically interesting test case, not the
-definition of the system.** They were chosen first because ELK1–MED23 gives a
-structurally characterised positive control to calibrate against, and because
+**TF–Mediator interactions are one worked example, not the definition of the
+system.** They were chosen first because ELK1–MED23 gives a structurally
+characterised positive control to calibrate against, and because
 "a documented physical contact point" is a demanding case: if the machinery can
 refuse an unmapped contact there, it can refuse one anywhere.
 
@@ -78,6 +78,17 @@ generator all operate on target/partner, and use the class labels only to phrase
 their output.
 
 Swapping target class means supplying different evidence, not editing the agent.
+
+### Two places the old TF–Mediator names survive
+
+Both are compatibility boundaries, and both are deliberate:
+
+| Boundary | Names kept | Why |
+|---|---|---|
+| The frozen BenchFlow task `reagent/tf-mediator-hero` | `hero.transcription_factor`, `hero.mediator_subunit` | its verifier reads those keys and we are scored against that task, so renaming them would invalidate the comparison. The task id appears in every `runs/<run_id>/traces/trace_manifest.json` |
+| `demo.json` | `transcription_factor`, `mediator_subunit`, `tf_region` | emitted as **deprecated aliases** beside `target_gene` / `partner_gene` / `target_region`, with identical values, while the UI migrates. See `docs/DEMO_JSON.md` |
+
+Neither is the project's vocabulary. Everything else says target and partner.
 
 ## What it does not claim
 

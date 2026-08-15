@@ -1,6 +1,12 @@
 # Project instructions
 
 - Read `PROJECT.md` and `SOURCE_POLICY.md` before changing the project.
+- This is a general target-discovery and drug-prioritization pipeline: disease
+  or biological state → candidate targets → ranking → specificity and
+  therapeutic window → druggable site → structure → screening → next
+  experiment. A candidate is a target and its interaction partner. No disease,
+  target class, or mechanism is assumed; TF–Mediator is one worked example and
+  ELK1–MED23 the calibration control. See `docs/PIPELINE.md`.
 - Build the smallest testable end-to-end workflow.
 - Keep shared inputs and outputs typed and independent of any one service.
 - Use only public data, public models, sponsor services, and code created here.
@@ -23,6 +29,12 @@
 - Work on a branch. Never commit or push to `main` unless explicitly asked in
   that request. `git fetch origin` at the start of a session and before each
   push; merge `origin/main` into the branch as soon as it moves.
-- A TF–Mediator contact needs a mapped interacting region. Co-expression,
-  correlation, or a whole-protein pull-down is not contact — say so and reject
-  it rather than passing it downstream.
+- A claimed target–partner contact needs a mapped interacting region.
+  Co-expression, correlation, or a whole-protein pull-down is not contact — say
+  so and reject it rather than passing it downstream. This holds whatever the
+  partner is: a Mediator subunit, a kinase substrate, a scaffold.
+- Keep the frozen BenchFlow task's field names (`reagent/tf-mediator-hero`,
+  `hero.transcription_factor`, `hero.mediator_subunit`) and `demo.json`'s
+  deprecated `transcription_factor` / `mediator_subunit` aliases as they are.
+  They are compatibility boundaries we are scored on or building a UI against,
+  not the project's vocabulary.

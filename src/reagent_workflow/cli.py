@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .benchflow_export import (
+    DEFAULT_TASK_ID,
     build_trace_manifest,
     export_trace,
     validate_file,
@@ -453,8 +454,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init.add_argument(
         "--interaction-support", action="append", metavar="GENE=VALUE",
-        help="human-supplied TF-Mediator support value. Without one the link "
-        "stays unsupported and the gate rejects it; the adapter never invents it.",
+        help="human-supplied target-partner interaction support value. Without "
+        "one the interaction stays unsupported and the gate rejects it; the "
+        "adapter never invents it.",
     )
     init.add_argument(
         "--assay", action="append", metavar="GENE=NAME",
@@ -519,7 +521,7 @@ def build_parser() -> argparse.ArgumentParser:
     tr_show.set_defaults(func=cmd_trace)
 
     tr_export = with_run(trace_sub.add_parser("export-benchflow"))
-    tr_export.add_argument("--task-id", default="reagent/tf-mediator-hero")
+    tr_export.add_argument("--task-id", default=DEFAULT_TASK_ID)
     tr_export.add_argument("--model")
     tr_export.set_defaults(func=cmd_trace_export)
 
@@ -537,7 +539,7 @@ def build_parser() -> argparse.ArgumentParser:
     demo = with_run(sub.add_parser("demo", help="end-to-end fixture demo"))
     demo.add_argument("--by", default="demo-operator",
                       help="name recorded as the approving human")
-    demo.add_argument("--task-id", default="reagent/tf-mediator-hero")
+    demo.add_argument("--task-id", default=DEFAULT_TASK_ID)
     demo.set_defaults(func=cmd_demo)
 
     return parser

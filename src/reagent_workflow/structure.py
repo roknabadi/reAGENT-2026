@@ -14,8 +14,8 @@ target-partner complex, ESMFold2 checks monomers or structured domains. ESMFold2
 is never used as an interface predictor.
 
 The two chains carry generic roles — ``target`` and ``partner`` — because this
-stage is not specific to any one class of target. A transcription factor bound
-to a Mediator subunit is one test case, not the definition of the pipeline.
+stage is not specific to any one class of target. Any single protein pair the
+pipeline has been exercised on is a test case, not its definition.
 
 Nothing here dispatches a paid job unless a human has both resolved the hero
 checkpoint and explicitly enabled live execution.
@@ -135,7 +135,7 @@ def build_requests(
     if not (tract.target_sequence and tract.partner_sequence):
         return []
     if config.gates.require_mapped_interacting_region and not (
-        candidate.mediator.ready_for_structural_modeling
+        candidate.interaction.ready_for_structural_modeling
     ):
         return []
 

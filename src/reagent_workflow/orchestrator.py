@@ -270,7 +270,7 @@ class Orchestrator:
         ids = list(dict.fromkeys(
             candidate.evidence_ids
             + candidate.dependency.evidence_ids
-            + candidate.mediator.evidence_ids
+            + candidate.interaction.evidence_ids
             + candidate.normal_cell_evidence_ids
             + candidate.contradicting_evidence_ids
         ))
@@ -568,16 +568,19 @@ class Orchestrator:
             candidate = candidates[best.candidate_id]
             contradictions = list(candidate.contradicting_evidence_ids)
             has_sequences = bool(
-                candidate.tractability.tf_sequence and candidate.tractability.mediator_sequence
+                candidate.tractability.target_sequence
+                and candidate.tractability.partner_sequence
             )
-            structural_ready = has_sequences and candidate.mediator.ready_for_structural_modeling
+            structural_ready = (
+                has_sequences and candidate.interaction.ready_for_structural_modeling
+            )
             checkpoint = HumanCheckpoint(
                 checkpoint_id=f"{state.run_id}-hero",
                 stage=Stage.HERO_CHECKPOINT,
                 requested_decision=(
                     f"Approve {best.candidate_id} "
-                    f"({candidate.disease_context} / {candidate.transcription_factor} / "
-                    f"{candidate.mediator_subunit}) as the hero hypothesis and authorise "
+                    f"({candidate.disease_context} / {candidate.target_gene} / "
+                    f"{candidate.partner_gene}) as the hero hypothesis and authorise "
                     "structural modelling, or reject or revise it."
                 ),
                 recommendation=candidate.hypothesis,
@@ -593,11 +596,12 @@ class Orchestrator:
                 uncertainty=list(best.uncertainty_notes),
                 structural_readiness=(
                     "ready: the contact has a mapped interacting region "
-                    f"({candidate.mediator.tf_region}) and both partner sequences"
+                    f"({candidate.interaction.target_region}) and both partner sequences"
                     if structural_ready else
                     "not ready: "
                     + ("no mapped interacting region, so there is no contact "
-                       "point to model" if not candidate.mediator.interacting_region_mapped
+                       "point to model"
+                       if not candidate.interaction.interacting_region_mapped
                        else "at least one partner sequence is missing")
                 ),
                 created_at=utc_now(),
@@ -970,8 +974,11 @@ class Orchestrator:
             hero_candidate_id=state.hero_candidate_id,
             hero_hypothesis=candidate.hypothesis if candidate else None,
             disease_context=candidate.disease_context if candidate else None,
-            transcription_factor=candidate.transcription_factor if candidate else None,
-            mediator_subunit=candidate.mediator_subunit if candidate else None,
+            # These two FinalReport field names are frozen by the BenchFlow
+            # verifier (see `_hero_hypothesis_payload`); the values come from the
+            # candidate's target-agnostic fields.
+            transcription_factor=candidate.target_gene if candidate else None,
+            mediator_subunit=candidate.partner_gene if candidate else None,
             confidence=self._confidence(scorecard, comparison, state.fixture_run),
             scorecard_summary=(
                 {c.name: round(c.normalized * c.weight, 4) for c in scorecard.components}
@@ -1191,8 +1198,8 @@ class Orchestrator:
             lines += [
                 f"- Candidate: `{report.hero_candidate_id}`",
                 f"- Disease context: {report.disease_context}",
-                f"- Transcription factor: {report.transcription_factor}",
-                f"- Mediator subunit: {report.mediator_subunit}", "",
+                f"- Target gene: {report.transcription_factor}",
+                f"- Partner gene: {report.mediator_subunit}", "",
                 report.hero_hypothesis or "",
             ]
         else:
