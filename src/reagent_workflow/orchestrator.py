@@ -752,7 +752,27 @@ class Orchestrator:
 
         state = self.store.load_state()
         state.open_checkpoint_id = None if decision != "revise" else checkpoint_id
-        if decision == "approve":
+
+        # The transition depends on WHICH gate was resolved. Hardcoding the hero
+        # transition sent an approved biorisk escalation straight to STRUCTURE,
+        # skipping INGEST/GATE/SCORE entirely and leaving hero_candidate_id None.
+        if checkpoint.stage is Stage.BIORISK:
+            if decision == "approve":
+                # Cleared to enter the pipeline — at the beginning, not the middle.
+                state.stage = Stage.INGEST
+                state.status = "initialized"
+                state.notes.append(f"biorisk review approved by {resolved_by}")
+            elif decision == "reject":
+                state.status = "refused"
+                state.stage = Stage.BIORISK
+                state.notes.append(f"biorisk review rejected by {resolved_by}")
+            else:
+                state.status = "awaiting_human"
+                state.stage = Stage.BIORISK
+                state.notes.append(
+                    f"biorisk revision requested by {resolved_by}: {note or ''}".strip()
+                )
+        elif decision == "approve":
             state.hero_candidate_id = checkpoint.recommended_candidate_id
             state.stage = Stage.STRUCTURE
             state.status = "running"
@@ -761,13 +781,18 @@ class Orchestrator:
             state.stage = Stage.COMPLETE
             state.notes.append(f"hero checkpoint rejected by {resolved_by}")
         else:
-            state.status = "awaiting_human"
-            state.stage = Stage.HERO_CHECKPOINT
+            # A revision request must be actionable. Reopening the same
+            # checkpoint id left the run unable to resolve it a second time
+            # (resolve_checkpoint refuses a non-open checkpoint), deadlocking
+            # the run. Re-running SCORE mints a fresh checkpoint instead.
+            state.status = "running"
+            state.stage = Stage.SCORE
+            state.open_checkpoint_id = None
             state.notes.append(f"revision requested by {resolved_by}: {note or ''}".strip())
         self.store.save_state(state)
 
         self.tracer.emit(
-            stage=Stage.HERO_CHECKPOINT, event_type=EventType.CHECKPOINT_RESOLVED,
+            stage=checkpoint.stage, event_type=EventType.CHECKPOINT_RESOLVED,
             actor=f"human:{resolved_by}", status=status_map[decision],
             output_refs=[self.store.relative(self.checkpoints_path)],
             detail={
@@ -794,6 +819,17 @@ class Orchestrator:
                 "structural execution requires an approved hero checkpoint; "
                 f"run: agent checkpoint resolve {state.run_id}-hero --decision approve "
                 "--by <name>"
+            )
+
+        # Validation-only must not pick a candidate a human never chose. It used
+        # to fall through to rank()[0], compile a request for it, serve cached
+        # results, and write comparison.json — real-looking predictions for an
+        # unapproved candidate, from a command documented as "run nothing".
+        if validation_only and state.hero_candidate_id is None:
+            raise CheckpointBlocked(
+                "validation needs a candidate a human selected; resolve the hero "
+                f"checkpoint first: agent checkpoint resolve {state.run_id}-hero "
+                "--decision approve --by <name>"
             )
 
         candidate_id = state.hero_candidate_id
@@ -926,24 +962,33 @@ class Orchestrator:
             },
         )
 
-        state = self.store.load_state()
-        state.stage = Stage.NEXT_EXPERIMENT
-        state.completed_stages = self._advance(state.completed_stages, Stage.STRUCTURE)
-        self.store.save_state(state)
+        # Validation compiles inputs and checks deployment. It is not the stage
+        # running, so it must not advance the state machine — doing so walked a
+        # run past its own blocking human gate.
+        if not validation_only:
+            state = self.store.load_state()
+            state.stage = Stage.NEXT_EXPERIMENT
+            state.completed_stages = self._advance(state.completed_stages, Stage.STRUCTURE)
+            self.store.save_state(state)
         self.tracer.emit(
             stage=Stage.STRUCTURE, event_type=EventType.STAGE_COMPLETED,
-            detail={"results": len(results), "verdict": comparison.verdict},
+            status="validated_only" if validation_only else "ok",
+            detail={
+                "results": len(results), "verdict": comparison.verdict,
+                "validation_only": validation_only,
+            },
         )
         return comparison
 
     # ------------------------------------------------- NEXT EXPERIMENT + IMPROVE
     def run_next_experiment(self) -> NextExperiment:
+        self._refuse_if_gate_open(Stage.NEXT_EXPERIMENT)
         state = self.store.load_state()
         self.tracer.emit(stage=Stage.NEXT_EXPERIMENT, event_type=EventType.STAGE_STARTED)
 
-        candidate_id = state.hero_candidate_id or (
-            state.eligible_candidate_ids[0] if state.eligible_candidate_ids else None
-        )
+        # Falling back to eligible[0] proposed an experiment for a candidate no
+        # human selected. If there is no hero, there is no experiment to propose.
+        candidate_id = state.hero_candidate_id
         if candidate_id is None:
             raise StageError("no candidate available for a next experiment")
         candidate = self.load_candidates()[candidate_id]
@@ -1011,7 +1056,32 @@ class Orchestrator:
         return experiment
 
     # -------------------------------------------------------------- COMPLETE
+    def _refuse_if_gate_open(self, stage: Stage) -> None:
+        """Refuse to run a stage while a human gate is unresolved.
+
+        Without this, `agent report` on a run still parked at its hero
+        checkpoint wrote a FinalReport saying ``status: completed`` whose own
+        ``human_decisions`` field read ``['<run>-hero: open']``, and overwrote
+        ``awaiting_human`` with ``completed`` — which the BenchFlow exporter then
+        maps to outcome "success".
+        """
+        state = self.store.load_state()
+        if state.status == "refused":
+            raise CheckpointBlocked(
+                f"{stage} cannot run: the biorisk gateway refused this request."
+            )
+        if not state.open_checkpoint_id:
+            return
+        checkpoint = self.get_checkpoint(state.open_checkpoint_id)
+        if checkpoint is not None and checkpoint.status == "open":
+            raise CheckpointBlocked(
+                f"{stage} cannot run while checkpoint {checkpoint.checkpoint_id} is "
+                f"open. Resolve it: agent checkpoint resolve {state.run_id} "
+                f"{checkpoint.checkpoint_id} --decision approve --by <name>"
+            )
+
     def run_complete(self) -> FinalReport:
+        self._refuse_if_gate_open(Stage.COMPLETE)
         state = self.store.load_state()
         candidates = self.load_candidates()
         scorecards = {card.candidate_id: card for card in self.load_scorecards()}
@@ -1345,7 +1415,23 @@ class Orchestrator:
         return completed if stage in completed else [*completed, stage]
 
     def run_until_checkpoint(self) -> HumanCheckpoint:
-        """INGEST through HERO_CHECKPOINT, then stop for a human."""
+        """INGEST through HERO_CHECKPOINT, then stop for a human.
+
+        Stops immediately if a biorisk escalation is unresolved. It used to run
+        straight through one and overwrite ``open_checkpoint_id`` with the hero
+        checkpoint, erasing the pointer to the biosecurity gate that was never
+        answered — the escalation failed open.
+        """
+        state = self.store.load_state()
+        if state.stage is Stage.BIORISK and state.status == "awaiting_human":
+            checkpoint = self.get_checkpoint(state.open_checkpoint_id or "")
+            if checkpoint is not None and checkpoint.status == "open":
+                raise CheckpointBlocked(
+                    f"biorisk review is unresolved for run {state.run_id}. "
+                    f"Resolve it before the pipeline runs: agent checkpoint "
+                    f"resolve {state.run_id} {checkpoint.checkpoint_id} "
+                    "--decision approve --by <name>"
+                )
         self.run_ingest()
         self.run_gate()
         self.run_score()
@@ -1373,8 +1459,21 @@ class Orchestrator:
             self.run_hero_checkpoint()
             return self.store.load_state()
         if state.stage is Stage.STRUCTURE:
-            self.run_structure()
+            comparison = self.run_structure()
             state = self.store.load_state()
+            if comparison is None and state.stage is Stage.STRUCTURE:
+                # build_requests returned nothing (no sequences, or no mapped
+                # region), so run_structure returned early without advancing.
+                # resume() then re-ran the same no-op forever. Move on: an
+                # unmodellable candidate is a recorded outcome, not a stall.
+                state.stage = Stage.NEXT_EXPERIMENT
+                state.completed_stages = self._advance(
+                    state.completed_stages, Stage.STRUCTURE
+                )
+                state.notes.append(
+                    "structure stage produced no request; advanced without a model"
+                )
+                self.store.save_state(state)
         if state.stage is Stage.NEXT_EXPERIMENT:
             self.run_next_experiment()
             state = self.store.load_state()

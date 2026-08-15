@@ -91,8 +91,16 @@ def mint_source_id(url: str, name: str = "") -> str:
     return f"SRC-{_short_hash({'url': url, 'name': name or url})}"
 
 
-def mint_evidence_id(statement: str, support: str) -> str:
-    return f"EV-{_short_hash({'s': statement, 'p': support})}"
+def mint_evidence_id(statement: str, support: str, subject: str = "") -> str:
+    """Deterministic evidence id, scoped by subject.
+
+    Hashing only (statement, support) collided across candidates: two candidates
+    whose claims share wording — boilerplate like "co-immunoprecipitation
+    confirms the interaction" is common — minted the same id, and the second
+    record was silently discarded by the ``setdefault`` in ``to_input_bundle``,
+    leaving the second candidate citing the first candidate's source.
+    """
+    return f"EV-{_short_hash({'s': statement, 'p': support, 'subj': subject})}"
 
 
 def interaction_type_for(
@@ -199,7 +207,7 @@ def claims_to_evidence(
                 "record's source and the rest are kept in limitations."
             )
         records.append(EvidenceRecord(
-            evidence_id=mint_evidence_id(claim.statement, claim.support.value),
+            evidence_id=mint_evidence_id(claim.statement, claim.support.value, prefix),
             evidence_type=evidence_type,
             interpretation=SUPPORT_TO_INTERPRETATION[claim.support.value],
             claim=claim.statement,
@@ -377,7 +385,8 @@ def to_candidate(
 
     dep_evidence = EvidenceRecord(
         evidence_id=mint_evidence_id(
-            f"{target} dependency in {dependency.disease_context}", "genetic_functional"
+            f"{target} dependency in {dependency.disease_context}",
+            "genetic_functional", target,
         ),
         evidence_type=EvidenceType.DEPENDENCY,
         interpretation=Interpretation.COMPUTED,
@@ -496,6 +505,21 @@ def to_input_bundle(
             refusals.append(result.refusal or f"{gene}: refused")
             continue
         assert result.candidate is not None
+        # Ids are minted from target+partner, so two scout rows for the same pair
+        # (different disease contexts, or a repeated gene) collide. Silently
+        # keeping one dropped a real candidate and could change which candidate
+        # became the hero. Disambiguate and record it rather than losing data.
+        identifier = result.candidate.candidate_id
+        if any(c.candidate_id == identifier for c in candidates):
+            suffix = sum(1 for c in candidates if c.candidate_id.startswith(identifier)) + 1
+            deduped = f"{identifier}-{suffix}"
+            losses.append(
+                f"{identifier}: duplicate candidate id from a second scout row; "
+                f"renamed to {deduped} so neither candidate is dropped."
+            )
+            result.candidate = result.candidate.model_copy(
+                update={"candidate_id": deduped}
+            )
         candidates.append(result.candidate)
         for source in result.sources:
             sources.setdefault(source.source_id, source)

@@ -29,6 +29,7 @@ from .context import PromptTooLargeError
 from .demo_export import DEMO_SCHEMA_VERSION, export_demo_json
 from .improvement import evaluate
 from .models import Stage
+from .biorisk import BiosafetyRefusal
 from .orchestrator import CheckpointBlocked, Orchestrator, StageError, load_bundle_file
 from .scoring import rank
 from .store import RunExistsError, RunLockError, RunStore, list_runs
@@ -632,6 +633,14 @@ def main(argv: list[str] | None = None) -> int:
     except RunLockError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 5
+    except CheckpointBlocked as exc:
+        # A blocked gate is the system working, not a crash. Say so plainly
+        # rather than printing a traceback at the operator.
+        print(f"blocked: {exc}", file=sys.stderr)
+        return 4
+    except BiosafetyRefusal as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 7
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

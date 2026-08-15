@@ -84,21 +84,54 @@ REFUSE_SIGNALS: tuple[tuple[ConcernCategory, re.Pattern[str], str], ...] = (
     (ConcernCategory.TRANSMISSIBILITY,
      _p(r"\b(increas|enhanc|improv|boost|maximiz)\w*\b[^.]{0,40}\b(transmissibility|transmission|contagious|infectivity|spread)"),
      "increasing transmissibility or infectivity of a pathogen"),
+    # "mortality" is deliberately NOT here. Describing a disease as causing
+    # increased mortality is ordinary clinical prose, and matching it refused
+    # routine oncology bundles outright. The hazard is engineering a pathogen to
+    # be more lethal, which needs a pathogen object, not an observed outcome.
     (ConcernCategory.PATHOGEN_ENHANCEMENT,
-     _p(r"\b(increas|enhanc|improv|boost|maximiz)\w*\b[^.]{0,40}\b(virulence|patho?genicity|lethality|mortality)"),
-     "increasing virulence, pathogenicity, or lethality"),
+     _p(r"\b(increas|enhanc|improv|boost|maximiz)\w*\b[^.]{0,40}\b(virulence|patho?genicity|lethality)\b"
+        r"[^.]{0,40}\b(of|in|for)\b[^.]{0,30}\b(pathogen|virus|viral|bacteri\w+|strain|agent|organism)"),
+     "increasing the virulence, pathogenicity, or lethality of a pathogen"),
+    (ConcernCategory.PATHOGEN_ENHANCEMENT,
+     _p(r"\b(engineer|design|construct|modif|mutat)\w*\b[^.]{0,40}\b(pathogen|virus|viral|bacteri\w+|strain)"
+        r"[^.]{0,40}\b(more (virulent|lethal|deadly|patho?genic)|increas\w*\b[^.]{0,20}(virulence|lethality))"),
+     "engineering a pathogen to be more virulent or lethal"),
     (ConcernCategory.PATHOGEN_ENHANCEMENT,
      _p(r"\b(expand|broaden|alter|extend)\w*\b[^.]{0,40}\bhost\s+(range|tropism)"),
      "expanding pathogen host range or tropism"),
     (ConcernCategory.PATHOGEN_ENHANCEMENT,
      _p(r"\bgain[- ]of[- ]function\b(?![^.]{0,60}\b(ban|prohibit|refus|moratorium|polic|oversight)\w*)"),
      "gain-of-function work on a pathogen"),
+    # Both of these need an ENGINEERING verb plus a deliberate-design object.
+    # "cancer cells escape immune surveillance" and "tumours confer resistance to
+    # therapy" are descriptions of disease biology — the two most common
+    # sentences in oncology — and previously refused the whole bundle.
     (ConcernCategory.IMMUNE_EVASION,
-     _p(r"\b(evad|escap|defeat|circumvent|bypass|subvert)\w*\b[^.]{0,40}\b(immun\w+|vaccine|antibod\w+|neutraliz\w+)"),
+     _p(r"\b(engineer|design|construct|modif|mutat|select)\w*\b[^.]{0,50}\b(to |so as to |in order to )?"
+        r"(evade|escape|defeat|circumvent|bypass)\b[^.]{0,30}\b(immun\w+|vaccine|antibod\w+|neutraliz\w+)"),
      "engineering escape from immunity, vaccines, or antibodies"),
+    (ConcernCategory.IMMUNE_EVASION,
+     _p(r"\b(vaccine|antibody|immune)[- ]escape\b[^.]{0,40}\b(variant|mutant|strain|construct)\b"
+        r"[^.]{0,40}\b(design|engineer|construct|generat)\w*"),
+     "designing a vaccine- or antibody-escape variant"),
     (ConcernCategory.THERAPEUTIC_RESISTANCE,
-     _p(r"\b(confer|engineer|introduc|creat|induc)\w*\b[^.]{0,40}\bresistan\w+\b[^.]{0,30}\b(antibiotic|antiviral|drug|therap\w+|treatment)"),
-     "engineering resistance to antibiotics, antivirals, or therapeutics"),
+     _p(r"\b(engineer|introduc|construct|insert|transfer)\w*\b[^.]{0,40}\bresistan\w+\b[^.]{0,30}"
+        r"\b(gene|cassette|plasmid|marker)\b|"
+        r"\b(engineer|construct|creat)\w*\b[^.]{0,30}\b(a |the )?(strain|pathogen|organism|bacteri\w+)\b"
+        r"[^.]{0,40}\bresistant to\b[^.]{0,30}\b(antibiotic|antiviral|drug|therap\w+|treatment)"),
+     "engineering therapeutic resistance into an organism"),
+    # "confer resistance" is only hazardous when the object is an organism being
+    # modified. "Tumours confer resistance to therapy" describes observed disease
+    # biology and must stay permitted, so the organism term is required — as is
+    # "all/every", which no descriptive sentence uses.
+    (ConcernCategory.THERAPEUTIC_RESISTANCE,
+     _p(r"\bconfer\w*\b[^.]{0,30}\bresistance to\b[^.]{0,40}"
+        r"\b(strain|pathogen|organism|bacteri\w+|virus|viral|isolate|culture)\b"),
+     "conferring therapeutic resistance on an organism"),
+    (ConcernCategory.THERAPEUTIC_RESISTANCE,
+     _p(r"\bresistan\w+\b[^.]{0,20}\bto (all|every)\b[^.]{0,25}"
+        r"\b(antibiotic|antiviral|drug|therap\w+|treatment)"),
+     "conferring resistance to all available therapeutics"),
     (ConcernCategory.THERAPEUTIC_RESISTANCE,
      _p(r"\bmake\b[^.]{0,30}\b(untreatable|incurable|resistant to (all|every)\b)"),
      "making a disease or pathogen untreatable"),

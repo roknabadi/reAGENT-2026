@@ -91,23 +91,37 @@ def score_candidate(candidate: CandidateHypothesis, config: RunConfig) -> Candid
     # -- normal-cell evidence completeness -----------------------------------
     # This scores whether the safety-window evidence exists at all, not whether
     # it is favourable. No records means missing, which means zero.
+    # A record can be cited as normal-cell evidence AND be flagged as
+    # contradicting. Counting it toward completeness let evidence that argues
+    # against a safety window raise the score for having assessed one.
+    contradicting = set(candidate.contradicting_evidence_ids)
     normal_ids = list(candidate.normal_cell_evidence_ids)
-    has_normal = bool(normal_ids)
+    supporting_normal_ids = [e for e in normal_ids if e not in contradicting]
+    contradicted_normal_ids = [e for e in normal_ids if e in contradicting]
+    has_normal = bool(supporting_normal_ids)
     components.append(ScoreComponent(
         name="normal_cell_completeness",
         definition=(
             "Presence of normal-tissue or normal-cell evidence bearing on a possible "
             "safety window. Measures completeness of the evidence, not its favourability."
         ),
-        raw=float(len(normal_ids)) if has_normal else None,
+        raw=float(len(supporting_normal_ids)) if has_normal else None,
         unit="records" if has_normal else None,
-        normalization="0 records -> 0.0; 1 record -> 0.5; 2 or more -> 1.0",
-        normalized=(0.0 if not has_normal else (0.5 if len(normal_ids) == 1 else 1.0)),
+        normalization=(
+            "records not flagged as contradicting: 0 -> 0.0; 1 -> 0.5; 2 or more -> 1.0"
+        ),
+        normalized=(
+            0.0 if not has_normal else (0.5 if len(supporting_normal_ids) == 1 else 1.0)
+        ),
         weight=weights.normal_cell_completeness,
         missing=not has_normal,
         uncertainty=(
             "no normal-cell evidence supplied; the safety window is unassessed"
-            if not has_normal else None
+            if not has_normal else (
+                "normal-cell evidence contradicting a safety window was excluded "
+                f"from completeness: {', '.join(contradicted_normal_ids)}"
+                if contradicted_normal_ids else None
+            )
         ),
         evidence_ids=normal_ids,
     ))
