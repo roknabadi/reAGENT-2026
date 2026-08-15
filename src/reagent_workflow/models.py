@@ -6,13 +6,13 @@ written to and read back from it.
 
 The vocabulary here is deliberately target-agnostic: a run reasons about a
 *target* gene and a *partner* gene, and says what kind of thing each one is in
-free text (`target_class` / `partner_class`) rather than in the type system. A
-transcription factor paired with a Mediator subunit is one test case for that
-shape, not its definition; a kinase and its substrate use the same models.
+free text (`target_class` / `partner_class`) rather than in the type system. Any
+pair of interacting proteins is one test case for that shape, not its
+definition; a kinase and its substrate use the same models as a subunit pair.
 
-Schema 1.1 renamed the TF/Mediator-specific field names. Every old name is
-still accepted on input (via `AliasChoices`) and still readable as a property,
-so bundles written against schema 1.0 load unchanged.
+Schema 1.1 renamed the field names that named one particular class of target.
+Every old name is still accepted on input (via `AliasChoices`) and still
+readable as a property, so bundles written against schema 1.0 load unchanged.
 """
 
 from __future__ import annotations
@@ -34,11 +34,19 @@ SCHEMA_VERSION = "1.1"
 
 
 class Stage(StrEnum):
+    # Selecting which biological problem to point the pipeline at. Runs before a
+    # candidate exists and stops for human review, so it is deliberately not part
+    # of STAGE_ORDER — that tuple is the implemented candidate-to-experiment flow.
+    USE_CASE_DISCOVERY = "USE_CASE_DISCOVERY"
     INGEST = "INGEST"
     GATE = "GATE"
     SCORE = "SCORE"
     HERO_CHECKPOINT = "HERO_CHECKPOINT"
     STRUCTURE = "STRUCTURE"
+    # Docking and compound prioritisation. Owned by the screening stage, not by
+    # this package; the rules are loaded here so the policy travels with the
+    # agent rather than living only in a document.
+    SCREENING = "SCREENING"
     NEXT_EXPERIMENT = "NEXT_EXPERIMENT"
     COMPLETE = "COMPLETE"
 
@@ -87,7 +95,7 @@ class Base(BaseModel):
 
 
 class RenamedBase(Base):
-    """Base for the models whose TF/Mediator field names were generalised.
+    """Base for the models whose target-specific field names were generalised.
 
     `populate_by_name=True` means the new canonical field name constructs the
     model just as well as the old key does, so `AliasChoices` widens what is
@@ -171,10 +179,10 @@ class DependencyEvidence(Base):
 class InteractionEvidence(RenamedBase):
     """Support for a physical relationship between a target and a partner protein.
 
-    A transcription factor and a Mediator subunit are one such pair; so are a
-    kinase and its substrate. The models say nothing about which, and the
-    optional `target_class` / `partner_class` on `CandidateHypothesis` are where
-    a run records what kind of pair it is looking at.
+    A kinase and its substrate are one such pair; so are two subunits of a
+    complex. The models say nothing about which, and the optional
+    `target_class` / `partner_class` on `CandidateHypothesis` are where a run
+    records what kind of pair it is looking at.
 
     `interaction_support` is deliberately nullable: an absent value means the
     connection is unsupported, and it is never read as a zero that averages away.
@@ -308,10 +316,10 @@ class StructuralTractability(RenamedBase):
 class CandidateHypothesis(RenamedBase):
     """A disease-target-partner triple with everything known about it.
 
-    `target_class` and `partner_class` are free text ("transcription factor",
-    "Mediator subunit", "kinase") so a run can say what kind of pair it is
-    working on without the code having to know. Nothing branches on them; they
-    are there so a report can be read by a biologist.
+    `target_class` and `partner_class` are free text ("kinase", "substrate",
+    "complex subunit") so a run can say what kind of pair it is working on
+    without the code having to know. Nothing branches on them; they are there so
+    a report can be read by a biologist.
     """
 
     schema_version: str = SCHEMA_VERSION
@@ -324,13 +332,15 @@ class CandidateHypothesis(RenamedBase):
         validation_alias=AliasChoices("partner_gene", "mediator_subunit")
     )
     target_class: str | None = None
-    """What kind of target this is, e.g. "transcription factor". Free text."""
+    """What kind of target this is, e.g. "kinase". Free text."""
     partner_class: str | None = None
-    """What kind of partner this is, e.g. "Mediator subunit". Free text."""
+    """What kind of partner this is, e.g. "substrate". Free text."""
     hypothesis: str
     dependency: DependencyEvidence
-    mediator: InteractionEvidence
-    """The target-partner interaction evidence. Field name kept from schema 1.0."""
+    interaction: InteractionEvidence = Field(
+        validation_alias=AliasChoices("interaction", "mediator")
+    )
+    """The target-partner interaction evidence. Formerly `mediator`."""
     tractability: StructuralTractability = Field(default_factory=StructuralTractability)
     normal_cell_evidence_ids: list[str] = Field(default_factory=list)
     contradicting_evidence_ids: list[str] = Field(default_factory=list)
@@ -347,6 +357,11 @@ class CandidateHypothesis(RenamedBase):
     def mediator_subunit(self) -> str:
         """Deprecated view of `partner_gene`."""
         return self.partner_gene
+
+    @property
+    def mediator(self) -> InteractionEvidence:
+        """Deprecated view of `interaction`."""
+        return self.interaction
 
 
 class ScoreComponent(Base):

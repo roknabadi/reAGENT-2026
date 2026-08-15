@@ -5,12 +5,11 @@ it would change the hypothesis, including the outcomes that would sink it.
 
 The proposal is target-agnostic: it tests whether a dependency runs through a
 named interaction, not through a particular class of protein. Where a candidate
-declares ``target_class`` / ``partner_class`` (free text such as "transcription
-factor" / "Mediator subunit") those words are used, so a TF-Mediator candidate
-reads as a TF-Mediator experiment; a candidate that declares neither falls back
-to "the target" and "its interaction partner". The assays stay concrete either
-way, and the worked example is named where the target's biology decides which
-readout applies.
+declares ``target_class`` / ``partner_class`` (free text such as "kinase" /
+"substrate") those words are used, so the experiment reads in the candidate's
+own vocabulary; a candidate that declares neither falls back to "the target" and
+"its interaction partner". The assays stay concrete either way, and the worked
+example is named where the target's biology decides which readout applies.
 
 The generator accepts revision directives from the bounded self-improvement
 loop. A directive adds reasoning the first pass skipped; it cannot loosen the
@@ -28,7 +27,7 @@ from .models import (
 
 
 def _named(gene: str, gene_class: str | None, fallback: str) -> str:
-    """"the Mediator subunit MED23" when a class is declared, else the fallback.
+    """"the kinase AURKB" when a class is declared, else the fallback.
 
     ``fallback`` carries the neutral wording ("the target", "its interaction
     partner") so the sentence still reads when a candidate declares no class.

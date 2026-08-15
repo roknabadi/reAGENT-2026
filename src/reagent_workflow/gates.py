@@ -5,11 +5,11 @@ written to ``decisions/rejections.jsonl`` with the reason and the threshold that
 produced it, so a reader can disagree with the rule rather than guess at it.
 
 The gates are target-agnostic. They speak about a target gene and its
-interaction partner; a TF-Mediator pair is one instance of that, not the
+interaction partner; any one class of pair is an instance of that, not the
 definition. Where a candidate declares ``target_class`` / ``partner_class``
-(free text such as "transcription factor" / "Mediator subunit") the failure
-reason uses those words, so a TF-Mediator run still reads naturally without the
-rule assuming that pairing.
+(free text such as "kinase" / "substrate") the failure reason uses those words,
+so a run reads naturally in its own vocabulary without the rule assuming any
+particular pairing.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def _class_pair(candidate: CandidateHypothesis) -> str:
 
 
 def _interaction_noun(candidate: CandidateHypothesis) -> str:
-    """"transcription factor-Mediator subunit interaction", else "interaction"."""
+    """"kinase-substrate interaction", else the bare "interaction"."""
     pair = _class_pair(candidate)
     return f"{pair} interaction" if pair else "interaction"
 
@@ -80,9 +80,7 @@ def evaluate_gates(
 ) -> GateOutcome:
     """Apply every gate. All failures are collected, not just the first."""
     dependency = candidate.dependency
-    # ``candidate.mediator`` is the attribute name; what it holds is general
-    # interaction evidence between the target gene and its partner.
-    interaction = candidate.mediator
+    interaction = candidate.interaction
     failures: list[GateFailure] = []
 
     if dependency.median_target_effect > thresholds.max_median_target_effect:
@@ -115,8 +113,9 @@ def evaluate_gates(
             f"required at or below {thresholds.max_selectivity_delta:.3f}",
         ))
 
-    # TODO: the threshold field is still named ``min_mediator_support`` in
-    # config.py; the rule it encodes is the general interaction-support floor.
+    # The threshold field keeps its schema-1.0 name ``min_mediator_support``
+    # because renaming it would change every run's ``config_hash`` (see
+    # config.py); the rule it encodes is the general interaction-support floor.
     if not interaction.is_supported:
         missing = []
         if interaction.interaction_support is None:

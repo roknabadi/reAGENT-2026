@@ -45,8 +45,8 @@ from .models import (
     EvidenceRecord,
     EvidenceTier,
     EvidenceType,
+    InteractionEvidence,
     Interpretation,
-    MediatorEvidence,
     SourceRecord,
     StructuralTractability,
 )
@@ -235,26 +235,39 @@ def to_dependency_evidence(
     )
 
 
-def to_mediator_evidence(
+def to_interaction_evidence(
     link: ds.MediatorLink,
     *,
-    transcription_factor: str,
+    target_gene: str | None = None,
     interaction_support: float | None,
     assay: str | None,
     source_id: str | None,
     evidence_ids: list[str],
+    partner_gene: str | None = None,
+    transcription_factor: str | None = None,
     mediator_subunit: str | None = None,
-) -> MediatorEvidence:
-    """`dependency_scout.MediatorLink` → `reagent_workflow.MediatorEvidence`.
+) -> InteractionEvidence:
+    """`dependency_scout.MediatorLink` → `reagent_workflow.InteractionEvidence`.
+
+    `target_gene` is required despite its `None` default: the default exists
+    only so the deprecated `transcription_factor=` spelling can supply it
+    instead. `partner_gene` (formerly `mediator_subunit=`) falls back to the
+    link's own partner rather than to any particular gene.
 
     `interaction_support` has no default on purpose. `MediatorLink` carries no
     numeric support, and inventing one here would let a candidate clear the
     support gate on a number nobody measured. Pass `None` when no number has
     been given; the gate then rejects the link as unsupported, which is correct.
     """
-    return MediatorEvidence(
-        transcription_factor=transcription_factor,
-        mediator_subunit=mediator_subunit or link.partner_gene,
+    target = target_gene or transcription_factor
+    if not target:
+        raise TypeError(
+            "to_interaction_evidence() requires target_gene (or the deprecated "
+            "transcription_factor=)"
+        )
+    return InteractionEvidence(
+        target_gene=target,
+        partner_gene=partner_gene or mediator_subunit or link.partner_gene,
         interaction_support=interaction_support,
         interaction_type=interaction_type_for(
             link.claims, interacting_region_mapped=link.interacting_region_mapped
@@ -265,11 +278,16 @@ def to_mediator_evidence(
             if link.claims else None
         ),
         interacting_region_mapped=link.interacting_region_mapped,
-        tf_region=link.tf_region,
+        # `tf_region` is `dependency_scout`'s field name for the mapped region.
+        target_region=link.tf_region,
         evidence_ids=list(evidence_ids),
         source_id=source_id,
         limitations=list(link.screening_concerns),
     )
+
+
+#: Schema-1.0 name. Kept so existing callers and imports keep working.
+to_mediator_evidence = to_interaction_evidence
 
 
 def to_structural_tractability(link: ds.MediatorLink) -> StructuralTractability:
@@ -306,17 +324,29 @@ def to_candidate(
     rc: ds.RankedCandidate,
     *,
     candidate_id: str | None = None,
-    mediator_subunit: str = "MED23",
+    partner_gene: str | None = None,
     interaction_support: float | None,
     assay: str | None,
     allow_calibration_only: bool = False,
+    mediator_subunit: str | None = None,
 ) -> ConversionResult:
     """`dependency_scout.RankedCandidate` → `CandidateHypothesis` + its evidence.
+
+    `partner_gene` is required despite its `None` default: the default exists
+    only so the deprecated `mediator_subunit=` spelling can supply it instead.
+    It previously defaulted to one named gene, which silently relabelled every
+    candidate's partner as that gene regardless of the link it came from.
 
     Refuses rather than guesses when the candidate cannot stand up: no
     quantitative dependency, or a calibration control that must never be
     presented as a result.
     """
+    partner_gene = partner_gene or mediator_subunit
+    if not partner_gene:
+        raise TypeError(
+            "to_candidate() requires partner_gene (or the deprecated "
+            "mediator_subunit=)"
+        )
     result = ConversionResult()
 
     if rc.mediator.calibration_only and not allow_calibration_only:
@@ -335,9 +365,9 @@ def to_candidate(
         return result
 
     dependency = rc.dependency
-    tf = dependency.gene
-    subunit = mediator_subunit or rc.mediator.partner_gene
-    identifier = candidate_id or f"CAND-{tf}-{subunit}"
+    target = dependency.gene
+    partner = partner_gene
+    identifier = candidate_id or f"CAND-{target}-{partner}"
 
     dep_source = to_source_record(
         dependency.source,
@@ -347,33 +377,35 @@ def to_candidate(
 
     dep_evidence = EvidenceRecord(
         evidence_id=mint_evidence_id(
-            f"{tf} dependency in {dependency.disease_context}", "genetic_functional"
+            f"{target} dependency in {dependency.disease_context}", "genetic_functional"
         ),
         evidence_type=EvidenceType.DEPENDENCY,
         interpretation=Interpretation.COMPUTED,
         claim=(
-            f"{tf} shows a median gene effect of {dependency.median_target_effect:.3f} "
+            f"{target} shows a median gene effect of "
+            f"{dependency.median_target_effect:.3f} "
             f"in {dependency.disease_context} versus "
             f"{dependency.median_other_effect:.3f} in other models."
         ),
-        subject=tf,
+        subject=target,
         value=dependency.median_target_effect,
         unit="gene_effect_score",
         source_id=dep_source.source_id,
     )
     evidence: list[EvidenceRecord] = [dep_evidence]
 
-    mediator_records, mediator_sources, losses = claims_to_evidence(
-        rc.mediator.claims, prefix=f"{tf}-{subunit}",
+    # `rc.mediator` is `dependency_scout`'s field name for the interaction link.
+    interaction_records, interaction_sources, losses = claims_to_evidence(
+        rc.mediator.claims, prefix=f"{target}-{partner}",
         evidence_type=EvidenceType.INTERACTION,
     )
-    evidence.extend(mediator_records)
-    for source in mediator_sources:
+    evidence.extend(interaction_records)
+    for source in interaction_sources:
         sources.setdefault(source.source_id, source)
     result.losses.extend(losses)
 
     enrichment_records, enrichment_sources, enrichment_losses = claims_to_evidence(
-        rc.enrichment.claims, prefix=tf, evidence_type=EvidenceType.LITERATURE,
+        rc.enrichment.claims, prefix=target, evidence_type=EvidenceType.LITERATURE,
     )
     evidence.extend(enrichment_records)
     for source in enrichment_sources:
@@ -382,36 +414,36 @@ def to_candidate(
 
     if interaction_support is None:
         result.losses.append(
-            f"{identifier}: no interaction_support supplied, so the Mediator link "
+            f"{identifier}: no interaction_support supplied, so the interaction "
             "stays unsupported and the gate will reject it. Supply a number only "
             "when a human has one."
         )
 
-    mediator = to_mediator_evidence(
+    interaction = to_interaction_evidence(
         rc.mediator,
-        transcription_factor=tf,
-        mediator_subunit=subunit,
+        target_gene=target,
+        partner_gene=partner,
         interaction_support=interaction_support,
         assay=assay,
-        source_id=mediator_records[0].source_id if mediator_records else None,
-        evidence_ids=[record.evidence_id for record in mediator_records],
+        source_id=interaction_records[0].source_id if interaction_records else None,
+        evidence_ids=[record.evidence_id for record in interaction_records],
     )
 
     result.candidate = CandidateHypothesis(
         candidate_id=identifier,
         disease_context=dependency.disease_context,
-        transcription_factor=tf,
-        mediator_subunit=subunit,
+        target_gene=target,
+        partner_gene=partner,
         hypothesis=(
-            f"In {dependency.disease_context}, the selective dependency on {tf} "
-            f"may be carried by its interaction with the Mediator subunit {subunit}."
+            f"In {dependency.disease_context}, the selective dependency on {target} "
+            f"may be carried by its interaction with {partner}."
         ),
         dependency=to_dependency_evidence(
             dependency,
             source_id=dep_source.source_id,
             evidence_ids=[dep_evidence.evidence_id],
         ),
-        mediator=mediator,
+        interaction=interaction,
         tractability=to_structural_tractability(rc.mediator),
         normal_cell_evidence_ids=[],
         contradicting_evidence_ids=[],
@@ -433,7 +465,10 @@ def to_input_bundle(
 
     `interaction_support` and `assays` are keyed by gene symbol and supplied by a
     human. A candidate with no entry converts with `None`, so the gate rejects
-    its Mediator link as unsupported rather than the adapter inventing a value.
+    its interaction as unsupported rather than the adapter inventing a value.
+
+    Each candidate's partner comes from its own link, so a batch may span many
+    different partners.
 
     Returns the bundle, the refusals, and the recorded losses.
     """
@@ -449,6 +484,9 @@ def to_input_bundle(
         gene = item.name
         result = to_candidate(
             item,
+            # `item.mediator` is `dependency_scout`'s field name for the link;
+            # the partner it names is whatever that link is about.
+            partner_gene=item.mediator.partner_gene,
             interaction_support=support.get(gene),
             assay=assay_map.get(gene),
             allow_calibration_only=allow_calibration_only,

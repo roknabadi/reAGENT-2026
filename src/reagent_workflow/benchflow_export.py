@@ -33,6 +33,11 @@ from .store import RunStore, redact, sha256_file, utc_now
 
 OPENTRACES_SCHEMA_VERSION = "0.3"
 TRACE_FORMAT = "opentraces"
+# The frozen BenchFlow task's own identity. These two strings, the fallback task
+# prompt, and the task tags below name that task, not this pipeline's subject
+# matter: the task is frozen and agent runs are compared against it by id, so
+# generalising the names here would silently split the comparison. Everything
+# else in this package is target-agnostic; this boundary keeps its names.
 DEFAULT_TASK_ID = "reagent/tf-mediator-hero"
 AGENT_NAME = "reagent-tf-mediator-workflow"
 
