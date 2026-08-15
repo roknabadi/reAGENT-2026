@@ -19,6 +19,35 @@ from computational results.
 
 ---
 
+## 2026-08-15 — `selectivity_delta`: `dependency_scout`'s sign convention wins, `reagent_workflow` flips to match
+Decided by: Kevin — proposed, awaiting Andrey's sign-off (this blocks Task #3,
+the model adapter, so recording now rather than letting it sit)
+Why: `FINDINGS_DEPMAP_ROUND01.md` found the two packages define
+`selectivity_delta` as exact negations — `dependency_scout/depmap.py:83`
+computes `other.median() - target.median()` (positive = selective) and
+`dependency_scout/ranking.py:15` fails candidates below `0.35`, while
+`reagent_workflow/ingest.py:136` expects `median_target - median_other`
+(negative = selective) and `reagent_workflow/gates.py:80` fails above `-0.3`.
+A candidate built in one package is hard-rejected by the other as a data
+error, not merely scored differently. Real DepMap output already emits
+`dependency_scout`'s convention. I hit the same sign confusion independently
+in a separate scratch implementation: percentile-ranking `selectivity_delta`
+ascending (the naive read of "delta") put IRF4 — the single strongest hit in
+a 38,666-row store — at the bottom of the ranking, because
+`in_median - out_median` is very negative for a real dependency. `models.py`
+itself lives in `dependency_scout`, and real data already conforms to its
+convention, so `reagent_workflow` moving to match is the smaller, lower-risk
+change.
+Alternatives rejected: flip `dependency_scout` instead — rejected because it
+already matches the real data pipeline in production use (Vraj's round-01/02
+runs), so flipping it would require re-deriving every existing real result,
+not just relabeling a field.
+Reversible: yes — it's a formula sign, not a schema shape. Flip `ingest.py`
+and `gates.py`'s two lines and re-run existing candidates through the
+adapter to confirm nothing else assumed the old convention.
+
+---
+
 ## 2026-08-15 — Four roles: Andrey decides, Kevin designs, Vraj and Amir build
 Decided by: Andrey
 Why: six named roles with overlapping sign-off was slower than the deadline

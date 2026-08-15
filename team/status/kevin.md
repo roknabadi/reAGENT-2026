@@ -2,6 +2,95 @@
 
 Newest on top. Format: ../README.md
 
+## 2026-08-15 (3) — Kevin
+Did: closing out the two Band-1 items blocking on me in `TASKS.md`, plus the
+literature pass `FINDINGS_DEPMAP_ROUND01.md` §5 flagged as the critical next
+step. All work through this point is in `~/coding/re-agent_discovery`
+(scratch repo); relevant results below are what actually needs to leave it.
+
+**Task #4 (ranking weights) — mapping is done, pointing Amir at it.** The
+25/25/20/15/10/5 spec is written up in full in `docs/SCORING_SPEC.md` (scratch
+repo) with a working reference implementation in `src/ranking.py` there —
+`compute_gate` / `compute_discovery_score` / `component_score` /
+`compute_enrichment_score` / `compute_final_score`. The one thing worth
+importing along with the six numbers: evidence *quality* is a ceiling on a
+component's score, not an addend — a `SupportType.DIRECT_EXPERIMENTAL` claim
+caps at 1.0, `computational_prediction` caps at 0.35, etc., and corroborating
+claims at the same tier fill toward the ceiling with diminishing returns
+rather than summing unboundedly. Validated against the round-01 examples:
+ELK1→0.75, RUNX2→0.667, CEBPB→0.5 (correctly capped despite a
+`direct_experimental`-labeled claim, because `interacting_region_mapped` is
+false), ETV1→0.175. Ran this against real STRING data too — it's what caught
+that ELK1–MED23's STRING combined score (0.871) is 100% text-mining
+(`escore=0`), which is exactly the failure mode the tier-ceiling design exists
+to prevent from leaking into a real score.
+
+**`selectivity_delta` sign convention — recommending `dependency_scout`'s
+convention wins.** Hit this exact bug myself independently: my own
+`ranking.py` percentile-ranked `selectivity_delta` ascending and it put
+IRF4 — the single strongest hit in the whole 38,666-row store — at the
+*bottom* of the distribution, because `in_median - out_median` is very
+negative for a real hit. Given real DepMap output already emits
+`dependency_scout`'s positive-is-selective convention (per
+`FINDINGS_DEPMAP_ROUND01.md`), and it's the package `models.py` itself lives
+in, `reagent_workflow` should flip to match rather than the reverse — fewer
+real artifacts need to change. Logged as a decision below; needs Andrey's
+sign-off since it's a shared-type-adjacent call per `CONTRIBUTING.md`.
+
+**IRF4 and PAX8 broad literature pass — still empty, now checked properly.**
+`FINDINGS_DEPMAP_ROUND01.md` §5 and I independently landed on the same next
+step: these two clear the dependency bar hardest and have `involvement:
+unknown`, so they're the obvious candidates to chase. STRING gives zero leads
+for either (checked last round), so this pass was unguided: direct
+"IRF4/PAX8 + Mediator" search, then broadened to any coactivator contact at
+all (following the POU2F3–OCA-T1 precedent — a mapped contact doesn't have to
+be a literal Mediator subunit). Nothing for either gene, from any angle.
+IRF4's real literature is IRE1/LAMP5/SOX9/PD-L1 regulation; PAX8's is a gene
+network paper, an unrelated Mediator/nuclear-receptor review, and one
+off-target Arabidopsis auxin paper. **The empty intersection Vraj found in
+round 02 is now checked from every angle I have, not just STRING's** — real
+dependencies exist, none has a discoverable physical contact of any kind, to
+anything. That's the actual state of the hypothesis, not a gap in the search.
+
+**Subpopulation-dependency gate fix — my call: yes to option 2, additive not
+replacing.** Vraj's POU2F3 finding (dependency of SCLC-P specifically, a
+subpopulation within one `OncotreeSubtype` bucket DepMap doesn't further
+split) is a real blind spot my own gate has too — a median-based test cannot
+see a dependency that defines a subpopulation rather than the whole context,
+which is arguably the more common shape for real transcriptional addiction.
+Recommend adding the specificity-first gate (very low
+`other_dependent_fraction` + meaningful `target_dependent_fraction`,
+regardless of median) as an **additional** admission path alongside the
+existing median gate, not a replacement — the median gate is what correctly
+rejects GTF2B/CTCF/MYC/AHCTF1 unprompted on real data, and a candidate should
+clear if it passes *either* test. Still needs Andrey's sign-off per
+`FINDINGS_DEPMAP_ROUND01.md`'s own framing, but this is the direction I'd
+implement it in. Not implemented yet — happy to build it in
+`dependency_scout/ranking.gate` if that's the green light.
+
+Also built and tested (scratch repo, not yet needed by anyone else so not
+detailed here): Stage 4 STRING Mediator-connectivity filter with a
+whole-complex-artifact rejection rule (caught EBF1 and CEBPB both showing the
+same flat near-uniform pattern across ~all 33 subunits — a database
+complex-level annotation, not subunit-specific evidence), a cache-only
+literature-search tool with permanent negative caching, and a tab-split
+evidence dashboard reading off the typed outputs. None of this blocks anyone
+else's task; flagging it exists in case Band 3 wants a second reference for
+what `demo.json` needs to carry per candidate.
+
+Next:
+- Reconcile my scratch-repo `ranking.py`/`stage1_depmap.py` against
+  `dependency_scout`'s real modules once the sign convention is settled —
+  right now they'd silently disagree.
+- If the specificity-first gate gets a green light, implement it directly in
+  `dependency_scout/ranking.gate` rather than the scratch repo, since that's
+  where it actually needs to live.
+- Nothing else queued; Band 1 #1 and #4 are the only things that were
+  blocking on me and both have an answer above now.
+
+Blocked: none — waiting on Andrey for the sign-convention and gate-fix
+sign-off, not blocked from other work in the meantime.
+
 ## 2026-08-15 — Kevin
 Did: built and ran an initial discovery-pipeline plan for the disease-specificity
 / omics side, mostly in a scratch repo (`~/coding/re-agent_discovery`, not this
