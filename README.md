@@ -1,20 +1,7 @@
-# re:AGENT 2026 clean-room workspace
+# re:AGENT 2026 — agentic target discovery and drug prioritization
 
-This directory is intentionally isolated from Therna and BioReasonRNA. Use only
-public sources, public models, event-provided services, and code written for the
-hackathon.
-
-The project definition and scientific endpoint are in [`PROJECT.md`](PROJECT.md).
-Setup, branching, testing, and pull-request instructions are in
-[`CONTRIBUTING.md`](CONTRIBUTING.md). Who is doing what, decisions, blockers,
-and the human sign-off gates are in [`team/`](team/README.md).
-Reproducible agent comparisons and trace publication are documented in
-[`benchflow/README.md`](benchflow/README.md).
-
-## What this is
-
-An agentic pipeline for target discovery and drug prioritization, general
-across diseases and target classes:
+An agentic pipeline that takes a disease or biological state to a ranked target,
+a druggable site, and the next experiment worth running:
 
 ```text
 disease / biological state → candidate target discovery → quantitative ranking
@@ -27,123 +14,27 @@ structural modelling, and the experiment generator operate on that pair and use
 free-text class labels only to phrase their output, so changing target class
 means supplying different evidence, not editing the agent. TF–Mediator is one
 worked example — the first case the workflow was exercised on — and ELK1–MED23
-is the calibration control. Neither is the scope. The pipeline as a product is
-stated in [`docs/PIPELINE.md`](docs/PIPELINE.md).
+is the calibration control, the pair with a published answer that the structural
+stage is measured against (`team/FINDINGS_ELK1_CONTROL.md`). Neither is the
+scope.
 
-## Collaborating
+**Proteins, not RNA.** The pipeline reasons about protein–protein interfaces and
+small molecules that occupy them.
 
-After cloning, run the setup script, configure your own Tamarind key, and start
-Claude Code:
+Where things are:
 
-```bash
-./scripts/setup.sh
-# Add your personal TAMARIND_API_KEY to .env
-source ./activate.sh
-claude
-```
+| | |
+|---|---|
+| project definition and scientific endpoint | [`PROJECT.md`](PROJECT.md) |
+| the pipeline as a product | [`docs/PIPELINE.md`](docs/PIPELINE.md) |
+| setup, branching, testing, pull requests | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| who is doing what, decisions, sign-off gates | [`team/`](team/README.md) |
+| agent comparisons and trace publication | [`benchflow/README.md`](benchflow/README.md) |
+| the agent's constitution | [`SOUL.md`](SOUL.md) |
 
-Shared instructions are in `CLAUDE.md`; the Tamarind connection is in
-`.mcp.json`. No credentials are stored in Git.
-
-## Start a shell
-
-```bash
-cd path/to/reAGENT-2026
-source ./activate.sh
-./scripts/check_readiness.sh
-```
-
-After activation, these commands are available:
-
-- `claude` — Claude Code (already installed on the Mac)
-- `paperclip` — biomedical literature and database CLI
-- `modal` — cloud execution for Proto tools
-- `benchflow` / `bench` — BenchFlow CLI
-- `python` — isolated Python 3.12 with `proto-language` and `proto-tools`
-
-## Installed components
-
-- Proto source: `vendor/proto-language` (including the `proto-tools` submodule)
-- BenchFlow source: `vendor/benchflow`
-- Proto, Proto Tools, Modal, and Paperclip: `.venv`
-- BenchFlow CLI: `tools`, exposed through `bin`
-- Sundial Desktop: `apps/Sundial.app`
-- Paperclip skills: `.claude/skills/paperclip` and `.agents/skills/paperclip`
-- Proto authoring skills: `.claude/skills` and `.agents/skills`
-- Claude project MCP configuration: `.mcp.json`
-
-## Authentication requiring a human
-
-These steps open a browser or require a personal/event credential and therefore
-cannot be completed unattended. Done on Amir's machine as of 2026-08-15:
-
-1. ~~`paperclip login`~~ — done
-2. ~~`modal setup`~~ — done (`amir-roknabadi`; `proto-tools deploy --apps boltz2
-   --test` passes 2/2 smoke tests on an H100)
-3. ~~Visit <https://biohub.ai>, create a personal API key, and put it in
-   `.env`~~ — done
-
-Still open:
-
-4. Visit <https://hackathon.bnchdev.org> and sign in with Google
-5. Start `claude` in this directory, run `/mcp`, and authenticate the Paperclip
-   and Benchling servers
-6. Open `apps/Sundial.app` once and complete its sign-in if you plan to use it
-
-Each collaborator does 1–3 on their own machine with their own credentials.
-
-Never paste keys into source files or commit `.env`.
-
-## Proto / PARADE starting point
-
-The installed Proto checkout contains native PARADE constraints for:
-
-- 5' or 3' UTR activity
-- on-target/off-target cell specificity
-- 3' UTR stability
-- differentiable gradient optimization
-
-Supported public PARADE cell lines are MDA-MB-231, HepG2, Jurkat, SW480,
-NALM6, and PA-1 (3' UTR only). Model weights are fetched from a pinned public
-PARADE commit and checksum-verified by Proto Tools.
-
-Inspect these files first:
-
-- `vendor/proto-language/proto_language/constraint/rna_expression/`
-- `vendor/proto-language/proto-tools/proto_tools/tools/sequence_scoring/parade/README.md`
-- `vendor/proto-language/examples/scripts/toy.py`
-
-## Event logistics
-
-- Arrive Saturday by **9:15 AM**; check-in opens at **8:30 AM**.
-- Bring laptop, charger, adapters, and photo ID.
-- Claim Modal and sponsor credits during the Day 1 lightning talks.
-
-## Hackathon build: Dependency Scout → Proto Screen
-
-The first executable slice lives in `src/dependency_scout`. It ranks public
-DepMap disease-selective dependencies, produces a bounded evidence plan, and
-compiles structural handoffs against Proto's native Vina input model.
-
-```bash
-source ./activate.sh
-python -m unittest discover -s tests -v
-
-# Clearly labeled synthetic smoke test (never scientific evidence)
-mkdir -p outputs
-dependency-scout discover --gene-effect tests/fixtures/gene_effect.csv \
-  --models tests/fixtures/models.csv --context Lung --synthetic \
-  --output outputs/demo_candidates.json
-dependency-scout plan outputs/demo_candidates.json \
-  --output outputs/demo_evidence_plan.json
-
-# Compile a public c-Abl/imatinib smoke example to Proto's native Vina contract
-dependency-scout validate-proto examples/proto_screen_spec.smoke.json \
-  --output outputs/proto_smoke.json
-```
-
-See `docs/ARCHITECTURE.md`. Real analysis requires official public DepMap
-files; the included fixture only tests behavior.
+**Clean room.** This directory is intentionally isolated from Therna and
+BioReasonRNA. Use only public sources, public models, event-provided services,
+and code written for the hackathon.
 
 ## Agent workflow: candidates → hero hypothesis → structure → next experiment
 
@@ -156,8 +47,8 @@ BIORISK → INGEST → GATE → SCORE → HERO_CHECKPOINT → STRUCTURE
 
 and stops at the hero checkpoint until a named human approves. The filesystem is
 the source of truth: every run lives in `runs/<run_id>/` and resumes from disk
-with no conversation history. The agent's constitution is [`SOUL.md`](SOUL.md);
-each stage loads only the rules it needs.
+with no conversation history. Each stage loads only the `SOUL.md` rules it
+needs.
 
 ### Structural evaluation: Boltz2, over replicate seeds
 
@@ -327,3 +218,91 @@ Two boundaries keep the older TF–Mediator field names on purpose:
   being built against them. See [`docs/DEMO_JSON.md`](docs/DEMO_JSON.md).
 
 Everywhere else the vocabulary is target and partner.
+
+## Hackathon build: Dependency Scout → Proto Screen
+
+The first executable slice lives in `src/dependency_scout`. It ranks public
+DepMap disease-selective dependencies, produces a bounded evidence plan, and
+compiles structural handoffs against Proto's native Vina input model.
+
+```bash
+source ./activate.sh
+python -m unittest discover -s tests -v
+
+# Clearly labeled synthetic smoke test (never scientific evidence)
+mkdir -p outputs
+dependency-scout discover --gene-effect tests/fixtures/gene_effect.csv \
+  --models tests/fixtures/models.csv --context Lung --synthetic \
+  --output outputs/demo_candidates.json
+dependency-scout plan outputs/demo_candidates.json \
+  --output outputs/demo_evidence_plan.json
+
+# Compile a public c-Abl/imatinib smoke example to Proto's native Vina contract
+dependency-scout validate-proto examples/proto_screen_spec.smoke.json \
+  --output outputs/proto_smoke.json
+```
+
+See `docs/ARCHITECTURE.md`. Real analysis requires official public DepMap
+files; the included fixture only tests behavior.
+
+## Collaborating
+
+After cloning, run the setup script, configure your own Tamarind key, and start
+Claude Code:
+
+```bash
+./scripts/setup.sh
+# Add your personal TAMARIND_API_KEY to .env
+source ./activate.sh
+claude
+```
+
+Shared instructions are in `CLAUDE.md`; the Tamarind connection is in
+`.mcp.json`. No credentials are stored in Git.
+
+## Start a shell
+
+```bash
+cd path/to/reAGENT-2026
+source ./activate.sh
+./scripts/check_readiness.sh
+```
+
+After activation, these commands are available:
+
+- `claude` — Claude Code (already installed on the Mac)
+- `paperclip` — biomedical literature and database CLI
+- `modal` — cloud execution for Proto tools
+- `benchflow` / `bench` — BenchFlow CLI
+- `python` — isolated Python 3.12 with `proto-language` and `proto-tools`
+
+## Installed components
+
+- Proto source: `vendor/proto-language` (including the `proto-tools` submodule)
+- BenchFlow source: `vendor/benchflow`
+- Proto, Proto Tools, Modal, and Paperclip: `.venv`
+- BenchFlow CLI: `tools`, exposed through `bin`
+- Paperclip skills: `.claude/skills/paperclip` and `.agents/skills/paperclip`
+- Proto authoring skills: `.claude/skills` and `.agents/skills`
+- Claude project MCP configuration: `.mcp.json`
+
+## Authentication requiring a human
+
+These steps open a browser or require a personal/event credential and therefore
+cannot be completed unattended. Done on Amir's machine as of 2026-08-15:
+
+1. ~~`paperclip login`~~ — done
+2. ~~`modal setup`~~ — done (`amir-roknabadi`; `proto-tools deploy --apps boltz2
+   --test` passes 2/2 smoke tests on an H100)
+3. ~~Visit <https://biohub.ai>, create a personal API key, and put it in
+   `.env`~~ — done
+
+Still open:
+
+4. Visit <https://hackathon.bnchdev.org> and sign in with Google
+5. Start `claude` in this directory, run `/mcp`, and authenticate the Paperclip
+   server
+
+Each collaborator does 1–3 on their own machine with their own credentials.
+
+Never paste keys into source files or commit `.env`.
