@@ -63,6 +63,22 @@ def list_known_genes() -> list[str]:
     return sorted(df["tf"].dropna().unique().tolist())
 
 
+def _evidence_override_genes() -> set[str]:
+    """TFs with a real literature claim on file earn a place in a
+    disease-context query regardless of the dependency gate. This exists
+    because Mediator-contact evidence and DepMap fitness evidence are
+    independent questions -- ELK1-MED23 is the proof case: a structurally
+    solved, cryo-EM-mapped contact with zero DepMap dependency signal
+    anywhere (checked across all 258 context rows -- see
+    PIPELINE_SUMMARY.md). Filtering it out of every disease-context query
+    because it fails a fitness screen it was never expected to pass would
+    hide the pipeline's own calibration case from itself."""
+    if not LITERATURE_CACHE_PATH.exists():
+        return set()
+    cache = json.loads(LITERATURE_CACHE_PATH.read_text())
+    return {key.split("::")[0] for key, entry in cache.items() if entry.get("claim")}
+
+
 def _dependency_rows(tf: str | None, disease_context: str | None) -> pd.DataFrame:
     df = pd.read_csv(config.RESULTS_DIR / "stage1_dependency_hits.csv", low_memory=False)
     if tf:
@@ -70,9 +86,12 @@ def _dependency_rows(tf: str | None, disease_context: str | None) -> pd.DataFram
     if disease_context:
         df = df[df["context"] == disease_context]
     if not tf:
-        # context-only query: don't dump all ~1,552 TFs tested against this
-        # context, just the ones that actually cleared the dependency gate
-        df = df[df["dependency_flag"] == True]  # noqa: E712
+        # context-only query: TFs that cleared the dependency gate, PLUS any
+        # TF with real Mediator/literature evidence regardless of gate result
+        # (see _evidence_override_genes). Never silent -- discover() tags
+        # which reason let each row through.
+        override_genes = _evidence_override_genes()
+        df = df[df["dependency_flag"] | df["tf"].isin(override_genes)]
     return df.sort_values("qvalue")
 
 
@@ -143,6 +162,7 @@ def discover(
 
     dep_rows = _dependency_rows(tf, disease_context)
     genes = [tf.upper()] if tf else dep_rows["tf"].unique().tolist()
+    override_genes = _evidence_override_genes() if (disease_context and not tf) else set()
 
     out_rows = []
     for gene in genes:
@@ -165,6 +185,8 @@ def discover(
                 "qvalue": drow["qvalue"],
                 "dependency_gate": "pass" if drow["dependency_flag"] else "fail",
                 "confidence": drow["confidence_flag"],
+                "inclusion_reason": "dependency_gate" if drow["dependency_flag"]
+                    else ("mediator_literature_override" if gene in override_genes else "dependency_gate"),
                 **annotations,
             }
             if is_artifact:
