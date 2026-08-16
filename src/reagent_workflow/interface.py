@@ -96,10 +96,68 @@ class TargetSegment(BaseModel):
         return self.end - self.start + 1
 
 
+class MetricSummary(BaseModel):
+    """One confidence number across the samples in a hypothesis."""
+    model_config = ConfigDict(extra="forbid")
+    mean: float
+    min: float
+    max: float
+    n: int = Field(ge=1)
+
+
+class InterfaceHypothesis(BaseModel):
+    """One cluster of samples, scored on its own terms.
+
+    A cluster that loses the vote is still a hypothesis about where the
+    interface is, and discarding it to a list of sample names throws away the
+    only thing that made it checkable. Every cluster is scored the same way and
+    kept, so a minority placement can be examined, sampled against, or approved
+    by a human rather than silently dropped.
+    """
+    model_config = ConfigDict(extra="forbid")
+    hypothesis_id: str
+    sample_ids: list[str]
+    support_fraction: float = Field(ge=0, le=1)
+    target_segment: TargetSegment | None = None
+    """Populated only when this hypothesis is localized; otherwise None, so a
+    consumer cannot read a segment off a hypothesis that did not earn one."""
+    rejected_segment: TargetSegment | None = None
+    """What the segment would have been. Diagnosis only."""
+    segment_length: int | None = None
+    """Compactness. None when no segment reached the occupancy floor."""
+    partner_contact_residues: list[int] = Field(default_factory=list)
+    confidence: dict[str, MetricSummary] = Field(default_factory=dict)
+    """Interface-specific confidence where the samples carry it: mean and range
+    across the cluster. Empty when the samples have none."""
+    blockers: list[str] = Field(default_factory=list)
+
+    @property
+    def localized(self) -> bool:
+        """A compact, reproducible segment on a partner surface it agrees on.
+
+        Localization is separate from support. A single sample can be localized
+        and still not converged, which is exactly the case this distinction
+        exists to represent.
+        """
+        return (self.target_segment is not None
+                and bool(self.partner_contact_residues))
+
+    @property
+    def converged(self) -> bool:
+        return self.localized and not self.blockers
+
+
 class InterfaceConsensus(BaseModel):
     """The artifact written to runs/<id>/structure/interface_consensus.json."""
     model_config = ConfigDict(extra="forbid")
     interpretation: str = "computational_prediction"
+    status: str = "refused"
+    """converged | ambiguous | refused. `ambiguous` means the ensemble holds one
+    or more localized hypotheses but none of them carried the vote — a state
+    that is neither a result nor nothing, and that previously collapsed into a
+    refusal that discarded the alternatives."""
+    next_action: str = "abstain"
+    """What the status licenses: build_search_site | sample_more | abstain."""
     total_samples: int = Field(ge=0)
     dominant_cluster_samples: int = Field(ge=0)
     ensemble_support: float = Field(ge=0, le=1)
@@ -109,7 +167,15 @@ class InterfaceConsensus(BaseModel):
     rejected_segment: TargetSegment | None = None
     """What the segment would have been, kept for diagnosis only."""
     partner_contact_residues: list[int] = Field(default_factory=list)
+    primary_hypothesis: InterfaceHypothesis | None = None
+    """The hypothesis that passed. None unless status is `converged`."""
+    alternative_hypotheses: list[InterfaceHypothesis] = Field(default_factory=list)
+    """Every other scored hypothesis, in the same order as the clusters. When
+    status is `ambiguous` this holds all of them, including the localized
+    minority that did not win."""
     alternative_clusters: list[list[str]] = Field(default_factory=list)
+    """Sample names only. Superseded by `alternative_hypotheses`; kept because
+    existing artifacts and readers refer to it."""
     blockers: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=lambda: [
         "Computational structural hypothesis, not experimental evidence.",
@@ -287,8 +353,101 @@ def smallest_confident_segment(cluster: list[SampleInterface],
                          occupancy={r: round(o, 4) for r, o in occ.items() if i <= r <= j})
 
 
+def _interface_confidence(cluster: list[SampleInterface],
+                          sample_metrics: dict[str, dict[str, float]] | None,
+                          ) -> dict[str, MetricSummary]:
+    """Confidence for this cluster, restricted to the interface.
+
+    Two sources, both optional. The pLDDT carried on contacting atoms is
+    interface-specific by construction — it is scored only over residues that
+    are in contact — and is the one number available without the caller passing
+    anything. Per-sample scalars supplied by the caller (ipTM and friends) are
+    summarised alongside it.
+
+    Global scores are deliberately not synthesised here. On a large well-folded
+    partner they report that the partner folded.
+    """
+    values: dict[str, list[float]] = defaultdict(list)
+    for s in cluster:
+        if s.contacts:
+            plddt = [c.target_plddt for c in s.contacts if c.target_plddt]
+            plddt += [c.partner_plddt for c in s.contacts if c.partner_plddt]
+            if plddt:
+                values["contact_plddt"].append(sum(plddt) / len(plddt))
+        for key, val in (sample_metrics or {}).get(s.sample, {}).items():
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                values[key].append(float(val))
+    return {k: MetricSummary(mean=round(sum(v) / len(v), 4), min=round(min(v), 4),
+                             max=round(max(v), 4), n=len(v))
+            for k, v in sorted(values.items()) if v}
+
+
+def score_hypothesis(cluster: list[SampleInterface], total_samples: int,
+                     cfg: ConsensusConfig, hypothesis_id: str,
+                     sample_metrics: dict[str, dict[str, float]] | None = None,
+                     ) -> InterfaceHypothesis:
+    """Score one cluster the way the dominant cluster has always been scored.
+
+    Identical criteria for every cluster, so a minority hypothesis is held to
+    the same standard as the winner rather than to a softer one. The only thing
+    that distinguishes them afterwards is support, which is recorded rather than
+    applied here.
+    """
+    support = len(cluster) / total_samples if total_samples else 0.0
+    blockers: list[str] = []
+    if support < cfg.min_dominant_cluster_fraction:
+        blockers.append(
+            f"ensemble did not converge: dominant interface in {len(cluster)}/"
+            f"{total_samples} samples ({support:.0%}), below the "
+            f"{cfg.min_dominant_cluster_fraction:.0%} floor")
+
+    segment = smallest_confident_segment(cluster, cfg)
+    if segment is None:
+        blockers.append(
+            f"no target residue reaches {cfg.min_contact_occupancy:.0%} contact "
+            "occupancy within the dominant cluster")
+    elif segment.length > cfg.max_segment_length:
+        blockers.append(
+            f"the reproducible target region spans {segment.length} residues, beyond "
+            f"the {cfg.max_segment_length}-residue limit for a compact segment: this "
+            "is an extended surface rather than a short motif")
+
+    # Only partner residues this cluster actually agrees on. A residue touched
+    # by one outlier sample is not part of the site and must not widen the
+    # docking box that is built from this list.
+    n = len(cluster)
+    tally = Counter(r for s in cluster for r in s.partner_residues)
+    partner = sorted(r for r, k in tally.items()
+                     if k / n >= cfg.min_partner_occupancy) if n else []
+
+    # A segment that failed its own checks is not shipped as a segment. Whether
+    # the *ensemble* converged is a separate question, answered by the caller:
+    # a localized minority keeps its segment so it can be examined, and support
+    # is what stops it from being docked.
+    localized = (segment is not None
+                 and segment.length <= cfg.max_segment_length
+                 and bool(partner))
+    if not partner and segment is not None:
+        blockers.append(
+            f"no partner residue is contacted in at least "
+            f"{cfg.min_partner_occupancy:.0%} of the dominant cluster")
+    return InterfaceHypothesis(
+        hypothesis_id=hypothesis_id,
+        sample_ids=[s.sample for s in cluster],
+        support_fraction=round(support, 4),
+        target_segment=segment if localized else None,
+        rejected_segment=None if localized else segment,
+        segment_length=segment.length if segment is not None else None,
+        partner_contact_residues=partner,
+        confidence=_interface_confidence(cluster, sample_metrics),
+        blockers=blockers,
+    )
+
+
 def build_consensus(samples: list[SampleInterface],
-                    cfg: ConsensusConfig | None = None) -> InterfaceConsensus:
+                    cfg: ConsensusConfig | None = None,
+                    sample_metrics: dict[str, dict[str, float]] | None = None,
+                    ) -> InterfaceConsensus:
     """Ensemble → consensus, or an explicit refusal (§35)."""
     cfg = cfg or ConsensusConfig()
 
@@ -302,7 +461,8 @@ def build_consensus(samples: list[SampleInterface],
     total = len(samples)
 
     if total == 0:
-        return InterfaceConsensus(total_samples=0, dominant_cluster_samples=0,
+        return InterfaceConsensus(status="refused", next_action="abstain",
+                                  total_samples=0, dominant_cluster_samples=0,
                                   ensemble_support=0.0,
                                   blockers=["no structural samples were produced"])
 
@@ -313,7 +473,8 @@ def build_consensus(samples: list[SampleInterface],
 
     clusters = cluster_interfaces(samples, cfg)
     if not clusters:
-        return InterfaceConsensus(total_samples=total, dominant_cluster_samples=0,
+        return InterfaceConsensus(status="refused", next_action="abstain",
+                                  total_samples=total, dominant_cluster_samples=0,
                                   ensemble_support=0.0,
                                   blockers=["no sample placed the target in substantial "
                                             "contact with the partner"
@@ -321,48 +482,67 @@ def build_consensus(samples: list[SampleInterface],
                                                f"{cfg.min_contacts_per_sample} contacts)"
                                                if thin else "")])
 
+    # Every cluster is scored, not only the largest. The clusters are already in
+    # a deterministic order, so the ids are stable across a shuffled ensemble.
+    hypotheses = [score_hypothesis(c, total, cfg, f"H{i + 1}", sample_metrics)
+                  for i, c in enumerate(clusters)]
     dominant = clusters[0]
     support = len(dominant) / total
-    blockers: list[str] = []
+
+    # Ensemble-level blockers apply to the whole run, not to any one cluster:
+    # they say the ensemble cannot support a verdict at all.
+    ensemble_blockers: list[str] = []
     if distinct < cfg.min_ensemble_samples:
-        blockers.append(
+        ensemble_blockers.append(
             f"only {distinct} distinct prediction(s) among {total} sample(s); at least "
             f"{cfg.min_ensemble_samples} independent predictions are required before "
             "agreement means anything")
-    if support < cfg.min_dominant_cluster_fraction:
-        blockers.append(
-            f"ensemble did not converge: dominant interface in {len(dominant)}/{total} "
-            f"samples ({support:.0%}), below the {cfg.min_dominant_cluster_fraction:.0%} floor")
 
-    segment = smallest_confident_segment(dominant, cfg)
-    if segment is None:
-        blockers.append(
-            f"no target residue reaches {cfg.min_contact_occupancy:.0%} contact "
-            "occupancy within the dominant cluster")
-    elif segment.length > cfg.max_segment_length:
-        blockers.append(
-            f"the reproducible target region spans {segment.length} residues, beyond "
-            f"the {cfg.max_segment_length}-residue limit for a compact segment: this "
-            "is an extended surface rather than a short motif")
+    passing = [h for h in hypotheses if h.converged] if not ensemble_blockers else []
+    # At most one cluster can clear a majority floor above 50%, so this is a
+    # single hypothesis whenever the floor is set sanely; taking the first keeps
+    # it deterministic if a caller lowers it.
+    primary = passing[0] if passing else None
+    localized = [h for h in hypotheses if h.localized]
 
-    # Only partner residues the dominant cluster actually agrees on. A residue
-    # touched by one outlier sample is not part of the site and must not widen
-    # the docking box that is built from this list.
-    n_dom = len(dominant)
-    partner_tally = Counter(r for s in dominant for r in s.partner_residues)
-    partner = sorted(r for r, k in partner_tally.items()
-                     if k / n_dom >= cfg.min_partner_occupancy)
-    if not partner and not blockers:
+    if primary is not None:
+        status, next_action = "converged", "build_search_site"
+    elif localized:
+        # The state this distinction exists for: the ensemble holds a defensible
+        # placement that did not carry the vote. Refusing and dropping it loses
+        # the only checkable thing in the run; promoting it would dock on a
+        # minority. Neither. Sample more.
+        status, next_action = "ambiguous", "sample_more"
+    else:
+        status, next_action = "refused", "abstain"
+
+    blockers = list(ensemble_blockers)
+    if primary is None:
+        blockers += [b for b in hypotheses[0].blockers if b not in blockers]
+    if status == "ambiguous":
+        ids = ", ".join(f"{h.hypothesis_id} ({'+'.join(h.sample_ids)}, "
+                        f"{h.support_fraction:.0%})" for h in localized)
         blockers.append(
-            f"no partner residue is contacted in at least "
-            f"{cfg.min_partner_occupancy:.0%} of the dominant cluster")
+            f"no interface converged, but {len(localized)} localized hypothes"
+            f"{'is' if len(localized) == 1 else 'es'} survived scoring: {ids}. "
+            "Retained as alternatives; more samples are needed to tell whether "
+            "any of them reproduces. Not a docking site.")
+
+    dom_hyp = hypotheses[0]
     return InterfaceConsensus(
+        status=status,
+        next_action=next_action,
         total_samples=total,
         dominant_cluster_samples=len(dominant),
         ensemble_support=round(support, 4),
-        target_segment=None if blockers else segment,
-        rejected_segment=segment if blockers else None,
-        partner_contact_residues=partner,
+        # The top-level fields keep describing the dominant cluster, as they
+        # always have, and stay empty unless it is the one that passed.
+        target_segment=dom_hyp.target_segment if primary is dom_hyp else None,
+        rejected_segment=(dom_hyp.target_segment or dom_hyp.rejected_segment)
+                         if primary is not dom_hyp else None,
+        partner_contact_residues=dom_hyp.partner_contact_residues,
+        primary_hypothesis=primary,
+        alternative_hypotheses=[h for h in hypotheses if h is not primary],
         alternative_clusters=[[s.sample for s in c] for c in clusters[1:]],
         blockers=blockers,
     )
