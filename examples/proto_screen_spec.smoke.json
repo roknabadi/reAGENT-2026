@@ -4,11 +4,11 @@
   "partner_gene": "N/A",
   "structure_source": "pdb",
   "pdb_id": "1IEP",
-  "receptor_path": "vendor/proto-language/proto-tools/proto_tools/tools/molecular_docking/vina/example_receptor_1iep.pdb",
+  "receptor_path": "proto_tools:tools/molecular_docking/vina/example_receptor_1iep.pdb",
   "interface_residues": {},
   "search_box": {
     "mode": "reference_ligand",
-    "reference_ligand_path": "vendor/proto-language/proto-tools/proto_tools/tools/molecular_docking/vina/example_reference_imatinib.pdb",
+    "reference_ligand_path": "proto_tools:tools/molecular_docking/vina/example_reference_imatinib.pdb",
     "padding": 4.0
   },
   "ligand_smiles": [
