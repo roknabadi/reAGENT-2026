@@ -224,11 +224,15 @@ supports and no more. If the abstract is ambiguous, say so — "unclear" is a \
 useful answer and a false positive here sends a GPU run at a contact nobody \
 has observed.
 
+A mapped region is the whole game downstream: it is what separates "these two proteins interact" from "we know where". Only fill `region` when the abstract itself names the residues, motif or domain that makes the contact. A whole-protein pull-down, a co-IP with no region, or your own guess at which domain is probably involved is `null` — the pipeline will refuse to model a contact it cannot place, and that refusal is correct.
+
 Reply with JSON only:
 {"contact_documented": true|false|"unclear",
  "partner": "<protein named, or null>",
  "support": "structure"|"biochemical"|"genetic"|"none",
- "region": "<mapped residues if the abstract states them, else null>",
+ "region": "<the region the abstract states, e.g. \"transactivation domain, residues 374-384\" — null unless the abstract names it>",
+ "region_source": <abstract number the region comes from, e.g. 3, else null>,
+ "tractability": "short_linear_motif"|"folded_domain"|"unknown",
  "note": "<one sentence, citing what the abstract actually says>"}"""
 
 

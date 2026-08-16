@@ -41,7 +41,8 @@ from typing import Callable
 import pandas as pd
 from pydantic import ValidationError
 
-from dependency_scout.models import MediatorLink
+from dependency_scout.models import (Claim, InterfaceTractability,
+                                     MediatorLink, SupportType)
 from reagent_workflow import agent as A
 from reagent_workflow import verdict as V
 from reagent_workflow.chemistry import depict, parse_molblock
@@ -110,6 +111,103 @@ class _Recorder:
         return {"stages": self.stages, "shortlist": self.candidates,
                 "papers_retrieved": self.papers,
                 "partner_site_and_compounds": self.highlights}
+
+
+# Words a model returns when it means "no region", which are not regions.
+_NO_REGION = {"", "null", "none", "n/a", "na", "not stated", "not specified",
+              "unknown", "not reported", "unclear", "full length", "full-length"}
+
+
+def _open_to_reading(existing: MediatorLink | None) -> bool:
+    """Whether a link read from a paper may replace what is already on file.
+
+    Nothing on file, or a file that says "we looked and found no region": both
+    are questions a paper can answer. A curated link that already maps a region
+    is not — a person checked that one — and neither is a calibration control,
+    whose whole purpose is to stay a known positive rather than become evidence.
+    """
+    return existing is None or not (existing.interacting_region_mapped
+                                    or existing.calibration_only)
+
+
+def _promote_reading(gene, verdict, papers, cfg, interface_evidence, emit) -> bool:
+    """Carry a reading into the evidence the screen's gate consults.
+
+    Both literature paths call this, so a region found in the ranked path and a
+    region found for a named gene reach the gate the same way. Returns whether
+    anything was promoted, and says so on the stage: evidence that appeared
+    mid-run because a model read an abstract must be visible as that, not
+    indistinguishable from a file a person wrote.
+    """
+    if not _open_to_reading(interface_evidence.get(gene)):
+        return False
+    link = _link_from_reading(gene, verdict, papers, cfg.partner_gene)
+    if link is None:
+        return False
+    interface_evidence[gene] = link
+    emit("stage", {
+        "id": "literature", "state": "running",
+        "detail": f"mapped region read for {gene}",
+        "note": (f"{gene}–{cfg.partner_gene}: {link.tf_region}. Read from an "
+                 "abstract in this run, not from a curated file. It opens the "
+                 "screen, and it remains a reading of a paper rather than a "
+                 "measurement made here.")})
+    return True
+
+
+def _link_from_reading(gene: str, verdict: dict, papers: list,
+                       partner_gene: str) -> MediatorLink | None:
+    """A `MediatorLink` from what the model read, or None.
+
+    The screen's gate asks for a mapped interacting region, and until now the
+    only way to have one was for a human to write a file in `examples/`. So the
+    pipeline could retrieve the right paper, read it correctly, say "contact
+    documented" on screen — and still refuse to screen, because nothing carried
+    that reading into the evidence the gate consults. This is that carriage.
+
+    It is deliberately hard to satisfy. The abstract must name the partner we
+    are modelling, the support must be physical rather than genetic, and the
+    region must be a region: a whole-protein pull-down with no residues is
+    exactly the claim `CLAUDE.md` says to reject rather than pass downstream.
+    A curated link always wins over this one — those were checked by a person.
+    """
+    if verdict.get("contact_documented") is not True:
+        return None
+    if verdict.get("support") not in ("structure", "biochemical"):
+        return None
+    region = (verdict.get("region") or "").strip()
+    if region.lower() in _NO_REGION:
+        return None
+    # The partner has to be the protein this run is modelling against. An
+    # abstract about the same TF touching a different coactivator documents a
+    # contact, but not the one whose cavity the screen would dock into.
+    partner = (verdict.get("partner") or "").upper()
+    if partner_gene.upper() not in partner.replace("-", "").replace(" ", ""):
+        return None
+    # A claim cannot exist without its sources, and the model is asked which
+    # abstract the region came from. If it named one, cite that; otherwise cite
+    # everything the gene's search returned, which is still a real provenance.
+    src = verdict.get("region_source")
+    cited = [papers[src - 1]] if isinstance(src, int) and 1 <= src <= len(papers) else papers[:3]
+    citations = [p.url or p.accession for p in cited if (p.url or p.accession)]
+    if not citations:
+        return None
+    tract = {"short_linear_motif": InterfaceTractability.SHORT_LINEAR_MOTIF,
+             "folded_domain": InterfaceTractability.FOLDED_DOMAIN}.get(
+                 verdict.get("tractability"), InterfaceTractability.UNKNOWN)
+    try:
+        return MediatorLink(
+            partner_gene=partner_gene, interacting_region_mapped=True,
+            tf_region=region, tractability=tract,
+            claims=[Claim(statement=(f"{gene} contacts {partner_gene} through "
+                                     f"{region}."),
+                          support=SupportType.DIRECT_EXPERIMENTAL,
+                          citations=citations,
+                          note=(verdict.get("note") or "")[:400] or None)])
+    except ValidationError:
+        # The model returned something the contract refuses. That is the
+        # contract working, not an error to route around.
+        return None
 
 
 def _screen_files(genes: list[str]) -> list[Path]:
@@ -443,6 +541,10 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
         if A.available():
             verdict_ev, _ = A.read_evidence(trace, gene, papers)
             emit("thinking", {"trace": trace.as_dict()})
+            # What was read becomes evidence the gate can consult, so a mapped
+            # region found in the literature opens the screen the same way a
+            # curated one does.
+            _promote_reading(gene, verdict_ev, papers, cfg, interface_evidence, emit)
         read[gene] = verdict_ev
         emit("evidence", {"gene": gene, "axes": {
             a: {"on_target": r.n_on_target, "returned": r.n_papers,
@@ -1056,6 +1158,8 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
             if A.available():
                 verdict_ev, _ = A.read_evidence(trace, v.gene, papers)
                 emit("thinking", {"trace": trace.as_dict()})
+                _promote_reading(v.gene, verdict_ev, papers, cfg,
+                                 interface_evidence, emit)
             read[v.gene] = verdict_ev
             if verdict_ev.get("contact_documented") is True:
                 leads.append(v.gene)
