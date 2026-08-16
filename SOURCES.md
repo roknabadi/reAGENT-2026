@@ -15,17 +15,23 @@ Add each artifact before it is used in the project.
 | RCSB PDB structure files | https://files.rcsb.org/download/ |  9F6Y, 9F76, 9PFP | CC0 1.0 | 2026-08-15 | mmCIF, CA traces only in `ui/data.json` |
 | UniProtKB (gene symbol → reviewed human accession) | https://rest.uniprot.org/uniprotkb/search | Release at retrieval | CC BY 4.0 | 2026-08-15 | 11 accessions, reviewed + organism 9606 |
 | AlphaFold DB predicted monomers | https://alphafold.ebi.ac.uk/api/prediction/ | Model v6 | CC BY 4.0 | 2026-08-15 | 11 TFs, CA trace + per-residue pLDDT |
-| UniProtKB canonical sequences (ELK1 P19419, MED23 O75448) | https://rest.uniprot.org/uniprotkb/ | Fetched live per run via `proto_tools` UniProt tool | CC BY 4.0 | 2026-08-15 | ELK1 428 aa, MED23 989 aa; not vendored, re-fetched each run |
+| UniProtKB canonical sequences (ELK1 P19419, MED23 Q9ULK4) | https://rest.uniprot.org/uniprotkb/ | Fetched live per run via `proto_tools` UniProt tool | CC BY 4.0 | 2026-08-15 | ELK1 428 aa, MED23 1368 aa; not vendored, re-fetched each run. **Corrected 2026-08-15**: this row read `MED23 O75448 … 989 aa`, which is MED24. See `team/FINDINGS_ELK1_CONTROL.md` |
 
 ## Scientific evidence
 
 Constants transcribed into code from these rows are re-checked against the
 primary record at run time where that is possible. `scripts/calibrate_structure.py`
-asserts ELK1 P19419 residues 374–384 are literally `PSIHFWSTLSP` and that PDB
-9F6Y appears in UniProt's own cross-references, and refuses to run if either has
-moved. The claims it does **not** independently verify — that 9F6Y is the MED23
-complex, its resolution, the interface residues, and the Kd — are second-hand
-from the row below and are not used as model inputs.
+asserts ELK1 P19419 residues 374–384 are literally `PSIHFWSTLSP`, and that **both**
+accessions carry the gene symbol they are named for and appear in UniProt's own
+cross-references for 9F6Y; it refuses to run if any of that has moved. The claims
+it does **not** independently verify — that 9F6Y is the MED23 complex, its
+resolution, the interface residues, and the Kd — are second-hand from the row
+below and are not used as model inputs.
+
+The partner half of that check was added on 2026-08-15, after `MED23 = "O75448"`
+(MED24) reached a GPU run. Verifying a transcribed *value* is not the same as
+verifying that the accession names the *protein* meant; MED24 passes any check
+that only asks whether the entry is a real, reviewed, Mediator-complex subunit.
 
 **Verified at source 2026-08-15** via Paperclip against PMC12015215: the motif
 and its HR2/HR3 binding site (L23), the MED23 interface residues surrounding

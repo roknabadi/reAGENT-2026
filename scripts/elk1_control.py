@@ -21,17 +21,32 @@ carries an explicit extra limitation, and the artifact records which happened.
 
 Costs GPU time on Modal. Run with --samples 1 first and read the timing before
 committing to an ensemble.
+
+The first five-sample run of this control is void: the partner accession named
+MED24 (O75448), not MED23 (Q9ULK4), so it docked the ELK1 motif onto the wrong
+subunit and scored the answer with MED23 residue numbering. Sequences are now
+fetched by accession and verified before anything is dispatched. See
+team/FINDINGS_ELK1_CONTROL.md.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import pathlib
+import sys
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 SEQS = ROOT / "downloads" / "seqs.json"
 OUT = ROOT / "runs" / "elk1_control"
+
+# Accessions and their checks come from the calibration script rather than being
+# repeated here. Two copies of an accession is how one of them goes wrong.
+from calibrate_structure import (  # noqa: E402
+    ELK1, ELK1_GENE, MED23, MED23_GENE, STRUCTURE_PDB,
+    fetch_sequence, verify_accession, verify_motif,
+)
 
 # ELK1 transactivation domain with modest flanking (spec section 4). The
 # published motif sits at 374-384, well inside this window, but nothing tells
@@ -43,10 +58,40 @@ PUBLISHED_ELK1_MOTIF = set(range(374, 385))
 
 
 def load_sequences() -> tuple[str, str]:
-    if not SEQS.exists():
-        raise SystemExit(f"missing {SEQS}; run the sequence fetch first")
-    d = json.loads(SEQS.read_text())
-    return d["ELK1"], d["MED23"]
+    """Fetch both chains from UniProt and refuse to continue if either is wrong.
+
+    This used to read a hand-made `downloads/seqs.json`, and that file carried
+    MED24 under the key "MED23" through an entire GPU run: a file written once
+    by hand cannot be checked against anything later. Fetching by accession and
+    verifying gene symbol and structure cross-reference before dispatch makes
+    the wrong protein a refusal rather than a result. The file is still written,
+    now as a record of what was used rather than as the input.
+    """
+    elk1_seq, elk1_url, elk1_pdbs, elk1_genes = fetch_sequence(ELK1, "ELK1")
+    med23_seq, med23_url, med23_pdbs, med23_genes = fetch_sequence(MED23, "MED23")
+
+    problems = (verify_accession(ELK1, ELK1_GENE, elk1_genes, elk1_pdbs)
+                + verify_accession(MED23, MED23_GENE, med23_genes, med23_pdbs)
+                + verify_motif(elk1_seq))
+    if problems:
+        for p in problems:
+            print(f"  - {p}", file=sys.stderr)
+        raise SystemExit(
+            "REFUSING to dispatch: the sequences are not the proteins this "
+            "control is about.")
+
+    SEQS.parent.mkdir(parents=True, exist_ok=True)
+    SEQS.write_text(json.dumps({
+        "ELK1": elk1_seq, "MED23": med23_seq,
+        "_accessions": {"ELK1": ELK1, "MED23": MED23},
+        "_genes": {"ELK1": elk1_genes, "MED23": med23_genes},
+        "_verified_against": STRUCTURE_PDB,
+        "_source_urls": {"ELK1": elk1_url, "MED23": med23_url},
+    }, indent=2) + "\n")
+    print(f"ELK1  {ELK1} {elk1_genes}  {len(elk1_seq)} aa")
+    print(f"MED23 {MED23} {med23_genes}  {len(med23_seq)} aa   "
+          f"(both are chains of {STRUCTURE_PDB})")
+    return elk1_seq, med23_seq
 
 
 def build_input(elk1: str, med23: str, samples: int, seed: int):

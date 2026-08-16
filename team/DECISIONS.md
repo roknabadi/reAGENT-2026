@@ -19,6 +19,36 @@ from computational results.
 
 ---
 
+## 2026-08-15 — An accession must be verified to name the right protein, not just to resolve
+Decided by: Amir
+Scope: every place the pipeline turns a gene name into a sequence. Supersedes
+nothing; adds a check that did not exist.
+Why: `scripts/calibrate_structure.py` carried `MED23 = "O75448"` — MED24, an
+adjacent subunit of the same Mediator tail module, 989 aa against MED23's 1368.
+The ELK1–MED23 control docked the ELK1 motif onto MED24 and scored the result
+against MED23 numbering from 9F6Y. The file verified the ELK1 half against the
+primary paper with pinned line numbers and never checked the partner accession
+at all: it verified transcribed *values* and assumed the accession named the
+*protein*. Nothing downstream could catch it — MED24 is real, reviewed, a
+plausible length, and appears in Mediator structures. Evidence: UniProt gives
+O75448 = MED24_HUMAN 989 aa and Q9ULK4 = MED23_HUMAN 1368 aa; 9F6Y chain A is
+Q9ULK4 (`_struct_ref`, auth numbering 1:1 with UniProt); our own contact
+detector recovers 7/7 published pocket residues from the deposited 9F6Y
+coordinates, so the geometry was never the problem. Recorded in
+`team/FINDINGS_ELK1_CONTROL.md` and `SOURCES.md`.
+The rule: an accession used as a model input must be checked against two
+independent facts — the gene symbol UniProt reports for it, and its presence in
+the cross-references of the structure the ground truth is numbered against.
+Either alone can pass by accident: MED24 shares 10 of MED23's 13 PDB
+cross-references, because both sit in the same whole-Mediator depositions.
+Alternatives rejected: (a) checking sequence length against a transcribed
+constant — brittle across isoform updates and it would not have caught a
+same-length paralogue; (b) trusting `downloads/seqs.json` and reviewing it by
+eye — a file written once by hand is exactly what carried the error through a
+GPU run and a day of analysis.
+Reversible: yes — it is a refusal in one function, `verify_accession`. But a
+result produced without it is not reversible, which is the point.
+
 ## 2026-08-15 — `selectivity_delta`: `dependency_scout`'s sign convention wins, `reagent_workflow` flips to match
 Decided by: Kevin — proposed, awaiting Andrey's sign-off (this blocks Task #3,
 the model adapter, so recording now rather than letting it sit)

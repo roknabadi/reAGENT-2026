@@ -56,7 +56,10 @@ from reagent_workflow.structure import (  # noqa: E402
 # VERIFIED against UniProt at run time, on every invocation:
 #   - ELK1 P19419 residues 374-384 are literally PSIHFWSTLSP, matching the
 #     motif the handoff names (`verify_motif` refuses to continue otherwise).
-#   - PDB 9F6Y appears in UniProt's own cross-references for P19419.
+#   - Both accessions carry the gene symbol they are named for, and both appear
+#     as chains of 9F6Y in UniProt's own cross-references (`verify_accession`).
+#     The transcribed *values* were checked from the start; that the accessions
+#     pointed at the right *proteins* was assumed, and for MED23 it was false.
 #
 # VERIFIED against the primary paper via Paperclip (Monté et al., Nat. Commun.
 # 2025, PMC12015215) on 2026-08-15. Every transcribed value held:
@@ -75,7 +78,15 @@ from reagent_workflow.structure import (  # noqa: E402
 # Only the motif position is used as a model input. The rest is recorded so the
 # calibration can be judged against what the structure actually shows.
 ELK1 = "P19419"
-MED23 = "O75448"
+ELK1_GENE = "ELK1"
+# MED23 is Q9ULK4, 1368 aa. This constant read O75448 until 2026-08-15, which is
+# MED24 - a different subunit of the same Mediator tail module, 989 aa. Every
+# line above verifies the ELK1 half against the paper; nothing verified the
+# partner accession at all, so the control modelled the ELK1 motif against the
+# wrong protein and then scored the answer using MED23 residue numbering. See
+# team/FINDINGS_ELK1_CONTROL.md. `verify_accession` now checks both sides.
+MED23 = "Q9ULK4"
+MED23_GENE = "MED23"
 ELK1_MOTIF = (374, 384)          # PSIHFWSTLS(p)P, the mapped MED23-binding motif
 ELK1_MOTIF_SEQ = "PSIHFWSTLSP"   # asserted against the fetched sequence
 ELK1_CONTEXT = (330, 428)        # motif plus flanking TAD, kept modelling tractable
@@ -83,12 +94,46 @@ STRUCTURE_PDB = "9F6Y"
 CITATION = "doi:10.1038/s41467-025-59014-8 (PMC12015215) — verified at source 2026-08-15"
 
 
-def verify_motif(elk1_seq: str, pdb_crossrefs: list[str]) -> list[str]:
-    """Check the transcribed constants against the fetched primary record.
+def verify_accession(accession: str, expected_gene: str,
+                     gene_names: list[str], pdb_crossrefs: list[str]) -> list[str]:
+    """Check that an accession is the protein the calibration means.
+
+    This is the check that was missing. `verify_motif` verified the ELK1 half
+    exhaustively, the partner half was verified not at all, and O75448 (MED24)
+    sat in place of Q9ULK4 (MED23): same complex, adjacent subunit, plausible
+    length, and every downstream number scored MED23 residue positions against
+    MED24 coordinates. A wrong accession is the cheapest way to model the wrong
+    protein and still get confident-looking numbers back.
+
+    Two independent checks, because either alone can pass by accident: the gene
+    symbol UniProt itself reports, and whether the reference structure lists
+    this entry. MED24 fails both.
+    """
+    problems: list[str] = []
+    names = [g.upper() for g in (gene_names or [])]
+    if expected_gene.upper() not in names:
+        problems.append(
+            f"{accession} has gene names {gene_names or '[]'}, which do not "
+            f"include {expected_gene}: this is not the protein named in the "
+            f"calibration constants."
+        )
+    if STRUCTURE_PDB not in (pdb_crossrefs or []):
+        problems.append(
+            f"PDB {STRUCTURE_PDB} is not among UniProt's cross-references for "
+            f"{accession} ({pdb_crossrefs or '[]'}): this entry is not a chain "
+            f"of the reference structure."
+        )
+    return problems
+
+
+def verify_motif(elk1_seq: str) -> list[str]:
+    """Check the transcribed motif against the fetched primary record.
 
     Returns the list of problems. A silent mismatch here would model the wrong
     region of the wrong protein and still produce confident-looking numbers,
-    which is the failure this whole calibration exists to catch.
+    which is the failure this whole calibration exists to catch. The
+    cross-reference half of that check now lives in `verify_accession`, which
+    applies it to both chains rather than only to ELK1.
     """
     problems: list[str] = []
     start, end = ELK1_MOTIF
@@ -102,16 +147,15 @@ def verify_motif(elk1_seq: str, pdb_crossrefs: list[str]) -> list[str]:
             f"expected {ELK1_MOTIF_SEQ!r}. The transcribed position may be wrong, "
             "or the UniProt entry has been renumbered."
         )
-    if STRUCTURE_PDB not in (pdb_crossrefs or []):
-        problems.append(
-            f"PDB {STRUCTURE_PDB} is not among UniProt's cross-references "
-            f"{pdb_crossrefs}; the structure reference may be wrong."
-        )
     return problems
 
 
-def fetch_sequence(accession: str, name: str) -> tuple[str, str, list[str]]:
-    """Return (sequence, source_url, pdb_crossrefs) from UniProt via Proto."""
+def fetch_sequence(accession: str, name: str) -> tuple[str, str, list[str], list[str]]:
+    """Return (sequence, source_url, pdb_crossrefs, gene_names) from UniProt.
+
+    The gene names are what let the caller check that the accession is the
+    protein it thinks it is, so they are returned rather than dropped.
+    """
     from proto_tools.tools.database_retrieval.uniprot import (  # noqa: PLC0415
         UniProtFetchConfig,
         UniProtFetchInput,
@@ -130,6 +174,7 @@ def fetch_sequence(accession: str, name: str) -> tuple[str, str, list[str]]:
         sequence,
         payload.get("source_url") or f"https://www.uniprot.org/uniprotkb/{accession}",
         list(payload.get("pdb_crossrefs") or []),
+        list(payload.get("gene_names") or []),
     )
 
 
@@ -198,6 +243,9 @@ def build_candidate(
                 "interface_tractability=short_linear_motif",
                 f"ELK1 modelled as residues {ELK1_CONTEXT[0]}-{ELK1_CONTEXT[1]} "
                 f"(motif {ELK1_MOTIF[0]}-{ELK1_MOTIF[1]} plus flanking context)",
+                # 1-600 is not an arbitrary cut: the published pocket runs
+                # I339-M537, so the truncation keeps every residue the result is
+                # scored against.
                 f"MED23 modelled as {'full length' if full_partner else 'residues 1-600'}",
                 f"experimental reference: PDB {STRUCTURE_PDB}, {CITATION}",
             ],
@@ -219,24 +267,31 @@ def main() -> int:
     print(f"proto_tools available : {availability.available} ({availability.detail})")
 
     print("\nfetching real sequences from UniProt...")
-    elk1_seq, elk1_url, elk1_pdbs = fetch_sequence(ELK1, "ELK1")
-    med23_seq, med23_url, _ = fetch_sequence(MED23, "MED23")
-    print(f"  ELK1  {ELK1}: {len(elk1_seq)} aa   {elk1_url}")
-    print(f"  MED23 {MED23}: {len(med23_seq)} aa   {med23_url}")
+    elk1_seq, elk1_url, elk1_pdbs, elk1_genes = fetch_sequence(ELK1, "ELK1")
+    med23_seq, med23_url, med23_pdbs, med23_genes = fetch_sequence(MED23, "MED23")
+    print(f"  ELK1  {ELK1}: {len(elk1_seq)} aa  gene {elk1_genes}   {elk1_url}")
+    print(f"  MED23 {MED23}: {len(med23_seq)} aa  gene {med23_genes}   {med23_url}")
 
-    problems = verify_motif(elk1_seq, elk1_pdbs)
+    # Both chains, not just ELK1: checking one side and assuming the other is
+    # how MED24 got modelled as MED23 for a day.
+    problems = (verify_accession(ELK1, ELK1_GENE, elk1_genes, elk1_pdbs)
+                + verify_accession(MED23, MED23_GENE, med23_genes, med23_pdbs)
+                + verify_motif(elk1_seq))
     motif = elk1_seq[ELK1_MOTIF[0] - 1:ELK1_MOTIF[1]]
     print(f"\nverifying transcribed constants against the primary record:")
     print(f"  residues {ELK1_MOTIF[0]}-{ELK1_MOTIF[1]} = {motif}  "
           f"(expected {ELK1_MOTIF_SEQ})")
-    print(f"  UniProt PDB cross-refs: {elk1_pdbs}")
+    print(f"  {ELK1} is {ELK1_GENE} and a chain of {STRUCTURE_PDB}: "
+          f"{elk1_pdbs}")
+    print(f"  {MED23} is {MED23_GENE} and a chain of {STRUCTURE_PDB}: "
+          f"{med23_pdbs}")
     if problems:
         print("\nREFUSING: the transcribed constants do not match the record.",
               file=sys.stderr)
         for problem in problems:
             print(f"  - {problem}", file=sys.stderr)
         return 2
-    print("  both constants confirmed against UniProt.")
+    print("  both accessions and the motif confirmed against UniProt.")
     print("  primary paper verified via Paperclip (PMC12015215): 9F6Y is the "
           "MED23-Elk-1 complex at 3.0 A, interface residues and Kd 81 nM (SPR) "
           "all confirmed. See the header for line-pinned quotes.")
