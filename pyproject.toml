@@ -7,7 +7,21 @@ name = "dependency-scout"
 version = "0.1.0"
 description = "Public-only transcriptional dependency discovery with Proto structural handoffs"
 requires-python = ">=3.12"
-dependencies = ["pandas>=2", "pydantic>=2", "scipy>=1"]
+dependencies = [
+    "pandas>=2",
+    "pydantic>=2",
+    "scipy>=1",
+    "numpy>=1",
+    "rdkit>=2023",
+    "anthropic>=0.20",
+    "modal>=0.60",
+]
+
+[project.optional-dependencies]
+# proto-tools (src/dependency_scout/proto_bridge.py) is not published on PyPI,
+# so it can't be a hard dependency without breaking `pip install .`. Install it
+# from source with: pip install ".[proto]"
+proto = ["proto-tools @ git+https://github.com/evo-design/proto-tools.git"]
 
 [project.scripts]
 dependency-scout = "dependency_scout.cli:main"
@@ -17,3 +31,8 @@ reagent-agent = "reagent_workflow.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+# benchflow/tasks/*/verifier tests are frozen scored artifacts meant to run
+# inside the BenchFlow container against /root/hero_hypothesis.json, not here.
+testpaths = ["tests"]

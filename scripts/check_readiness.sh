@@ -9,7 +9,12 @@ export MPLCONFIGDIR="$ROOT/.cache/matplotlib"
 export XDG_CACHE_HOME="$ROOT/.cache"
 export HF_HOME="$ROOT/.cache/huggingface"
 export PAPERCLIP_CONFIG_DIR="$ROOT/.paperclip"
-export MODAL_CONFIG_PATH="$ROOT/.modal.toml"
+# Only override Modal's config location if this repo actually has one --
+# working credentials usually live in ~/.modal.toml, and pointing at a
+# nonexistent file here would break Modal auth.
+if [[ -f "$ROOT/.modal.toml" ]]; then
+  export MODAL_CONFIG_PATH="$ROOT/.modal.toml"
+fi
 
 mkdir -p "$PROTO_HOME" "$PROTO_MODEL_CACHE" "$MPLCONFIGDIR" "$HF_HOME" "$PAPERCLIP_CONFIG_DIR"
 
@@ -25,16 +30,28 @@ check() {
   fi
 }
 
-check "Python 3.12" python -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 12))'
+# Gitignored, machine-local checkouts (vendor/, apps/): missing is normal on a
+# fresh clone, not a readiness failure.
+check_optional() {
+  label="$1"
+  shift
+  if "$@" >/dev/null 2>&1; then
+    printf 'OK   %s\n' "$label"
+  else
+    printf 'SKIP %s (optional, gitignored)\n' "$label"
+  fi
+}
+
+check "Python >= 3.12" python -c 'import sys; raise SystemExit(sys.version_info < (3, 12))'
 check "Proto imports" python -c 'import proto_language, proto_tools'
 check "PARADE constraints registered" python -c 'from proto_language import parade_utr_activity_constraint, parade_utr_specificity_constraint, parade_utr_stability_constraint'
 check "Modal CLI" modal --version
 check "Paperclip CLI" paperclip --version
 check "BenchFlow CLI" benchflow --version
 check "Claude Code" claude --version
-check "Proto source" git -C "$ROOT/vendor/proto-language" rev-parse HEAD
-check "BenchFlow source" git -C "$ROOT/vendor/benchflow" rev-parse HEAD
-check "Sundial app" test -d "$ROOT/apps/Sundial.app"
+check_optional "Proto source" git -C "$ROOT/vendor/proto-language" rev-parse HEAD
+check_optional "BenchFlow source" git -C "$ROOT/vendor/benchflow" rev-parse HEAD
+check_optional "Sundial app" test -d "$ROOT/apps/Sundial.app"
 check "Paperclip skill for Claude" test -f "$ROOT/.claude/skills/paperclip/SKILL.md"
 check "Paperclip skill for Codex" test -f "$ROOT/.agents/skills/paperclip/SKILL.md"
 

@@ -20,6 +20,9 @@ bin/
 downloads/
 apps/
 vendor/
+# ui/vendor/ holds our vendored, checked-in frontend libs (3Dmol.js, Three.js) --
+# see SOURCES.md. Keep tracked despite the generic vendor/ ignore above.
+!ui/vendor/
 outputs/
 benchflow/jobs/
 benchflow/artifacts/

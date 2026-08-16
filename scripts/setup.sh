@@ -24,7 +24,7 @@ UV_TOOL_DIR="$PROJECT_ROOT/tools" UV_TOOL_BIN_DIR="$PROJECT_ROOT/bin" \
 
 if [[ ! -f "$PROJECT_ROOT/.env" ]]; then
   cp "$PROJECT_ROOT/.env.example" "$PROJECT_ROOT/.env"
-  echo "Created .env; add your personal TAMARIND_API_KEY."
+  echo "Created .env; add your personal ANTHROPIC_API_KEY."
 fi
 
 "$PROJECT_ROOT/.venv/bin/python" -m unittest discover -s tests -v
