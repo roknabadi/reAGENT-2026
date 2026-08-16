@@ -118,6 +118,34 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
                  f"reaches. Computed now, not cached."),
         "context": m.context, "level": m.level})
 
+    # The gate the interface draws must be the gate that ran. data.json seeds the
+    # cold page with `dependency_scout`'s four-way AND, and a live run used to
+    # leave it there — so the plot kept shading "the only region that passes"
+    # around a rule no longer in force, and INSM1 passed while sitting well
+    # outside the shaded corner. Emitted from the canonical config, per run.
+    emit("thresholds", {
+        "gate": "either path passes",
+        "source": V.CANONICAL_SOURCE,
+        "release": V.DEPMAP_RELEASE,
+        "fdr_alpha": V.FDR_ALPHA,
+        "confidence_floor": V.MIN_N_FULL_CONFIDENCE,
+        "paths": [
+            {"name": "median",
+             "description": "the context as a whole is dependent",
+             "terms": [f"median effect ≤ {V._stage1_config.IN_CONTEXT_DEPENDENCY_THRESHOLD}",
+                       f"median elsewhere > {V._stage1_config.OUT_OF_CONTEXT_NONDEPENDENCY_THRESHOLD}"]},
+            {"name": "specificity-first",
+             "description": ("part of the context is dependent and almost nothing "
+                             "else is — catches subpopulation dependencies a "
+                             "median dilutes away"),
+             "terms": [f"dependent here ≥ {V._stage1_config.SPECIFICITY_FIRST_MIN_TARGET_FRACTION:.0%}",
+                       f"dependent elsewhere ≤ {V._stage1_config.SPECIFICITY_FIRST_MAX_OTHER_FRACTION:.0%}"]},
+        ],
+        # Kept for the plot's guide line only. It is one term of one path, not
+        # the gate, and the interface must not present it as a pass/fail line.
+        "median_target_effect": V._stage1_config.IN_CONTEXT_DEPENDENCY_THRESHOLD,
+    })
+
     emit("landscape", {"context": m.context, "level": m.level, "points": [
         {"gene": v.gene,
          "median": round(v.median_target, 3),

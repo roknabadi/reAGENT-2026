@@ -110,11 +110,77 @@ def ground_truth(cfg: ConsensusConfig) -> dict:
     }
 
 
+def _read_a3m(path: pathlib.Path) -> list[tuple[str, str]]:
+    """(id, aligned sequence) pairs. a3m lowercase columns are insertions
+    relative to the query and are dropped, leaving equal-length rows."""
+    import re
+    out, name, buf = [], None, []
+    for line in path.read_text().splitlines():
+        if line.startswith(">"):
+            if name is not None:
+                out.append((name, re.sub(r"[a-z]", "", "".join(buf))))
+            name, buf = line[1:].split()[0], []
+        elif line.strip():
+            buf.append(line.strip())
+    if name is not None:
+        out.append((name, re.sub(r"[a-z]", "", "".join(buf))))
+    return out
+
+
+def build_msas(pou2f3: str, pou2af2: str, workdir: pathlib.Path):
+    """Homology alignments for both chains, from the public ColabFold server.
+
+    This is not an optimisation. `run_boltz2` only ever consumes MSAs the caller
+    supplies -- `use_msa=True` in the config does NOT make it run a search on
+    this path -- so a `Boltz2Input` without `msas` produces `msa: empty` for
+    every chain and the prediction runs in single-sequence mode. Boltz-2 is
+    substantially weaker there, so a control run that way measures the wrong
+    thing while looking like a fair test.
+
+    The server returns both chains' alignments concatenated in one a3m; rows are
+    assigned to a chain by their alignment length, which is the query length.
+    """
+    from proto_tools.entities.msa import MSA
+    from proto_tools.tools.sequence_alignment.mmseqs2.msa_server import \
+        run_remote_msa_search
+    from proto_tools.tools.structure_prediction.shared_data_models import ComplexMSAs
+
+    workdir.mkdir(parents=True, exist_ok=True)
+    res = run_remote_msa_search([pou2f3, pou2af2], workdir / "pou2f3",
+                                use_pairing=True, timeout=1800)
+    a3m = next(pathlib.Path(res).glob("*.a3m"))
+    rows = _read_a3m(a3m)
+
+    per_chain, counts = {}, {}
+    for idx, query in ((0, pou2f3), (1, pou2af2)):
+        hits = [(i, s) for i, s in rows if len(s) == len(query)]
+        if not hits:
+            raise RuntimeError(f"no alignment rows of length {len(query)} in {a3m}")
+        # Query first: `extract_msa_sequences` and Boltz both treat row 0 as the
+        # sequence being predicted.
+        ordered = sorted(hits, key=lambda kv: kv[1] != query)
+        per_chain[idx] = MSA(aligned_sequences=[s for _, s in ordered],
+                             sequence_ids=[i for i, _ in ordered])
+        counts[idx] = len(ordered)
+
+    # `paired=False`. A paired MSA asserts that row i of chain A and row i of
+    # chain B come from the same organism, which is a real signal about whether
+    # two proteins co-evolve -- and the two blocks here come back with 1493 and
+    # 1492 rows, so that correspondence does not hold. Padding or truncating to
+    # equal length would manufacture the pairing rather than find it, feeding
+    # the model a co-evolution claim nothing supports. Unpaired alignments give
+    # the same depth without the invented signal.
+    return ComplexMSAs(per_chain=per_chain, paired=False), counts, str(a3m)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dispatch", action="store_true",
                     help="run 5 Boltz samples on Modal H100 (GPU time, minutes)")
     ap.add_argument("--samples", type=int, default=len(SEEDS))
+    ap.add_argument("--no-msa", action="store_true",
+                    help="single-sequence mode; records what that costs")
+    ap.add_argument("--tag", default="", help="suffix for the output filenames")
     a = ap.parse_args()
 
     if not STRUCTURE.exists():
@@ -163,6 +229,14 @@ def main() -> int:
         {"id": "B", "sequence": pou2af2, "entity_type": "protein"},
     ]}]
 
+    msas, depth, a3m_path = None, {}, None
+    if a.no_msa:
+        print("MSA        none — single-sequence mode (a weaker model; recorded)")
+    else:
+        msas, depth, a3m_path = build_msas(pou2f3, pou2af2, OUT / "msa")
+        print(f"MSA        chain A {depth[0]} sequences, chain B {depth[1]} "
+              f"sequences (ColabFold server, paired)")
+
     t0 = time.time()
     written = []
     for i, seed in enumerate(SEEDS[:a.samples], 1):
@@ -173,14 +247,17 @@ def main() -> int:
                             seed=seed, device="modal")
         t1 = time.time()
         try:
-            result = dispatch_to_modal("boltz2-prediction",
-                                       Boltz2Input(complexes=complexes), cfgb)
+            result = dispatch_to_modal(
+                "boltz2-prediction",
+                Boltz2Input(complexes=complexes,
+                            msas=[msas] if msas is not None else None),
+                cfgb)
         except Exception as e:
             print(f"  seed {seed}  FAILED  {type(e).__name__}: {str(e)[:120]}")
             continue
         payload = result.model_dump(mode="json") if hasattr(result, "model_dump") \
             else result
-        p = OUT / f"sample_{i}_seed{seed}.json"
+        p = OUT / f"sample{a.tag}_{i}_seed{seed}.json"
         p.write_text(json.dumps(payload, indent=2))
         written.append(str(p))
         print(f"  seed {seed}  {time.time() - t1:.0f}s  -> {p.name}")
