@@ -111,3 +111,33 @@ class NoCrossPartnerResultsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheRecordSaysWhichReceptorTheRunWasAbout(unittest.TestCase):
+    """`emit.partner` is what the next question in the session compares against.
+
+    It was stamped from the config default before the question was read, so a
+    run about KMT2A recorded itself as MED23. The follow-up classifier then
+    compared "is this the same receptor?" against the wrong answer and reused a
+    run about a different protein.
+    """
+
+    def test_a_run_about_another_receptor_records_that_receptor(self):
+        seen = {}
+
+        def emit(event, payload):
+            if event == "partner":
+                seen["event"] = payload["gene"]
+
+        rec = P._Recorder(emit)
+        rec.partner = "MED23"
+        # What run_live does once it has read the question.
+        partner, _, _ = P._named_partner("a mapped region on MLL", "MED23")
+        rec.partner = partner
+        rec("partner", {"gene": partner, "uniprot": None, "why": "", 
+                        "curated_pocket": False})
+
+        self.assertEqual(partner, "KMT2A")
+        self.assertEqual(seen["event"], "KMT2A")
+        self.assertEqual(rec.state()["partner"], "KMT2A",
+                         "the record must name the receptor the run was about")

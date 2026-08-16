@@ -1286,6 +1286,11 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
     partner, partner_acc, partner_why = _named_partner(question, cfg.partner_gene)
     if partner.upper() != cfg.partner_gene.upper():
         cfg = cfg.model_copy(update={"partner_gene": partner})
+    # The record has to say which receptor this run was about, not which one the
+    # config defaults to. Stamped before the question was read, a KMT2A run
+    # recorded itself as MED23 — so the next question in the session compared
+    # itself against the wrong protein and reused a run about a different one.
+    emit.partner = partner
     emit("partner", {"gene": partner, "uniprot": partner_acc, "why": partner_why,
                      "curated_pocket": partner.upper() in CURATED_POCKETS})
 
