@@ -108,8 +108,28 @@ class AgentTrace:
         }
 
 
+def unavailable_reason() -> str | None:
+    """Why reading cannot run, or None if it can.
+
+    Reading needs two things and this used to check one. With a key present and
+    the SDK absent, `available()` said yes and every call then died inside
+    `_client()` on `import anthropic` — so the caller believed reading was on,
+    dispatched, and surfaced a ModuleNotFoundError per paper instead of the
+    ordinary "not assessed" that a missing capability is supposed to produce.
+    A capability that is absent should read as absent, not as a crash.
+    """
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return "no ANTHROPIC_API_KEY in the environment"
+    try:
+        import anthropic  # noqa: F401  (probe only)
+    except ImportError:
+        return ("the anthropic SDK is not installed in this interpreter "
+                "(pip install 'anthropic>=0.20')")
+    return None
+
+
 def available() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    return unavailable_reason() is None
 
 
 def _client():

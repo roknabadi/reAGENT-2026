@@ -320,8 +320,16 @@ def main() -> int:
     # retrieves, and still fills the page — it just never reads an abstract, and
     # nothing on screen distinguishes that from a literature search that found
     # nothing. A line at startup is the cheapest place to notice.
-    reading = "on" if os.environ.get("ANTHROPIC_API_KEY") else (
-        "OFF — no ANTHROPIC_API_KEY, so abstracts are retrieved but never read")
+    # Both halves, not just the key: a key with no SDK installed reported
+    # "reading: on" and then failed per paper.
+    try:
+        sys.path.insert(0, str(ROOT / "src"))
+        from reagent_workflow.agent import unavailable_reason
+        why = unavailable_reason()
+    except Exception as exc:                       # noqa: BLE001 - never block startup
+        why = f"{type(exc).__name__}: {exc}"
+    reading = "on" if why is None else (
+        f"OFF ({why}) — abstracts are retrieved but never read")
     print(f"→ http://localhost:{port}   (paperclip: {paperclip}; reading: {reading})")
     if _ENV_LOADED:
         print(f"   loaded from .env: {', '.join(_ENV_LOADED)}")
