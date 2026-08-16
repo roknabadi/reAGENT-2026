@@ -131,6 +131,10 @@ def _read_screen(path: Path, site):
               # a chemist reads. A score with no molecule beside it is a number
               # about something the reader cannot see.
               "pose": parse_molblock(r.get("pose_sdf", "")),
+              # The molblock as it came back, for the viewer that can read one
+              # directly. Four kilobytes a compound, and it saves rebuilding a
+              # molecule the screen already serialized.
+              "sdf": r.get("pose_sdf", ""),
               "svg": depict(r.get("smiles", ""))}
              for r in clean[:MAX_POSES_SHOWN]]
     return (summary, poses) if poses else None

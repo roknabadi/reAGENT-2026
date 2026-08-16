@@ -84,6 +84,15 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *a):  # quiet
         pass
 
+    def end_headers(self):
+        # Revalidate every static file. Rebuilding med23.json and reloading the
+        # page showed the old one: the browser had a copy, the server never
+        # said not to trust it, and the panel quietly described a structure
+        # file that had been replaced. On a dev server serving a megabyte over
+        # loopback, always asking is the right trade.
+        self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     def _sse(self, event: str, payload: dict) -> None:
         self.wfile.write(f"event: {event}\ndata: {json.dumps(payload)}\n\n".encode())
         self.wfile.flush()

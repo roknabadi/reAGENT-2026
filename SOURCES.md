@@ -13,6 +13,9 @@ Add each artifact before it is used in the project.
 | DepMap Model metadata | https://depmap.org/portal/data_page/ | Public 24Q2 | CC BY 4.0 | 2026-08-15 | 1921 models, OncotreeLineage/Subtype |
 | Lambert et al. human TF catalogue | http://humantfs.ccbr.utoronto.ca | v1.01 | Academic use, cite Cell 2018;172:650 | 2026-08-15 | 1639 TFs of 2765 rows |
 | RCSB PDB structure files | https://files.rcsb.org/download/ |  9F6Y, 9F76, 9PFP | CC0 1.0 | 2026-08-15 | mmCIF, CA traces only in `ui/data.json` |
+| RCSB PDB 9F76 mmCIF, vendored | https://files.rcsb.org/download/9F76.cif | Deposited entry | CC0 1.0 | 2026-08-15 | 1.06 MB copied to `ui/med23.cif` so the viewer can assign secondary structure; the residue trace in `med23.json` cannot |
+| 3Dmol.js molecular viewer, vendored | https://3dmol.csb.pitt.edu | 2.4.2 | BSD-3-Clause | 2026-08-16 | `ui/vendor/3Dmol-min.js`, 502 KB. Cartoon, surface and per-residue styling; suggested by Amir |
+| UniProtKB feature table (MED23 Q9ULK4 regions) | https://rest.uniprot.org/uniprotkb/Q9ULK4.json | Release at retrieval | CC BY 4.0 | 2026-08-16 | 2 features, both in the disordered C-terminal tail 1343–1368, which 9F76 does not resolve |
 | UniProtKB (gene symbol → reviewed human accession) | https://rest.uniprot.org/uniprotkb/search | Release at retrieval | CC BY 4.0 | 2026-08-15 | 11 accessions, reviewed + organism 9606 |
 | AlphaFold DB predicted monomers | https://alphafold.ebi.ac.uk/api/prediction/ | Model v6 | CC BY 4.0 | 2026-08-15 | 11 TFs, CA trace + per-residue pLDDT |
 | UniProtKB canonical sequences (ELK1 P19419, MED23 Q9ULK4) | https://rest.uniprot.org/uniprotkb/ | Fetched live per run via `proto_tools` UniProt tool | CC BY 4.0 | 2026-08-15 | ELK1 428 aa, MED23 1368 aa; not vendored, re-fetched each run. **Corrected 2026-08-15**: this row read `MED23 O75448 … 989 aa`, which is MED24. See `team/FINDINGS_ELK1_CONTROL.md` |

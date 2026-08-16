@@ -41,11 +41,75 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from reagent_workflow.interface import parse_mmcif          # noqa: E402
-from reagent_workflow.site import CURATED_POCKETS           # noqa: E402
+from reagent_workflow.site import (CURATED_POCKETS,          # noqa: E402
+                                   residue_polarity)
 
 RECEPTOR = ROOT / "downloads" / "9F76.cif"
 OUT = ROOT / "ui" / "med23.json"
+# The coordinates themselves, copied where the browser can read them. A viewer
+# that draws a cartoon has to assign secondary structure, and that needs the
+# residue names and backbone atom names the deposition carries -- the residue
+# trace this file also writes is enough to place a highlight and not enough to
+# draw a helix.
+COORDS = ROOT / "ui" / "med23.cif"
 UNIPROT_LENGTH = 1368        # MED23 Q9ULK4
+UNIPROT = "Q9ULK4"
+
+
+def uniprot_regions(accession: str) -> list[dict]:
+    """Named regions of the protein, from UniProt's own feature table.
+
+    A structure with no labels is a shape. These are what the parts are called
+    -- domains, repeats, motifs, compositional bias -- fetched once at build
+    time so the interface needs no network, and carried with their category so
+    the panel can say what kind of claim each label is.
+    """
+    import urllib.request
+    url = (f"https://rest.uniprot.org/uniprotkb/{accession}.json"
+           "?fields=ft_domain,ft_region,ft_motif,ft_repeat,ft_coiled,ft_compbias")
+    try:
+        with urllib.request.urlopen(url, timeout=30) as r:
+            payload = json.loads(r.read())
+    except Exception as e:                                   # noqa: BLE001
+        print(f"  UniProt features unavailable ({type(e).__name__}); "
+              "the view keeps its coordinates and loses only the labels")
+        return []
+    out = []
+    for f in payload.get("features", []):
+        loc = f.get("location", {})
+        start = (loc.get("start") or {}).get("value")
+        end = (loc.get("end") or {}).get("value")
+        if start is None or end is None:
+            continue
+        out.append({"type": f.get("type", ""), "start": int(start), "end": int(end),
+                    "label": (f.get("description") or f.get("type") or "").strip()})
+    return sorted(out, key=lambda r: r["start"])
+
+
+def residue_names(path: pathlib.Path, chain: str = "A") -> dict[int, str]:
+    """resi -> three-letter residue name, straight out of the atom records.
+
+    `parse_mmcif` keeps coordinates and drops identity, which is right for
+    geometry and wrong for a panel: "the cavity is 339, 343, 379" says less
+    than "R339, K343, W379", and the second is what tells a reader whether a
+    groove is greasy or charged.
+    """
+    names: dict[int, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("ATOM"):
+            continue
+        # auth_asym_id, auth_seq_id and auth_comp_id -- the numbering the
+        # deposition's own paper uses, and the numbering the curated pocket is
+        # written in. The label_* columns earlier in the row are the PDB's
+        # internal scheme and do not always agree.
+        f = line.split()
+        if len(f) < 19 or f[18] != chain:
+            continue
+        try:
+            names[int(f[16])] = f[17]
+        except (ValueError, IndexError):
+            continue
+    return names
 
 
 def build() -> dict:
@@ -73,6 +137,13 @@ def build() -> dict:
 
     entry = CURATED_POCKETS["MED23"]
     pocket = sorted(set(entry["residues"]) & set(ca))
+    names = residue_names(RECEPTOR)
+    one = {"ALA": "A", "ARG": "R", "ASN": "N", "ASP": "D", "CYS": "C", "GLN": "Q",
+           "GLU": "E", "GLY": "G", "HIS": "H", "ILE": "I", "LEU": "L", "LYS": "K",
+           "MET": "M", "PHE": "F", "PRO": "P", "SER": "S", "THR": "T", "TRP": "W",
+           "TYR": "Y", "VAL": "V"}
+    sequence = {r: one.get(names.get(r, ""), "X") for r in pocket}
+    polarity = residue_polarity(atoms, pocket, sequence)
     return {
         "gene": "MED23",
         "uniprot": entry["uniprot"],
@@ -89,8 +160,12 @@ def build() -> dict:
         "trace": trace,
         "atoms": heavy,
         "n_atoms": len(heavy),
+        "coordinate_file": COORDS.name,
+        "regions": uniprot_regions(UNIPROT),
         "pocket": {
             "residues": pocket,
+            "labels": [f"{sequence[r]}{r}" for r in pocket],
+            "polarity": {k: v for k, v in polarity.items() if v},
             "label": "ELK1-binding cavity",
             "source": entry["source"],
             "interpretation": "observed",
@@ -116,6 +191,7 @@ def main() -> int:
               file=sys.stderr)
         return 2
     view = build()
+    COORDS.write_text(RECEPTOR.read_text(encoding="utf-8"), encoding="utf-8")
     OUT.write_text(json.dumps(view))
     print(f"MED23 {view['pdb_id']} ({view['method']}, {view['form']})")
     print(f"  {view['residues_resolved']}/{view['residues_total']} residues "
@@ -123,7 +199,9 @@ def main() -> int:
           f"{view['residue_range'][1]}")
     print(f"  {view['n_atoms']} heavy atoms, chain {view['chain']}")
     print(f"  pocket {view['pocket']['residues']}  ({view['pocket']['label']})")
+    print(f"  {len(view['regions'])} named regions from UniProt {UNIPROT}")
     print(f"  wrote {OUT}  ({OUT.stat().st_size / 1e6:.2f} MB)")
+    print(f"  wrote {COORDS}  ({COORDS.stat().st_size / 1e6:.2f} MB)")
     return 0
 
 

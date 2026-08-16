@@ -349,6 +349,18 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
    shrinking did not, and the buffer stayed stale at the old width. */
 #canvas3d{display:block;position:absolute;inset:0;width:100%;height:100%;cursor:grab}
 #canvas3d:active{cursor:grabbing}
+#mol3d{position:absolute;inset:0}
+#mol3d canvas{cursor:grab}
+/* Representation switch. Cartoon reads the fold, surface reads the groove,
+   atoms read the packing; the same highlights are drawn on all three, so
+   switching never changes what is being claimed, only how it is drawn. */
+.reps{position:absolute;right:16px;top:16px;z-index:2;display:flex;gap:4px;
+  background:var(--glass);backdrop-filter:blur(8px);border:1px solid var(--line);
+  border-radius:var(--r);padding:3px}
+.reps button{padding:5px 10px;background:none;border:0;border-radius:6px;
+  color:var(--ink-3);font:inherit;font-size:11px;cursor:pointer}
+.reps button:hover{color:var(--ink-2)}
+.reps button[aria-current=true]{background:var(--card);color:var(--ink)}
 .leg{position:absolute;left:18px;top:16px;font-size:12px;background:var(--glass);
   backdrop-filter:blur(9px);border:1px solid var(--line);border-radius:var(--r);padding:11px 13px}
 .leg .row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
@@ -522,7 +534,14 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
       </section>
 
       <section class="view" id="v-structure">
-        <div id="wrap3d"><canvas id="canvas3d"></canvas><div class="leg" id="leg"></div>
+        <div id="wrap3d"><canvas id="canvas3d"></canvas>
+          <!-- 3Dmol draws its own canvas in here. Kept beside the three.js one
+               rather than replacing it: the solved complexes and the AlphaFold
+               monomers are already correct in that renderer, and the receptor
+               is the view that needed a cartoon. -->
+          <div id="mol3d" hidden></div>
+          <div class="reps" id="reps" hidden></div>
+          <div class="leg" id="leg"></div>
           <div class="nostruct" id="nostruct"></div>
           <div class="loading3d" id="loading3d">building structure…</div></div>
         <div class="side" id="saside"></div>
@@ -1322,8 +1341,18 @@ function receptorPanel(M, c, hl){
   <div class="panel"><dl>
     <dt>receptor</dt><dd>${M.gene} (${M.uniprot})</dd>
     <dt>coordinates</dt><dd><a href="${M.url}" target="_blank" rel="noopener">PDB ${M.pdb_id}</a> · ${M.licence}</dd>
-    <dt>range</dt><dd>${M.residue_range[0]}–${M.residue_range[1]}</dd>
-    <dt>cavity</dt><dd>${M.pocket.residues.join(', ')}</dd>
+    <dt>range</dt><dd>${M.residue_range[0]}–${M.residue_range[1]}
+      <span class="muted">of 1–${M.residues_total}; ${M.n_atoms?.toLocaleString()||''}
+      heavy atoms</span></dd>
+    <dt>cavity</dt><dd>${(M.pocket.labels||M.pocket.residues).join(', ')}</dd>
+    ${M.pocket.polarity ? `<dt>chemistry</dt><dd>${Object.entries(M.pocket.polarity)
+        .map(([k,v])=>`${v.length} ${k}`).join(', ')}
+      <span class="muted">— a greasy groove is what a small molecule can sit in;
+      a charged one usually is not</span></dd>` : ''}
+    ${(M.regions||[]).length ? `<dt>regions</dt><dd>${M.regions.map(r=>
+        `${r.label} ${r.start}–${r.end}${r.end>M.residue_range[1]||r.start<M.residue_range[0]
+          ? ' <span class="muted">(unresolved here)</span>' : ''}`).join('<br>')}
+      <span class="muted">UniProt ${M.uniprot} feature table</span></dd>` : ''}
     <dt>${gene} interface</dt><dd>${hl?.residues?.length
         ? hl.residues.join(', ') : '<span class="muted">not predicted</span>'}</dd>
     <dt>docked</dt><dd>${hl?.ligands?.length
@@ -1422,7 +1451,95 @@ async function paint(S){
    ELK1 cavity, red is a computational per-candidate prediction, green is a
    docked pose. A reader should be able to tell measured from predicted without
    reading the caption. */
-async function paintReceptor(M, highlight){
+/* ── the receptor, in 3Dmol ────────────────────────────────────────────────
+   A cartoon needs secondary structure, and secondary structure needs residue
+   names and backbone atom names — which the residue trace in med23.json does
+   not carry and the deposition does. So this reads ui/med23.cif directly and
+   lets 3Dmol assign the fold, rather than reimplementing ribbon extrusion in
+   the renderer next door.
+
+   Three representations over one model. Cartoon shows what the protein is,
+   surface shows whether the site is a groove, atoms show the packing. The
+   highlights are the same in all three because they are the same claim:
+   amber is the observed ELK1 cavity, red a predicted interface, green what a
+   docked compound touches, and the compounds themselves are drawn as sticks
+   from the poses Vina returned. */
+const REPS = [['cartoon','Cartoon'],['surface','Surface'],['atoms','Atoms']];
+let molv=null, molRep=localStorage.dsRep || 'cartoon', molCif=null, molPaint=null;
+
+function load3Dmol(){
+  if(window.$3Dmol) return Promise.resolve(window.$3Dmol);
+  // A classic script tag, not import(): the bundle is UMD and reads `this` at
+  // top level, which is undefined inside an ES module and throws.
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='./vendor/3Dmol-min.js';
+    s.onload=()=>window.$3Dmol?res(window.$3Dmol):rej(new Error('3Dmol did not register'));
+    s.onerror=()=>rej(new Error('vendor/3Dmol-min.js failed to load'));
+    document.head.append(s);
+  });
+}
+
+function repButtons(){
+  const box=$('#reps');
+  box.innerHTML = REPS.map(([k,label])=>
+    `<button data-rep="${k}" aria-current="${k===molRep}">${label}</button>`).join('');
+  box.hidden=false;
+  box.onclick = e => { const b=e.target.closest('button'); if(!b) return;
+    molRep=b.dataset.rep; localStorage.dsRep=molRep; repButtons(); molPaint?.(); };
+}
+
+async function paintMol(M, hl){
+  const $3 = await load3Dmol();
+  if(molCif===null) molCif = await (await fetch('./'+(M.coordinate_file||'med23.cif'))).text();
+  const el=$('#mol3d');
+  el.hidden=false; $('#canvas3d').style.display='none';
+  if(!molv){
+    molv = $3.createViewer(el, {backgroundAlpha:0});
+    new ResizeObserver(()=>{ molv.resize(); molv.render(); }).observe(el);
+  }
+  repButtons();
+
+  molPaint = () => {
+    const C={body:css('--ink-3'), pocket:css('--control'),
+             pred:css('--fail'), lig:css('--pass')};
+    const pocket=M.pocket?.residues||[], pred=hl?.residues||[], lig=hl?.ligand_residues||[];
+    molv.clear();
+    molv.addModel(molCif,'cif');
+    if(molRep==='cartoon') molv.setStyle({}, {cartoon:{color:C.body, thickness:.4}});
+    else if(molRep==='surface') molv.setStyle({}, {cartoon:{color:C.body, thickness:.2}});
+    else molv.setStyle({}, {sphere:{color:C.body, scale:.85}});
+
+    // Highlights last so they sit over the body in every representation.
+    const mark=(resi,color)=>{ if(resi.length) molv.addStyle({resi},
+      molRep==='atoms' ? {sphere:{color, scale:.9}}
+                       : {stick:{color, radius:.34}, sphere:{color, scale:.32}}); };
+    mark(pocket, C.pocket); mark(lig, C.lig); mark(pred, C.pred);
+
+    if(molRep==='surface')
+      molv.addSurface($3.SurfaceType.VDW, {opacity:.62, color:C.body}, {});
+
+    for(const L of (hl?.ligands||[])){
+      if(!L.sdf) continue;
+      const m=molv.addModel(L.sdf,'sdf');
+      m.setStyle({}, {stick:{colorscheme:'greenCarbon', radius:.18},
+                      sphere:{colorscheme:'greenCarbon', scale:.22}});
+    }
+    // Frame the site rather than the whole protein: MED23 is 1,258 residues
+    // and the thing being claimed is seven of them.
+    molv.zoomTo(pocket.length ? {resi:pocket} : {});
+    molv.zoom(.55);
+    molv.render();
+  };
+  molPaint();
+}
+
+function hideMol(){
+  $('#mol3d').hidden=true; $('#reps').hidden=true;
+  $('#canvas3d').style.display='';
+}
+
+async function paintReceptorThree(M, highlight){
   const {THREE,cam,controls,grp,size,cvs}=await glContext();
   const A=M.trace;
   const c0=A.reduce((a,p)=>[a[0]+p[1],a[1]+p[2],a[2]+p[3]],[0,0,0]).map(v=>v/A.length);
@@ -1648,10 +1765,18 @@ showPair = async c => {
               + `|${hl?.ligands?.map(l=>l.name).join(',')||''}`;
     if(painted===key){ glc?.size(); return; }
     painted=key; view.setAttribute('data-loading','');
-    try { await paintReceptor(MED23, hl); }
+    try { await paintMol(MED23, hl); }
+    catch(err){
+      // The vendored viewer is the only thing that can fail here, and falling
+      // back to the renderer that was already drawing this receptor is better
+      // than an empty panel with an error in the console.
+      console.warn('3Dmol unavailable, falling back:', err);
+      hideMol(); await paintReceptorThree(MED23, hl);
+    }
     finally { view.removeAttribute('data-loading'); }
     return;
   }
+  hideMol();          // the other two views own the three.js canvas
   $('#leg').innerHTML = S ? legendFor(S) : legendPredicted();
   $('#saside').innerHTML = S ? solvedPanel(S) : predictedPanel(P,c);
   // Selecting a row while another view is up must not build a WebGL context for a
