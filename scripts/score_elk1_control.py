@@ -30,9 +30,10 @@ whether the motif and the pocket touch *each other*, so contacts with ELK1
 individually, with distances. That is the claim the paper makes, and it is the
 one a residue count can fake.
 
-Run 2026-08-15 (seeds 20260815-20260819): sample 2 alone recovers 7/7 and puts
-F378 3.17 A from M537. Motif recovery ranked it *last* of the five. See
-team/FINDINGS_ELK1_CONTROL.md.
+Across the 15 samples run on 2026-08-15, three recover 7/7 pocket residues and
+only two of those put a motif residue against a pocket residue: one sample hits
+the whole pocket with the wrong part of ELK1. That is why the pairs are listed
+and not just counted. See team/FINDINGS_ELK1_CONTROL.md.
 """
 from __future__ import annotations
 
@@ -49,6 +50,11 @@ from reagent_workflow.interface import (  # noqa: E402
     parse_mmcif)
 
 OUT = ROOT / "runs" / "elk1_control"
+
+
+def _mean(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
 
 # Monte et al. 2025 (doi:10.1038/s41467-025-59014-8), PDB 9F6Y. MED23 numbering.
 PUBLISHED_MED23_POCKET = {339, 343, 379, 382, 383, 533, 537}
@@ -102,6 +108,13 @@ def main() -> int:
             "chance": chance,
             "iptm": (metrics[len(rows)].get("iptm")
                      if len(rows) < len(metrics) else None),
+            # Interface pLDDT: the pLDDT of the atoms actually in contact,
+            # rather than of the whole complex. Reported because across 15
+            # samples it ranked the recoveries 1st, 3rd and 4th while ipTM
+            # ranked them 1st, 3rd and 8th. Neither is applied to anything.
+            "plddt": _mean([c.target_plddt for c in iface.contacts if c.target_plddt]
+                           + [c.partner_plddt for c in iface.contacts
+                              if c.partner_plddt]),
             # The published claim itself: motif residue against pocket residue.
             "pairs": sorted(
                 ((c.target_resi + TAD_START - 1, c.partner_resi, c.min_distance)
@@ -113,11 +126,13 @@ def main() -> int:
         samples.append(iface)
 
     print(f"{len(cifs)} samples from {OUT}\n")
-    print(f"{'sample':10s} {'ipTM':>6s} {'contacts':>9s} {'ELK1 res':>9s} "
-          f"{'in motif':>9s} {'MED23 res':>10s} {'in pocket':>10s} {'by chance':>10s}")
+    print(f"{'sample':10s} {'ipTM':>6s} {'ifacepLDDT':>11s} {'contacts':>9s} "
+          f"{'ELK1 res':>9s} {'in motif':>9s} {'MED23 res':>10s} {'in pocket':>10s} "
+          f"{'by chance':>10s}")
     for r in rows:
         iptm = f"{r['iptm']:6.3f}" if isinstance(r["iptm"], (int, float)) else "     -"
-        print(f"{r['sample']:10s} {iptm} {r['contacts']:9d} {r['n_elk1']:9d} "
+        plddt = f"{r['plddt']:11.2f}" if r["plddt"] is not None else "          -"
+        print(f"{r['sample']:10s} {iptm} {plddt} {r['contacts']:9d} {r['n_elk1']:9d} "
               f"{r['motif']:6d}/11 {r['n_med23']:10d} "
               f"{len(r['pocket']):7d}/7 {r['chance']:10.2f}"
               + (f"  {r['pocket']}" if r["pocket"] else ""))
