@@ -273,3 +273,91 @@ def explain(trace: AgentTrace, context: str, candidates: list) -> tuple[str, obj
               + "\n\nExplain this shortlist.")
     call = ask(trace, "explain", EXPLAIN_SYSTEM, prompt, max_tokens=900)
     return (call.reply if not call.error else ""), call
+
+
+READ_REQUEST_SYSTEM = """You read a researcher's request and report what \
+CONDITIONS it places on the pipeline. You do not answer the question and you do \
+not decide any science.
+
+The pipeline runs: dependency scan -> literature -> interface evidence -> \
+druggable site -> small-molecule screen. Every stage runs by default. Your job \
+is to notice when the request says a stage must NOT run unless something holds.
+
+The only condition the pipeline can enforce is this one:
+
+  require_interface_site — the request says to screen compounds only if there \
+is support for a site on the partner protein (a documented interaction with a \
+mapped region, or a converged structural prediction), and otherwise to abstain \
+and say what is missing. Phrasings that mean this: "only if ... proceed to \
+screening", "do not dock unless", "gate the screen on", "abstain otherwise".
+
+A request that simply asks for targets, evidence, or compounds places no \
+condition: return false. Do not infer a condition from a request being \
+detailed. Returning false is the common and correct answer.
+
+Reply with JSON only:
+{"require_interface_site": true|false, "quote": "<the words that say so, or null>"}"""
+
+
+def read_request(trace: AgentTrace, question: str) -> tuple[dict, object]:
+    """What the request demands of the pipeline, as flags it can actually honour.
+
+    A multi-step request — "identify three targets, test the interaction
+    evidence, and only screen if a site is supported" — used to be read as
+    nothing but a disease name. Every stage ran regardless, so the interface
+    answered a question the researcher did not ask and looked confident doing
+    it. This reads the control flow instead of ignoring it, and reads it into a
+    closed set: one flag the downstream stages know how to obey. A condition
+    the pipeline cannot enforce is not returned as one it can.
+    """
+    if not question.strip():
+        return {"require_interface_site": False, "quote": None}, None
+    call = ask(trace, "read_request", READ_REQUEST_SYSTEM,
+               f"Request:\n{question}\n\nWhat conditions does it place? JSON only.",
+               max_tokens=300)
+    if call.error:
+        return {"require_interface_site": False, "quote": None}, call
+    data = _json_block(call.reply) or {}
+    return ({"require_interface_site": bool(data.get("require_interface_site")),
+             "quote": data.get("quote")}, call)
+
+
+ANSWER_SYSTEM = """You answer the researcher's question using ONLY the record \
+of what this run actually did. The record is below the question; it lists every \
+stage, whether it completed or abstained, and the numbers it produced.
+
+Rules, in order of importance:
+
+1. Every number you write must appear in the record. Never compute, round, \
+estimate or infer one. If the record does not contain what the question asks \
+for, say plainly that the run did not produce it.
+2. Answer the question that was asked, in the order it was asked. If it had \
+several parts, address each. If a part could not be answered, say which \
+evidence was missing rather than substituting a part you can answer.
+3. A stage that abstained is a result, not a gap to apologise for. Say what it \
+abstained on and what would change it.
+4. Never claim binding, efficacy, or safety. Docking scores rank poses. A \
+predicted interface is a hypothesis. A dependency is a statement about cell \
+lines, not patients.
+
+Write for a working biologist: direct, specific, no preamble, no headings, no \
+bullet lists. Three short paragraphs at most, fewer if the answer is short. \
+Lead with the answer, not with what you did."""
+
+
+def answer(trace: AgentTrace, question: str, record: dict) -> tuple[str, object]:
+    """Respond to the question actually asked, from the record of what ran.
+
+    `explain` narrates a shortlist, which only makes sense when there is one.
+    This answers the request — including the requests that got no shortlist,
+    named a gene rather than a disease, or asked for something the pipeline
+    abstained on. The record is the whole input: nothing here reaches the data,
+    so nothing here can produce a number the run did not.
+    """
+    if not question.strip():
+        return "", None
+    body = json.dumps(record, indent=1, default=str)[:12000]
+    call = ask(trace, "answer", ANSWER_SYSTEM,
+               f"Question:\n{question}\n\nRecord of this run:\n{body}\n\n"
+               "Answer the question.", max_tokens=1100)
+    return (call.reply if not call.error else ""), call

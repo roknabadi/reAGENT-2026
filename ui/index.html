@@ -153,7 +153,25 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 /* ── timeline rail ── */
 .rail{border-right:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:18px 0 30px}
 .rail h2,.srcs h2{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--ink-3);font-weight:600;margin:0 0 12px;padding:0 18px}
+  color:var(--ink-3);font-weight:600;margin:0 0 12px;padding:0 18px;
+  display:flex;align-items:center;gap:8px}
+/* The run, top to bottom: what was asked, what came back, how, and what ran.
+   Each block is separated by a rule rather than a card, so the rail reads as
+   one column of a transcript instead of four unrelated panels. */
+.ask,.ans,.think{padding-bottom:14px;margin-bottom:14px;
+  border-bottom:1px solid var(--line)}
+.askq{margin:0;padding:0 18px;font-size:13px;line-height:1.5;color:var(--ink)}
+.askq:not(.set){color:var(--ink-3)}
+#anstext{padding:0 18px;font-size:12.5px;line-height:1.62;color:var(--ink-2)}
+#anstext p{margin:0 0 9px}
+#anstext p:last-child{margin-bottom:0}
+#anstext p:first-child{color:var(--ink)}
+.caveat{margin:9px 18px 0;font-size:10.5px;line-height:1.45;color:var(--ink-3)}
+/* The answer arrives whole, after the stages it describes. Fading it in marks
+   it as the end of the run rather than one more line appearing in a list. */
+@keyframes ansIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.ans[data-in]{animation:ansIn .5s ease both}
+@media (prefers-reduced-motion:reduce){.ans[data-in]{animation:none}}
 .stage{position:relative;padding:9px 18px 9px 44px;cursor:default}
 .stage::before{content:"";position:absolute;left:25px;top:26px;bottom:-4px;width:1px;
   background:var(--line-2)}
@@ -190,12 +208,10 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .body[data-src=off] .srcs h2 .cnt{order:3;writing-mode:vertical-rl}
 .body[data-src=off] .srcs-toggle{margin:0;order:1}
 .body[data-src=off] #papers{display:none}
-.body[data-src=off] .think-h,.body[data-src=off] #thinking{display:none}
 .srcs h2 .lbl{white-space:nowrap}
 /* Reasoning log. Collapsed by default: it is there to be checked, not read
-   every time, and it must not push the sources out of view. */
-.think-h{border-top:1px solid var(--line);margin-top:6px;padding-top:14px!important}
-#thinking{max-height:44vh;overflow-y:auto}
+   every time, and it must not push the pipeline out of view. */
+#thinking{max-height:40vh;overflow-y:auto}
 .tcall{margin:0 14px 8px;background:var(--card);border:1px solid var(--line);
   border-radius:var(--r);overflow:hidden}
 .tcall>summary{cursor:pointer;padding:9px 11px;font-size:11.5px;display:flex;
@@ -234,7 +250,13 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
    the SMILES the screen was actually run on. */
 .lig{display:grid;grid-template-columns:118px 1fr;gap:10px;align-items:center;
   margin:8px 0;padding:8px 9px;background:var(--card);border:1px solid var(--line);
-  border-radius:var(--r)}
+  border-radius:var(--r);cursor:pointer;transition:border-color .15s,opacity .15s}
+/* Only the selected compound is drawn in the structure, so the unselected ones
+   are dimmed here: the list and the viewer say the same thing. */
+.lig:not([aria-current=true]){opacity:.55}
+.lig:hover{border-color:var(--line-2);opacity:1}
+.lig[aria-current=true]{border-color:var(--pass)}
+.lig:focus-visible{outline:2px solid var(--pass);outline-offset:2px}
 .lig2d{color:var(--ink-2);display:grid;place-items:center;min-height:74px}
 .lig2d svg{width:100%;height:auto;max-height:96px;display:block}
 .ligmeta{min-width:0}
@@ -476,8 +498,33 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
   </header>
 
   <div class="body">
+    <!-- The left rail is what the agent said: the question as asked, the answer
+         it wrote from the record, the calls it made getting there, and the
+         stages it drove. The right rail is what it read. The middle is what it
+         computed. Reasoning used to sit beside the sources, which put the
+         model's working next to other people's papers and made both harder to
+         scan. -->
     <div class="rail">
-      <h2>Pipeline</h2>
+      <section class="ask">
+        <h2><span class="lbl">Question</span></h2>
+        <p id="askq" class="askq">Ask a question above to start a run.</p>
+      </section>
+
+      <section class="ans" id="ans" hidden>
+        <h2><span class="lbl">Answer</span><span class="cnt" id="ansmodel"></span></h2>
+        <div id="anstext"></div>
+        <p class="caveat" id="anscaveat"></p>
+      </section>
+
+      <section class="think">
+        <h2><span class="lbl">Reasoning</span><span class="cnt" id="thinkCount"></span>
+          <button class="srcs-toggle" id="thinkToggle" aria-expanded="false"
+                  aria-controls="thinking" title="Show reasoning">›</button></h2>
+        <div id="thinking" hidden><p class="empty">Every call the model makes
+          appears here, with what it was asked and what it said.</p></div>
+      </section>
+
+      <h2><span class="lbl">Pipeline</span></h2>
       <div id="stages"></div>
     </div>
 
@@ -554,14 +601,6 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
                 aria-controls="papers" title="Hide sources">›</button></h2>
       <div id="papers"><p class="empty">Papers retrieved during the run appear here, newest first.</p></div>
 
-      <!-- What the model was asked and what it said, kept for the whole run.
-           A pipeline that shows only its conclusions asks to be trusted; this
-           one can be checked, so every exchange stays available afterwards. -->
-      <h2 class="think-h"><span class="lbl">Reasoning</span>
-        <span class="cnt" id="thinkCount"></span>
-        <button class="srcs-toggle" id="thinkToggle" aria-expanded="false"
-                aria-controls="thinking" title="Show reasoning">›</button></h2>
-      <div id="thinking" hidden><p class="empty">The model's calls appear here once a run starts.</p></div>
     </div>
   </div>
 </div>
@@ -918,19 +957,58 @@ function addSummary(s){
    question with an explicit request to fold one candidate, so the dispatch is
    always something a person asked for by name and never something a page load
    or a re-render can start. */
+/* Pick a compound: redraw the structure with that one in the pocket, and
+   re-render the panel so the selection reads the same in both places. */
+function selectLigand(i){
+  ligSel = i;
+  const c = C[selIdx];
+  if(c) showPair?.(c);
+}
+document.addEventListener('keydown', e => {
+  if(e.key!=='Enter' && e.key!==' ') return;
+  const l = e.target.closest?.('.lig');
+  if(l){ e.preventDefault(); selectLigand(Number(l.dataset.lig)); }
+});
 document.addEventListener('click', e => {
+  const l = e.target.closest('.lig');
+  if(l){ selectLigand(Number(l.dataset.lig)); return; }
   const b = e.target.closest('.predict-btn');
   if(!b) return;
   b.disabled = true; b.textContent = `co-folding ${b.dataset.gene}…`;
   run($('#q1').value, b.dataset.gene);
 });
 
+/* The answer, written by the model from the record of what ran, and shown
+   where the question is rather than in the sources rail. Plain text split on
+   blank lines: the model is told not to use headings or lists, so anything
+   else here would be markdown rendering for markup that should not arrive. */
+function resetAnswer(){
+  const a=$('#ans'); a.hidden=true; a.removeAttribute('data-in');
+  $('#anstext').replaceChildren(); $('#anscaveat').textContent='';
+  $('#ansmodel').textContent='';
+}
+function setAnswer(d){
+  const box=$('#anstext');
+  box.replaceChildren();
+  for(const para of (d.text||'').split(/\n{2,}/)){
+    if(!para.trim()) continue;
+    const p=document.createElement('p'); p.textContent=para.trim(); box.append(p);
+  }
+  $('#ansmodel').textContent = d.model || '';
+  $('#anscaveat').textContent = d.caveat || '';
+  const a=$('#ans'); a.hidden=false; a.setAttribute('data-in','');
+}
+
 let es=null;
 function run(q, predict){
   es?.close();
   STAGES.forEach(([id])=>setStage({id,state:'pending',detail:'',note:''}));
   $('#papers').innerHTML=''; $('#srcCount').textContent=''; resetReady();
-  resetThinking();
+  resetThinking(); resetAnswer();
+  document.querySelectorAll('.ask .caveat').forEach(n=>n.remove());
+  const asked=$('#askq');
+  asked.textContent = q || 'no question given';
+  asked.classList.toggle('set', !!q);
   const live = new EventSource('/api/run?q='+encodeURIComponent(q||'')
                                + (predict ? '&predict='+encodeURIComponent(predict) : ''));
   es = live;
@@ -963,6 +1041,17 @@ function run(q, predict){
   });
   live.addEventListener('thinking', e => addThinking(JSON.parse(e.data)));
   live.addEventListener('summary', e => addSummary(JSON.parse(e.data)));
+  live.addEventListener('answer', e => setAnswer(JSON.parse(e.data)));
+  // A condition the request placed on the pipeline, echoed where the question
+  // is: the reader should be able to see that it was read, not infer it from a
+  // stage abstaining later.
+  live.addEventListener('policy', e => {
+    const d=JSON.parse(e.data);
+    const p=document.createElement('p');
+    p.className='caveat';
+    p.textContent = (d.quote ? `“${d.quote}” — ` : '') + d.note;
+    $('#askq').after(p);
+  });
   live.addEventListener('done', () => live.close());
   live.onerror = () => { live.close(); if(!got) replay(q); };
 }
@@ -1331,7 +1420,9 @@ const legendReceptor = hl => `
   + (hl?.residues?.length
      ? ` <span><i style="background:var(--fail)"></i>predicted interface · computed</span>` : '')
   + (hl?.ligands?.length
-     ? ` <span><i style="background:var(--pass)"></i>docked pose &amp; contacts · computed</span>` : '');
+     ? ` <span><i style="background:var(--pass)"></i>${
+         hl.ligands[Math.min(ligSel, hl.ligands.length-1)].name
+       } pose &amp; contacts · computed</span>` : '');
 
 function receptorPanel(M, c, hl){
   const gene=c?.gene||'this candidate';
@@ -1358,7 +1449,9 @@ function receptorPanel(M, c, hl){
     <dt>docked</dt><dd>${hl?.ligands?.length
         ? `${hl.ligands.length} of ${hl.ligands.length} shown, ranked by score`
         : '<span class="muted">no screen run</span>'}</dd></dl></div>
-  ${(hl?.ligands||[]).map(l=>`<div class="lig">
+  ${(hl?.ligands||[]).map((l,i)=>`<div class="lig" data-lig="${i}"
+       aria-current="${i===Math.min(ligSel,(hl.ligands.length-1))}"
+       tabindex="0" role="button" title="Show ${l.name} in the structure">
     <div class="lig2d">${l.svg||''}</div>
     <div class="ligmeta">
       <div class="n">${l.name} <span class="sc">${l.score.toFixed(2)} kcal/mol</span></div>
@@ -1466,6 +1559,10 @@ async function paint(S){
    from the poses Vina returned. */
 const REPS = [['cartoon','Cartoon'],['surface','Surface'],['atoms','Atoms']];
 let molv=null, molRep=localStorage.dsRep || 'cartoon', molCif=null, molPaint=null;
+/* Which docked compound is on screen. One at a time: three overlapping poses
+   in one pocket is a picture of the pocket being crowded, not of any compound
+   binding it, and the contacts drawn belong to whichever molecule is shown. */
+let ligSel = 0;
 
 function load3Dmol(){
   if(window.$3Dmol) return Promise.resolve(window.$3Dmol);
@@ -1503,7 +1600,10 @@ async function paintMol(M, hl){
   molPaint = () => {
     const C={body:css('--ink-3'), pocket:css('--control'),
              pred:css('--fail'), lig:css('--pass')};
-    const pocket=M.pocket?.residues||[], pred=hl?.residues||[], lig=hl?.ligand_residues||[];
+    const ligs=hl?.ligands||[];
+    const shown=ligs.length ? ligs[Math.min(ligSel, ligs.length-1)] : null;
+    const pocket=M.pocket?.residues||[], pred=hl?.residues||[],
+          lig=shown?.residues||[];
     molv.clear();
     molv.addModel(molCif,'cif');
     if(molRep==='cartoon') molv.setStyle({}, {cartoon:{color:C.body, thickness:.4}});
@@ -1519,9 +1619,8 @@ async function paintMol(M, hl){
     if(molRep==='surface')
       molv.addSurface($3.SurfaceType.VDW, {opacity:.62, color:C.body}, {});
 
-    for(const L of (hl?.ligands||[])){
-      if(!L.sdf) continue;
-      const m=molv.addModel(L.sdf,'sdf');
+    if(shown?.sdf){
+      const m=molv.addModel(shown.sdf,'sdf');
       m.setStyle({}, {stick:{colorscheme:'greenCarbon', radius:.18},
                       sphere:{colorscheme:'greenCarbon', scale:.22}});
     }
@@ -1762,7 +1861,7 @@ showPair = async c => {
     $('#saside').innerHTML = receptorPanel(MED23, c, hl);
     if(!view.hasAttribute('data-on')){ painted=null; return; }
     const key = `receptor|${c?.gene||''}|${hl?hl.residues.join(','):''}`
-              + `|${hl?.ligands?.map(l=>l.name).join(',')||''}`;
+              + `|${hl?.ligands?.map(l=>l.name).join(',')||''}|${ligSel}`;
     if(painted===key){ glc?.size(); return; }
     painted=key; view.setAttribute('data-loading','');
     try { await paintMol(MED23, hl); }

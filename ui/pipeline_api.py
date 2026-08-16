@@ -58,6 +58,47 @@ SCREEN_FILE = ROOT / "runs" / "vina_smoke.json"
 MAX_POSES_SHOWN = 3
 
 
+class _Recorder:
+    """Passes every event through, and keeps the record the answer is written from.
+
+    The alternative was assembling a summary by hand at each call site, which
+    drifts the moment a stage changes its wording — and an answer written from
+    a drifted summary is an answer about a run that did not happen. Wrapping
+    `emit` means the model reads exactly what the reader saw.
+    """
+
+    def __init__(self, emit: Callable[[str, dict], None]) -> None:
+        self._emit = emit
+        self.stages: dict[str, dict] = {}
+        self.candidates: list[dict] = []
+        self.highlights: list[dict] = []
+        self.papers = 0
+
+    def __call__(self, event: str, payload: dict) -> None:
+        if event == "stage":
+            self.stages[payload["id"]] = {k: payload.get(k)
+                                          for k in ("state", "detail", "note")}
+        elif event == "candidates":
+            self.candidates = [{k: r.get(k) for k in
+                                ("gene", "context", "median", "sel", "tfrac",
+                                 "ofrac", "n", "q", "route")}
+                               for r in payload.get("rows", [])]
+        elif event == "highlight":
+            self.highlights.append(
+                {"gene": payload.get("gene"),
+                 "predicted_partner_residues": payload.get("residues"),
+                 "compounds": [{k: c.get(k) for k in ("name", "score", "residues")}
+                               for c in payload.get("ligands", [])]})
+        elif event == "paper":
+            self.papers += 1
+        self._emit(event, payload)
+
+    def record(self) -> dict:
+        return {"stages": self.stages, "shortlist": self.candidates,
+                "papers_retrieved": self.papers,
+                "partner_site_and_compounds": self.highlights}
+
+
 def _screen_files(genes: list[str]) -> list[Path]:
     """Screens to consider, most specific first.
 
@@ -263,7 +304,7 @@ def _named_genes(question: str, tf_path, partner: str) -> list[str]:
 
 def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
                    decided_by: str, interface_evidence: dict, free_receptor,
-                   predict: str | None = None) -> None:
+                   predict: str | None = None, require_site: bool = False) -> None:
     """Answer a gene question that names no disease.
 
     Everything that needs a cohort abstains and says why; everything that needs
@@ -327,7 +368,7 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
                + (f" {len(errors)} axis search(es) failed." if errors else "")})
 
     _structure_site_and_screen(emit, cfg, named, interface_evidence, free_receptor,
-                               predict)
+                               predict, require_site)
 
     emit("stage", {
         "id": "experiment", "state": "done",
@@ -336,13 +377,22 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
         "note": "Named a gene but no cohort, so the next step is structural, not "
                 "genetic: `python scripts/predict_med23_interface.py "
                 f"{named[0]} --accession <UNIPROT> --dispatch`."})
+    if A.available():
+        text, _ = A.answer(trace, question, emit.record()
+                           if isinstance(emit, _Recorder) else {})
+        if text:
+            emit("answer", {"text": text, "model": A.MODEL,
+                            "caveat": "Written by the model from the record of this "
+                                      "run. Every number in it was computed by a "
+                                      "stage above."})
     emit("thinking", {"trace": trace.as_dict()})
     emit("done", {"ok": True})
 
 
 def _structure_site_and_screen(emit, cfg, genes: list[str],
                                interface_evidence: dict, free_receptor,
-                               predict: str | None = None) -> None:
+                               predict: str | None = None,
+                               require_site: bool = False) -> None:
     """Everything downstream of the shortlist that depends only on the partner.
 
     Split out of `run_live` because it is the half of the pipeline that does
@@ -474,13 +524,39 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # as recorded, exactly as `data.json` labels the cold-start landscape. A
     # screen that never ran and a screen that ran earlier are different
     # results and the interface says which one it is showing.
+    # A request can forbid the screen. "Only if a localized partner-side site is
+    # supported, proceed to screening; otherwise abstain and state what is
+    # missing" is control flow, and until this gate existed the pipeline read it
+    # as a disease name and screened anyway — answering a question nobody asked,
+    # confidently. Support means one of two things and neither is the curated
+    # cavity: a documented interaction with a mapped region on this partner, or
+    # an ensemble that converged.
+    supported = consensus is not None or bool(mapped)
     screen = _recorded_screen(site, genes)
-    if site is None or not site.defensible:
+    if require_site and not supported:
+        missing = []
+        if not mapped:
+            missing.append("no candidate here has a documented interaction with a "
+                           f"mapped region on {cfg.partner_gene}")
+        if consensus is None:
+            missing.append("no ensemble has converged on an interface for any of "
+                           "them")
+        emit("stage", {
+            "id": "screening", "state": "abstained",
+            "detail": "the request gated the screen on a supported partner-side site",
+            "note": ("; ".join(missing) + ". The only site on file is the curated "
+                     "ELK1 cavity, which is calibration and not support for these "
+                     "candidates, so nothing was docked. Predicting an interface "
+                     "for one of them is the step that would change this.")})
+        screen, poses = None, []
+    elif site is None or not site.defensible:
+        poses = []
         emit("stage", {
             "id": "screening", "state": "abstained",
             "detail": "no defensible site, so no screen",
             "note": "Docking without a site finds something everywhere and means nothing."})
     elif screen is None:
+        poses = []
         emit("stage", {
             "id": "screening", "state": "pending",
             "detail": "ready to dock against the site above",
@@ -533,6 +609,7 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
     """Stream the real pipeline for one question. `emit(event, payload)` per step."""
     ge_path, model_path, tf_path = data_paths
     interface_evidence = interface_evidence or {}
+    emit = _Recorder(emit)
 
     if not Path(ge_path).exists():
         emit("stage", {"id": "question", "state": "blocked",
@@ -555,8 +632,20 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
     trace = A.AgentTrace()
     options = vocabulary(model)
     m, why, decided_by = None, "", "token match"
+    policy = {"require_interface_site": False, "quote": None}
 
     if A.available():
+        # What the request demands of the pipeline, before anything runs. A
+        # request can gate a stage, and a gate nobody read is a gate nobody
+        # honoured.
+        policy, _ = A.read_request(trace, question)
+        emit("thinking", {"trace": trace.as_dict()})
+        if policy["require_interface_site"]:
+            emit("policy", {"require_interface_site": True,
+                            "quote": policy.get("quote"),
+                            "note": "The screen will run only where a partner-side "
+                                    "site is supported. Otherwise it abstains and "
+                                    "says what is missing."})
         choice, reason, call = A.decide_context(trace, question, options)
         emit("thinking", {"trace": trace.as_dict()})
         if call is not None and not call.error:
@@ -580,7 +669,8 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         named = _named_genes(question, tf_path, cfg.partner_gene)
         if named:
             _partner_first(question, named, cfg, emit, trace, why, decided_by,
-                           interface_evidence, free_receptor, predict)
+                           interface_evidence, free_receptor, predict,
+                           policy["require_interface_site"])
             return
         emit("stage", {"id": "question", "state": "blocked",
                        "detail": question or "no question given",
@@ -784,7 +874,8 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         "note": "Cancer-cell selectivity is not normal-tissue safety."})
 
     _structure_site_and_screen(emit, cfg, [v.gene for v in top],
-                               interface_evidence, free_receptor, predict)
+                               interface_evidence, free_receptor, predict,
+                               policy["require_interface_site"])
 
     # ── next experiment ────────────────────────────────────────────────────
     emit("stage", {
@@ -796,5 +887,13 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
                  "that gap is what unblocks the rest." if top
                  else ("Either this context is not TF-addicted, or it needs finer "
                        "resolution than " + m.level + ". Both are results."))})
+    if A.available():
+        text, _ = A.answer(trace, question, emit.record()
+                           if isinstance(emit, _Recorder) else {})
+        if text:
+            emit("answer", {"text": text, "model": A.MODEL,
+                            "caveat": "Written by the model from the record of this "
+                                      "run. Every number in it was computed by a "
+                                      "stage above."})
     emit("thinking", {"trace": trace.as_dict()})
     emit("done", {"ok": True})
