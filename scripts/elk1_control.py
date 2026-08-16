@@ -59,7 +59,11 @@ def build_input(elk1: str, med23: str, samples: int, seed: int):
             {"id": "B", "sequence": tad, "entity_type": "protein"},
         ],
     }]
-    cfg = Boltz2Config(diffusion_samples=samples, include_pae_matrix=True, seed=seed)
+    # device="modal" marks this as remote; dispatch_to_modal swaps it for the
+    # container's physical device. Without it the config would carry "cuda",
+    # which is meaningless on the caller's machine.
+    cfg = Boltz2Config(diffusion_samples=samples, include_pae_matrix=True,
+                       seed=seed, device="modal")
     return Boltz2Input(complexes=complexes), cfg, tad
 
 
@@ -86,10 +90,12 @@ def main() -> int:
         print("\n--dry-run: nothing dispatched")
         return 0
 
-    # dispatch_to_modal, not run_boltz2: the local path builds a CUDA env that
-    # has no macOS-ARM wheels, and this is GPU work regardless. The app is
-    # deployed by `proto-tools deploy --apps boltz2`.
-    from proto_tools.modal import dispatch_to_modal
+    # `run_boltz2` runs LOCALLY: it builds ~/.proto/proto_tool_envs/boltz2_env
+    # and needs boltz[cuda], whose cuequivariance-ops-cu12 has no macOS-ARM
+    # wheel — the exact trap the handoff names. It printed "dispatching to
+    # Modal" and then failed a local resolve. `dispatch_to_modal` is the remote
+    # path; the logical device is translated to the container's physical one.
+    from proto_tools.modal.client import dispatch_to_modal
     OUT.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     print("\ndispatching to Modal ...")
@@ -102,25 +108,21 @@ def main() -> int:
     print(f"returned in {dt:.0f}s ({dt/max(a.samples,1):.0f}s per sample)")
 
     payload = result.model_dump(mode="json")
-
-    # Write structures separately. Truncating one giant JSON corrupts it, and a
-    # corrupt artifact is worse than a large one.
+    # Write structures and PAE beside the record. Truncating one giant JSON
+    # corrupts it, and a corrupt artifact is worse than a large one.
     structs = payload.get("structures") or []
     for i, st in enumerate(structs):
         for field in ("structure", "cif", "pdb", "content"):
             blob = st.get(field)
             if isinstance(blob, str) and len(blob) > 2000:
-                path = OUT / f"sample_{i}.cif"
-                path.write_text(blob)
-                st[field] = f"<written to {path.name}>"
+                (OUT / f"sample_{i}.cif").write_text(blob)
+                st[field] = f"<written to sample_{i}.cif>"
                 break
-        pae = st.get("pae")
-        if pae is not None:
-            (OUT / f"sample_{i}_pae.json").write_text(json.dumps(pae))
+        if st.get("pae") is not None:
+            (OUT / f"sample_{i}_pae.json").write_text(json.dumps(st["pae"]))
             st["pae"] = f"<written to sample_{i}_pae.json>"
-    out_path = OUT / f"boltz_{a.samples}x.json"
-    out_path.write_text(json.dumps(payload, indent=2))
-    print(f"wrote {out_path} plus {len(structs)} structure file(s)")
+    (OUT / f"boltz_{a.samples}x.json").write_text(json.dumps(payload, indent=2))
+    print(f"wrote {OUT / f'boltz_{a.samples}x.json'}")
 
     # Surface the interface-specific numbers, not the global ones (spec section 8).
     for key in ("iptm", "pair_chains_iptm", "protein_iptm", "complex_plddt",
