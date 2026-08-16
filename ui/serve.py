@@ -85,6 +85,35 @@ DATA = json.loads((UI / "data.json").read_text(encoding="utf-8"))
 # this server is left open for hours at a time and a session holds a whole run.
 SESSIONS = sessions.Store()
 
+def _router_ask(session):
+    """A one-call model interface for the follow-up router, or None.
+
+    `sessions` stays stdlib-only, so the model reaches it as an injected
+    callable rather than an import. Returns None when reading is unavailable,
+    which puts the router back on its patterns alone — the behaviour before
+    this existed.
+
+    The call is recorded on the session's trace like every other, so a route
+    the model chose is visible in the reasoning rail rather than being an
+    invisible decision about what not to compute.
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "src"))
+        from reagent_workflow import agent as A
+    except Exception:                              # noqa: BLE001
+        return None
+    if not A.available():
+        return None
+    trace = (session.runtime or {}).get("trace") or A.AgentTrace()
+    session.runtime.setdefault("trace", trace)
+
+    def ask(system: str, prompt: str) -> str:
+        call = A.ask(trace, "route follow-up", system, prompt, max_tokens=16)
+        return getattr(call, "reply", "") or ""
+    return ask
+
+
+
 
 def _parse_search(stdout: str) -> list[dict]:
     """Pull papers out of `paperclip search` output.
@@ -251,7 +280,8 @@ class Handler(SimpleHTTPRequestHandler):
                       # The fold button names one candidate on a run that already
                       # happened. Reading that back out of free text would be a
                       # worse way to learn something the caller stated outright.
-                      if predict else sessions.classify(q, session.record))
+                      if predict else sessions.classify(q, session.record,
+                                                        ask=_router_ask(session)))
             session.questions.append(q)
 
             self._sse("session", {
