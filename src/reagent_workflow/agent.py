@@ -325,7 +325,7 @@ The pipeline runs: dependency scan -> literature -> interface evidence -> \
 druggable site -> small-molecule screen. Every stage runs by default. Your job \
 is to notice when the request says a stage must NOT run unless something holds.
 
-The only condition the pipeline can enforce is this one:
+Two things the pipeline can honour:
 
   require_interface_site — the request says to screen compounds only if there \
 is support for a site on the partner protein (a documented interaction with a \
@@ -333,12 +333,22 @@ mapped region, or a converged structural prediction), and otherwise to abstain \
 and say what is missing. Phrasings that mean this: "only if ... proceed to \
 screening", "do not dock unless", "gate the screen on", "abstain otherwise".
 
+  predict_interface — the request asks for a structural prediction to be RUN: \
+"run boltz2", "fold the complex", "co-fold them", "predict the interface", \
+"model the interaction". This is an instruction, not a condition, and it holds \
+even when the request phrases it as following from something else ("for the \
+ones that do, run boltz2"): a prediction is how the interaction gets \
+established when the literature has not established it, so asking for one is \
+asking for it to run rather than asking for it only if it is already \
+unnecessary.
+
 A request that simply asks for targets, evidence, or compounds places no \
-condition: return false. Do not infer a condition from a request being \
-detailed. Returning false is the common and correct answer.
+condition and asks for no prediction: return false for both. Do not infer \
+either from a request being detailed. False is the common and correct answer.
 
 Reply with JSON only:
-{"require_interface_site": true|false, "quote": "<the words that say so, or null>"}"""
+{"require_interface_site": true|false, "predict_interface": true|false, \
+"quote": "<the words that say so, or null>"}"""
 
 
 def read_request(trace: AgentTrace, question: str) -> tuple[dict, object]:
@@ -353,14 +363,17 @@ def read_request(trace: AgentTrace, question: str) -> tuple[dict, object]:
     the pipeline cannot enforce is not returned as one it can.
     """
     if not question.strip():
-        return {"require_interface_site": False, "quote": None}, None
+        return {"require_interface_site": False, "predict_interface": False,
+                "quote": None}, None
     call = ask(trace, "read_request", READ_REQUEST_SYSTEM,
                f"Request:\n{question}\n\nWhat conditions does it place? JSON only.",
                max_tokens=300)
     if call.error:
-        return {"require_interface_site": False, "quote": None}, call
+        return {"require_interface_site": False, "predict_interface": False,
+                "quote": None}, call
     data = _json_block(call.reply) or {}
     return ({"require_interface_site": bool(data.get("require_interface_site")),
+             "predict_interface": bool(data.get("predict_interface")),
              "quote": data.get("quote")}, call)
 
 
