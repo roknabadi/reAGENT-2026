@@ -752,7 +752,7 @@ def _named_genes(question: str, tf_path, partner: str) -> list[str]:
 def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
                    decided_by: str, interface_evidence: dict, free_receptor,
                    predict: str | None = None, require_site: bool = False,
-                   predict_asked: bool = False) -> None:
+                   predict_asked: bool = False, design: bool = False) -> None:
     """Answer a gene question that names no disease.
 
     Everything that needs a cohort abstains and says why; everything that needs
@@ -859,7 +859,7 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
         emit.runtime.setdefault("interface_evidence", interface_evidence)
     _structure_site_and_screen(emit, cfg, named, interface_evidence, free_receptor,
                                predict, require_site, trace,
-                               predict_asked=predict_asked)
+                               predict_asked=predict_asked, design=design)
 
     emit("stage", {
         "id": "experiment", "state": "done",
@@ -884,7 +884,8 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
                                interface_evidence: dict, free_receptor,
                                predict: str | None = None,
                                require_site: bool = False, trace=None,
-                               predict_asked: bool = False) -> None:
+                               predict_asked: bool = False,
+                               design: bool = False) -> None:
     """Everything downstream of the shortlist that depends only on the partner.
 
     Split out of `run_live` because it is the half of the pipeline that does
@@ -1116,7 +1117,21 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # `require_site` can no longer be the thing that turns this check on; it
     # can only sharpen the message when the request said so explicitly.
     supported = consensus is not None or bool(mapped)
-    screen = _recorded_screen(site, genes)
+    # A request to design compounds is a request for compounds that did not
+    # exist before it was made. Serving the recorded screen would answer it with
+    # twelve approved drugs somebody docked last week — true, reproducible, and
+    # not what was asked. `_live_screen` proposes a library from this site's own
+    # residues and chemistry, checks every structure, and docks what survives.
+    screen = None if design else _recorded_screen(site, genes)
+    if design:
+        emit("stage", {
+            "id": "screening", "state": "running",
+            "detail": "designing a library for this site rather than reusing one",
+            "note": "The request asked for compounds to be designed. Nothing on "
+                    "file is served for it: the library is proposed from this "
+                    "site's residues and their chemistry, every structure is "
+                    "standardized and checked against PubChem by InChIKey, and "
+                    "what fails either check is reported rather than dropped."})
     if not supported:
         missing = []
         if not mapped:
@@ -1376,7 +1391,8 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
             _partner_first(question, named, cfg, emit, trace, why, decided_by,
                            interface_evidence, free_receptor, predict,
                            policy["require_interface_site"],
-                           predict_asked=bool(policy.get("predict_interface")))
+                           predict_asked=bool(policy.get("predict_interface")),
+                           design=bool(policy.get("design_compounds")))
             return emit.state()
         emit("stage", {"id": "question", "state": "blocked",
                        "detail": question or "no question given",
@@ -1671,7 +1687,8 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
     _structure_site_and_screen(emit, cfg, downstream,
                                interface_evidence, free_receptor, predict,
                                policy["require_interface_site"], trace,
-                               predict_asked=bool(policy.get("predict_interface")))
+                               predict_asked=bool(policy.get("predict_interface")),
+                               design=bool(policy.get("design_compounds")))
 
     # ── next experiment ────────────────────────────────────────────────────
     emit("stage", {

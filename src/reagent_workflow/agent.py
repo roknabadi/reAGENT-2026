@@ -342,13 +342,21 @@ established when the literature has not established it, so asking for one is \
 asking for it to run rather than asking for it only if it is already \
 unnecessary.
 
+  design_compounds — the request asks for compounds to be DESIGNED or \
+PROPOSED for this site rather than for whatever screen is already on file: \
+"design molecules", "generate candidates", "propose a library", "invent", \
+"come up with compounds", "novel", "new molecules". Asking to *screen* or to \
+*show* compounds is not this; asking for something that did not exist before \
+is.
+
 A request that simply asks for targets, evidence, or compounds places no \
-condition and asks for no prediction: return false for both. Do not infer \
-either from a request being detailed. False is the common and correct answer.
+condition, asks for no prediction and asks for no design: return false for all \
+three. Do not infer any of them from a request being detailed. False is the \
+common and correct answer.
 
 Reply with JSON only:
 {"require_interface_site": true|false, "predict_interface": true|false, \
-"quote": "<the words that say so, or null>"}"""
+"design_compounds": true|false, "quote": "<the words that say so, or null>"}"""
 
 
 def read_request(trace: AgentTrace, question: str) -> tuple[dict, object]:
@@ -364,16 +372,17 @@ def read_request(trace: AgentTrace, question: str) -> tuple[dict, object]:
     """
     if not question.strip():
         return {"require_interface_site": False, "predict_interface": False,
-                "quote": None}, None
+                "design_compounds": False, "quote": None}, None
     call = ask(trace, "read_request", READ_REQUEST_SYSTEM,
                f"Request:\n{question}\n\nWhat conditions does it place? JSON only.",
                max_tokens=300)
     if call.error:
         return {"require_interface_site": False, "predict_interface": False,
-                "quote": None}, call
+                "design_compounds": False, "quote": None}, call
     data = _json_block(call.reply) or {}
     return ({"require_interface_site": bool(data.get("require_interface_site")),
              "predict_interface": bool(data.get("predict_interface")),
+             "design_compounds": bool(data.get("design_compounds")),
              "quote": data.get("quote")}, call)
 
 
