@@ -188,3 +188,59 @@ class DummyCfg:
         contact_cutoff_angstrom = 4.5
         min_dominant_cluster_fraction = 0.6
         min_contact_occupancy = 0.6
+
+
+class CuratedPocketOwnPartnerTests(unittest.TestCase):
+    """The pocket's own partner is supported by it. Nobody else is.
+
+    `calibration_only` keeps ELK1 out of a shortlist, which is right — it must
+    never be presented as a discovered target. It was also dropping ELK1 from
+    the `mapped` set, so a question about the ELK1–MED23 interface was refused a
+    screen against the cavity that binds ELK1, on the grounds that the cavity is
+    "not support for these candidates". The candidate was ELK1, and the
+    coordinates come from the ELK1 complex. The note said both things in one
+    sentence: "the cavity that binds ELK1 — calibration, not a site established
+    for ELK1".
+    """
+
+    def _entry(self):
+        from reagent_workflow.site import CURATED_POCKETS
+        return CURATED_POCKETS["MED23"]
+
+    def test_the_pocket_records_the_partner_it_was_mapped_with(self):
+        """The whole fix rests on this field being the thing it claims to be."""
+        e = self._entry()
+        self.assertEqual(e["partner"], "ELK1")
+        self.assertIn("9F6Y", e["source"])
+
+    def test_support_is_granted_to_the_partner_and_nobody_else(self):
+        entry = self._entry()
+        partner = entry["partner"].upper()
+        for genes, expected in ((["ELK1"], True), (["elk1"], True),
+                                (["ELK1", "E2F1"], True),
+                                (["E2F1"], False), (["FOXA1", "NKX2-1"], False),
+                                ([], False)):
+            with self.subTest(genes=genes):
+                own = [g for g in genes if g.upper() == partner]
+                self.assertEqual(bool(own), expected,
+                                 f"{genes} should {'' if expected else 'not '}"
+                                 "be supported by ELK1's pocket")
+
+    def test_the_source_note_no_longer_contradicts_itself(self):
+        """It said the cavity binds ELK1 and was not a site established for ELK1."""
+        import inspect
+        src = inspect.getsource(P._structure_site_and_screen)
+        self.assertIn("own site, mapped on the", src)
+        self.assertIn("for any \"\n                           \"other transcription factor",
+                      src.replace("'", '"'))
+
+    def test_the_note_keeps_the_two_structures_apart(self):
+        """Mapped on the complex, applied to the apo receptor.
+
+        Written as "screened against the free receptor" alone, the answer read
+        it as "never seen with the TF bound, so only calibration" — the opposite
+        of what 9F6Y is.
+        """
+        import inspect
+        src = inspect.getsource(P._structure_site_and_screen)
+        self.assertIn("mapped on the complex and applied", src)
