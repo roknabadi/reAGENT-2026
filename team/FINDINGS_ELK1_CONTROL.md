@@ -1,15 +1,26 @@
-# ELK1–MED23 positive control: RETRACTED, and why
+# ELK1–MED23 positive control
 
-**The run of 2026-08-15 is void. It did not test what it claimed to test, and
-the conclusion drawn from it — "the control fails" — is withdrawn.**
+**Result, 2026-08-15, against real MED23: one sample in five recovers the
+published site exactly. Our consensus rule discards it.**
+
+Jump to [the result](#the-result-med23-q9ulk4-5-seeds). The retraction below
+concerns the earlier run against the wrong protein and is kept because the
+correction is the reason the result exists.
+
+---
+
+# The earlier run: RETRACTED, and why
+
+**The first run of 2026-08-15 is void. It did not test what it claimed to test,
+and the conclusion drawn from it — "the control fails" — is withdrawn.**
 
 The control docked the ELK1 transactivation domain onto **MED24 (O75448, 989
 aa)**, not MED23 (Q9ULK4, 1368 aa), and then scored the answer against MED23
 residue numbering taken from PDB 9F6Y. Every number in the previous version of
 this document is a measurement of the wrong complex judged by the wrong ruler.
 
-Nothing about Boltz2's ability to recover this interface has been established,
-in either direction.
+Nothing about Boltz2's ability to recover this interface was established by that
+run, in either direction. The run that did establish something is below.
 
 ## What was wrong
 
@@ -81,15 +92,103 @@ about numbers that came from the wrong protein.
    bug replayed: MED24's real UniProt entry offered as the partner must fail on
    both counts.
 
-## Still open
+---
 
-The control itself. It has not been run against MED23. Re-running it is the
-next step; until it has, **no claim about Boltz2's performance on this interface
-is supported**, including the cautious ones.
+# The result: MED23 (Q9ULK4), 5 seeds
 
-When it does run, the caveat that was true before is still true: the submitted
-ELK1 is unmodified, while the native interaction depends on pSer383, so the
-model is being asked for an interaction whose real form it cannot represent.
+Five independent dispatches, seeds 20260815–20260819, 1460 residues per complex,
+549 s total (110 s per sample). No contact constraints, no complex template.
+Scored by `scripts/score_elk1_control.py`.
+
+| sample | ipTM | contacts | ELK1 res | in motif | MED23 res | **in pocket** | by chance |
+|---|---|---|---|---|---|---|---|
+| s0 | 0.239 | 177 | 66 | 11/11 | 84 | 0/7 | 0.43 |
+| s1 | 0.457 | 232 | 79 | 11/11 | 107 | 0/7 | 0.55 |
+| **s2** | **0.481** | 250 | 68 | 6/11 | 118 | **7/7** | 0.60 |
+| s3 | 0.436 | 194 | 70 | 7/11 | 87 | 0/7 | 0.45 |
+| s4 | 0.463 | 203 | 61 | 8/11 | 97 | 0/7 | 0.50 |
+
+**Sample 2 finds the published site, and finds it specifically.** All seven
+pocket residues — 339, 343, 379, 382, 383, 533, 537 — and the contact the paper
+singles out:
+
+> "F378-Elk-1 is surrounded in MED23 by side chains from residues I339, L343
+> (H19), F379, G382, S383 (H21), and V533 and M537 (H28)" (PMC12015215 L23)
+
+Sample 2 places **F378 3.17 Å from M537 and 4.33 Å from V533**, with I339 4.36 Å
+from S376. That is the described contact, from sequence alone.
+
+It is not luck. Sample 2 contacts 118 of MED23's 1368 residues, so the chance of
+all seven pocket residues falling among them at random is **3.0 × 10⁻⁸**.
+
+## What the pipeline does with it: discards it
+
+`build_consensus` refuses, and would have suppressed the correct answer:
+
+```
+consensus  : converged=False support=0.40
+  BLOCKER  : ensemble did not converge: dominant interface in 2/5 samples (40%),
+             below the 60% floor
+  BLOCKER  : the reproducible target region spans 62 residues, beyond the
+             40-residue limit for a compact segment
+```
+
+The dominant cluster is **samples 0 and 1 — both 0/7**. Sample 2 is a singleton;
+its Jaccard overlap with the others is 0.07–0.17. Majority vote over an ensemble
+puts the right answer in a minority of one and reports the wrong one as dominant.
+
+This is a finding about our selection rule, not about Boltz2. The ensemble
+*contained* the answer. Nothing in the pipeline could tell.
+
+## Can anything pick the winner?
+
+Partially, and not reliably enough to use yet.
+
+- **ipTM ranks it first**: 0.481 for the correct sample, above 0.463, 0.457,
+  0.436, 0.239. But the margin over a **0/7** sample is **0.018**, and all five
+  sit below the 0.60 floor — a floor gate rejects the correct sample too. One
+  case, one pair: this is a hypothesis to test, not a rule to adopt.
+- **Motif recovery is worse than useless — it is anti-correlated.** The correct
+  sample scores **6/11**, the lowest of the five; the two samples at **11/11**
+  are both 0/7. A sample that drapes the disordered window across the surface
+  hits the whole motif; the one that inserts F378 into a cavity commits fewer
+  residues. Any scorer weighting motif coverage would have ranked sample 2 last.
+- `complex_plddt` is flat (0.836–0.846) and separates nothing.
+
+## What this establishes
+
+- **Boltz2 can recover this interface from sequence alone, without constraints
+  or a template.** Once in five seeds, at a precision that is not chance.
+- **A single prediction is not enough, and neither is a majority.** The result
+  exists only because five seeds ran; it survives only if a minority cluster can
+  win.
+- **The 60% convergence floor is wrong for this problem as stated.** It encodes
+  "most samples agree" when the question is "did any sample find something real".
+  Loosening it blindly admits noise — four wrong answers here are also singletons
+  or pairs — so the fix is a discriminator, not a lower threshold.
+- Global confidence still reports the wrong thing: `ptm` 0.860 and
+  `complex_plddt` 0.843 across samples that are mostly wrong about the interface.
+
+## What this does not establish
+
+- **1 of 5 is not a recovery rate.** Five seeds on one pair gives a wide
+  interval; 20% is the point estimate and little more.
+- The submitted ELK1 is unmodified, while the native interaction depends on
+  pSer383. The model was asked for an interaction whose real form it cannot
+  represent — and still found the site once. That makes the caveat more
+  interesting, not less, but it is still a caveat.
+- No claim of binding, affinity, or experimental validation follows from this.
+  It is a computational prediction that matches a published structure.
+
+## Next
+
+1. More seeds on this pair — is the hit rate ~20%, and does ipTM keep ranking
+   the correct sample first as n grows? That is the only cheap way to find out
+   whether the 0.018 margin is signal.
+2. A discriminator that is not majority vote. Interface pLDDT restricted to
+   contact residues, or PAE across the interface, are both already in the
+   payload and neither has been looked at per-sample.
+3. Re-run with pSer383 if Boltz2 can take a modified residue.
 
 Reproduce:
 
