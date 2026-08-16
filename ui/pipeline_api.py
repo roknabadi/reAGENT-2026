@@ -34,6 +34,7 @@ on the strength of a different stage's success.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -44,7 +45,7 @@ from dependency_scout.models import MediatorLink
 from reagent_workflow import agent as A
 from reagent_workflow import verdict as V
 from reagent_workflow.interface import InterfaceConsensus, parse_mmcif
-from reagent_workflow.literature import gather
+from reagent_workflow.literature import AXES, gather
 from reagent_workflow.resolve import resolve, vocabulary
 from reagent_workflow.site import build_search_site, receptor_residues
 
@@ -126,6 +127,275 @@ def _model_table(model_path) -> pd.DataFrame:
                                             "OncotreeSubtype"])
 
 
+def _named_genes(question: str, tf_path, partner: str) -> list[str]:
+    """Gene symbols the question names, from the catalogues this project uses.
+
+    Uppercase tokens only. Symbols are conventionally written that way, and the
+    TF catalogue contains MAX, REST, JUN and FOS — matching case-insensitively
+    would turn "the rest of the signal" into a gene question. A user who types
+    a symbol in lower case gets the ordinary no-context refusal, which is a
+    better failure than answering about the wrong protein.
+    """
+    tokens = set(re.findall(r"\b[A-Z][A-Z0-9]{2,}\b", question or ""))
+    if not tokens:
+        return []
+    from dependency_scout.depmap import load_tf_universe
+    try:
+        universe = load_tf_universe(str(tf_path))
+    except Exception:
+        universe = set()
+    hits = sorted(tokens & (universe | {partner.upper()}))
+    # The partner alone is a legitimate question ("what binds MED23?"), but it
+    # is the receptor, not a candidate, so it never becomes a highlight key.
+    return [h for h in hits if h != partner.upper()] or (
+        [partner.upper()] if partner.upper() in tokens else [])
+
+
+def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
+                   decided_by: str, interface_evidence: dict, free_receptor) -> None:
+    """Answer a gene question that names no disease.
+
+    Everything that needs a cohort abstains and says why; everything that needs
+    only the gene and the partner runs. The result is the honest half of the
+    pipeline rather than a blocked page — and the half that runs is the half a
+    question phrased this way was actually asking about.
+    """
+    emit("stage", {
+        "id": "question", "state": "done", "detail": question,
+        "note": (f"no disease context ({why or 'none named'}; decided by "
+                 f"{decided_by}), so this is answered as an interface question "
+                 f"about {', '.join(named)} and {cfg.partner_gene}. Dependency "
+                 "ranking needs a cohort and is abstained below.")})
+    for sid in ("discovery", "ranking", "specificity"):
+        emit("stage", {
+            "id": sid, "state": "abstained",
+            "detail": "no disease context to screen against",
+            "note": "A dependency is a statement about a cohort of models. "
+                    "Without one there is nothing to rank, and ranking on the "
+                    "whole of DepMap would answer a question nobody asked."})
+
+    # Three axes, not six. The three that are dropped — dependency, driver,
+    # normal tissue — all read `{context}`, and a question with no disease has
+    # nothing to put there; searching them anyway spends a subprocess each on a
+    # query with a hole in it. The three kept are the ones a contact question is
+    # actually asking, and cutting the other three roughly halves the wait.
+    axes = {k: v for k, v in AXES.items()
+            if k in ("coactivator", "structure", "activation_domain")}
+    emit("stage", {"id": "literature", "state": "running",
+                   "detail": f"{len(axes)} interface axes for {', '.join(named)}"})
+    total_on, hits, errors, read = 0, 0, [], {}
+    for gene in named[:2]:          # two is enough to keep a demo interactive
+        ev, papers, errs = gather(gene, "", cfg.partner_gene, axes=axes, per_axis=4)
+        errors.extend(errs)
+        for p in papers:
+            emit("paper", {"title": p.title, "id": p.accession, "url": p.url,
+                           "abstract": p.abstract, "axis": p.axis,
+                           "gene": gene, "support": p.suggested_support})
+        total_on += len(papers)
+        hits += len(ev.axes_with_hits)
+        verdict_ev = {"contact_documented": False, "support": "none",
+                      "note": "not assessed"}
+        if A.available():
+            verdict_ev, _ = A.read_evidence(trace, gene, papers)
+            emit("thinking", {"trace": trace.as_dict()})
+        read[gene] = verdict_ev
+        emit("evidence", {"gene": gene, "axes": {
+            a: {"on_target": r.n_on_target, "returned": r.n_papers,
+                "note": r.note, "query": r.query} for a, r in ev.axes.items()},
+            "read": verdict_ev})
+
+    documented = [g for g, r in read.items() if r.get("contact_documented") is True]
+    emit("stage", {
+        "id": "literature", "state": "done" if total_on else "abstained",
+        "detail": f"{total_on} on-target papers across {hits} axes with hits",
+        "note": ("Read, not just retrieved: the model was asked whether these "
+                 "abstracts document a physical contact. "
+                 + (f"Contact reported for {', '.join(documented)}."
+                    if documented else
+                    "No abstract here documents a physical contact."))
+               + (f" {len(errors)} axis search(es) failed." if errors else "")})
+
+    _structure_site_and_screen(emit, cfg, named, interface_evidence, free_receptor)
+
+    emit("stage", {
+        "id": "experiment", "state": "done",
+        "detail": (f"co-fold {named[0]} with {cfg.partner_gene} and test whether the "
+                   "predicted interface survives an ensemble"),
+        "note": "Named a gene but no cohort, so the next step is structural, not "
+                "genetic: `python scripts/predict_med23_interface.py "
+                f"{named[0]} --accession <UNIPROT> --dispatch`."})
+    emit("thinking", {"trace": trace.as_dict()})
+    emit("done", {"ok": True})
+
+
+def _structure_site_and_screen(emit, cfg, genes: list[str],
+                               interface_evidence: dict, free_receptor) -> None:
+    """Everything downstream of the shortlist that depends only on the partner.
+
+    Split out of `run_live` because it is the half of the pipeline that does
+    not need a disease. The receptor, its pocket, and the compounds docked
+    into it are properties of MED23 and the library, not of the tumour that
+    was asked about — so a question naming a transcription factor and no
+    disease can still be answered here. Refusing to run any of it because
+    the dependency scan had nothing to scan threw away the half that did
+    have an answer.
+    """
+    # ── structure ──────────────────────────────────────────────────────────
+    #
+    # Nothing is folded inline: a co-fold of a 1,368-residue subunit with a TF
+    # is GPU minutes per sample and five samples per candidate, which is a
+    # costed decision, not something a page load should trigger. What this
+    # stage does is look for an ensemble a previous dispatch left on disk for
+    # the shortlisted candidates, and report honestly when there is none.
+    predicted = {g: _recorded_interface(g) for g in genes}
+    predicted = {g: p for g, p in predicted.items() if p is not None}
+    converged = {g: (c, r) for g, (c, r) in predicted.items() if c.converged}
+    # One site is boxed per run, so the consensus that can define it is the
+    # first candidate's — and only if that ensemble converged.
+    consensus = converged.get(genes[0], (None, None))[0] if genes else None
+
+    if converged:
+        emit("stage", {
+            "id": "structure", "state": "done",
+            "detail": "; ".join(
+                f"{g}–{cfg.partner_gene}: {c.dominant_cluster_samples}/"
+                f"{c.total_samples} samples agree ({c.ensemble_support:.0%})"
+                for g, (c, _) in converged.items()),
+            "note": "Boltz-2 ensembles from a prior GPU dispatch "
+                    "(scripts/predict_med23_interface.py), not folded for this "
+                    "question. Convergence across seeds is model self-consistency. "
+                    "A predicted interface is a hypothesis, not a contact."})
+    else:
+        rejected = [f"{g}: {'; '.join(c.blockers)[:90]}" for g, (c, _) in predicted.items()]
+        emit("stage", {
+            "id": "structure", "state": "abstained",
+            "detail": ("; ".join(rejected) if rejected
+                       else "no ensemble on file for any candidate in this run"),
+            "note": ("Ensembles that ran but did not converge highlight nothing."
+                     if rejected else
+                     "Structural discovery is a separate costed GPU step, not run "
+                     "inline. Dispatch one with `python "
+                     "scripts/predict_med23_interface.py <GENE> --accession <ACC> "
+                     "--dispatch`.")})
+
+    # ── druggable site ─────────────────────────────────────────────────────
+    #
+    # This stage used to go `done` whenever some candidate had
+    # `interacting_region_mapped`. Those are different claims. A mapped
+    # interacting region says a contact is documented somewhere on the TF; a
+    # druggable site is a box of receptor coordinates you can dock into. The
+    # interface reported the second on evidence for the first, so a run with no
+    # structure at all showed a completed site stage.
+    #
+    # `receptor_residues` allows exactly two origins — an ensemble consensus,
+    # or a published receptor-side pocket — and returns blockers otherwise.
+    mapped = [g for g in genes
+              if (link := interface_evidence.get(g))
+              and link.interacting_region_mapped and not link.calibration_only]
+    #
+    # The curated origin is enabled here and labelled as what it is. The MED23
+    # pocket from PDB 9F6Y is receptor-side coordinates someone deposited, so it
+    # is a legal docking box; it is *where ELK1 binds*, so it is calibration and
+    # not a site established for whatever this run shortlisted. Both halves of
+    # that go on screen. `curated_for` is deliberately not passed: it would
+    # refuse the pocket for every TF except ELK1, which is the right guard when
+    # a caller is about to assert the site belongs to their TF, and the wrong
+    # one when the interface is showing a labelled calibration surface.
+    residues, basis, blockers = receptor_residues(cfg.partner_gene,
+                                                  consensus=consensus,
+                                                  allow_curated=True)
+    site = None
+    if not blockers and free_receptor and Path(free_receptor).exists():
+        site = build_search_site(parse_mmcif(Path(free_receptor)), residues,
+                                 cfg.structure, receptor_path=str(free_receptor))
+        site.basis = basis
+
+    if site is not None and site.defensible:
+        emit("stage", {
+            "id": "site", "state": "done",
+            "detail": (f"{site.size[0]:.1f} x {site.size[1]:.1f} x {site.size[2]:.1f} A "
+                       f"box on {cfg.partner_gene} around {len(site.residues)} residues"),
+            "note": (f"From {basis}. Screened against the free receptor, not a "
+                     "TF-occupied one. This is the cavity that binds ELK1 — "
+                     "calibration, not a site established for "
+                     + (", ".join(genes) if genes else "any candidate here")
+                     + "."),
+            "center": site.center, "size": site.size, "residues": site.residues})
+    else:
+        why = blockers or (site.blockers if site else
+                           [f"the free {cfg.partner_gene} structure is not on disk"])
+        emit("stage", {
+            "id": "site", "state": "abstained",
+            "detail": "; ".join(why)[:180],
+            "note": ("A docking box needs receptor-side coordinates: an ensemble "
+                     "consensus this run computed, or a published structure. "
+                     + (f"{len(mapped)} candidate(s) here have a documented "
+                        f"interacting region ({', '.join(mapped)}), which locates a "
+                        "contact on the TF and is not a pocket on "
+                        f"{cfg.partner_gene}." if mapped
+                        else "No candidate here has a documented contact either."))})
+
+    # ── screening ──────────────────────────────────────────────────────────
+    #
+    # Vina is minutes of CPU per compound, so the screen is not re-run per
+    # question — and it does not need to be: the box is a property of the
+    # receptor and the library, not of the disease context that was asked
+    # about. The recorded run is served with its seed and its file, labelled
+    # as recorded, exactly as `data.json` labels the cold-start landscape. A
+    # screen that never ran and a screen that ran earlier are different
+    # results and the interface says which one it is showing.
+    screen = _recorded_screen(site)
+    if site is None or not site.defensible:
+        emit("stage", {
+            "id": "screening", "state": "abstained",
+            "detail": "no defensible site, so no screen",
+            "note": "Docking without a site finds something everywhere and means nothing."})
+    elif screen is None:
+        emit("stage", {
+            "id": "screening", "state": "pending",
+            "detail": "ready to dock against the site above",
+            "note": f"No screen on file for this box. Run `python scripts/vina_smoke.py "
+                    f"--dock --json {SCREEN_FILE.relative_to(ROOT)}` to produce one."})
+    else:
+        s, poses = screen
+        emit("stage", {
+            "id": "screening", "state": "done",
+            "detail": (f"{s['scored']}/{s['docked']} compounds scored, "
+                       f"{s['clean_poses']} without geometry flags, best "
+                       f"{s['best']:.2f} kcal/mol"),
+            "note": (f"Recorded screen, seed {s['seed']}, from "
+                     f"{SCREEN_FILE.relative_to(ROOT)} — not re-run for this question; "
+                     "the box depends on the receptor, not the context. Approved-drug "
+                     "control library: a machinery check, not a designed screen. Vina "
+                     "scores rank poses — they are not affinities and not evidence of "
+                     "binding.")})
+
+    # What the 3D view highlights on MED23 for each shortlisted candidate. The
+    # two layers are different kinds of claim and stay separate: `ligands` are
+    # docked poses this project computed, `residues` would be a predicted
+    # interface, and there is no ensemble inline, so that list is empty and the
+    # panel says "not predicted" rather than borrowing the pocket.
+    for g in genes:
+        hit = converged.get(g)
+        residues = sorted(set(hit[1].get("partner_contact_residues", []))) if hit else []
+        emit("highlight", {
+            "gene": g, "residues": residues,
+            "ligands": poses if screen else [],
+            # The union of what the shown poses contact. Computed, not
+            # predicted and not observed: these are the residues a compound
+            # this project docked came within 4.5 A of.
+            "ligand_residues": sorted({r for p in (poses if screen else [])
+                                       for r in p["residues"]}),
+            "note": ((f"{len(residues)} {cfg.partner_gene} residues, from an ensemble "
+                      f"where {hit[0].dominant_cluster_samples}/{hit[0].total_samples} "
+                      "samples agree. A prediction, not a contact.") if hit else
+                     (f"No interface between {g} and {cfg.partner_gene} has been "
+                      "predicted, so nothing is highlighted for this candidate."))
+                    + (" The poses shown are docked into the ELK1 cavity."
+                       if screen else "")})
+
+
+
 def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
              interface_evidence: dict[str, MediatorLink] | None = None,
              top_n: int = 3, free_receptor: Path | None = None) -> None:
@@ -170,14 +440,26 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         why = res.note
 
     if m is None:
+        # A question can name no disease and still be answerable. "What binds
+        # the MED23 groove?" or "is there a documented ELK1–MED23 contact?" are
+        # partner questions: the receptor, its pocket and the compounds docked
+        # into it do not depend on a tumour, and the literature axes for a named
+        # gene do not either. Only the dependency scan needs a context, so only
+        # the dependency stages abstain.
+        named = _named_genes(question, tf_path, cfg.partner_gene)
+        if named:
+            _partner_first(question, named, cfg, emit, trace, why, decided_by,
+                           interface_evidence, free_receptor)
+            return
         emit("stage", {"id": "question", "state": "blocked",
                        "detail": question or "no question given",
                        "note": (why or "no disease context in this question "
                                        "matched the DepMap vocabulary")
-                               + f" (decided by {decided_by})"})
+                               + f" (decided by {decided_by}), and no gene this "
+                               + "project can answer about was named either"})
         for sid in DOWNSTREAM:
             emit("stage", {"id": sid, "state": "pending", "detail": "not run",
-                           "note": "waiting on a disease context"})
+                           "note": "waiting on a disease context or a named gene"})
         emit("done", {"ok": False})
         return
 
@@ -370,159 +652,8 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         "detail": f"{len(top)} candidate(s) with a selective dependency in {m.context}",
         "note": "Cancer-cell selectivity is not normal-tissue safety."})
 
-    # ── structure ──────────────────────────────────────────────────────────
-    #
-    # Nothing is folded inline: a co-fold of a 1,368-residue subunit with a TF
-    # is GPU minutes per sample and five samples per candidate, which is a
-    # costed decision, not something a page load should trigger. What this
-    # stage does is look for an ensemble a previous dispatch left on disk for
-    # the shortlisted candidates, and report honestly when there is none.
-    predicted = {v.gene: _recorded_interface(v.gene) for v in top}
-    predicted = {g: p for g, p in predicted.items() if p is not None}
-    converged = {g: (c, r) for g, (c, r) in predicted.items() if c.converged}
-    # One site is boxed per run, so the consensus that can define it is the top
-    # candidate's — and only if that ensemble converged.
-    consensus = converged.get(top[0].gene, (None, None))[0] if top else None
-
-    if converged:
-        emit("stage", {
-            "id": "structure", "state": "done",
-            "detail": "; ".join(
-                f"{g}–{cfg.partner_gene}: {c.dominant_cluster_samples}/"
-                f"{c.total_samples} samples agree ({c.ensemble_support:.0%})"
-                for g, (c, _) in converged.items()),
-            "note": "Boltz-2 ensembles from a prior GPU dispatch "
-                    "(scripts/predict_med23_interface.py), not folded for this "
-                    "question. Convergence across seeds is model self-consistency. "
-                    "A predicted interface is a hypothesis, not a contact."})
-    else:
-        rejected = [f"{g}: {'; '.join(c.blockers)[:90]}" for g, (c, _) in predicted.items()]
-        emit("stage", {
-            "id": "structure", "state": "abstained",
-            "detail": ("; ".join(rejected) if rejected
-                       else "no ensemble on file for any shortlisted candidate"),
-            "note": ("Ensembles that ran but did not converge highlight nothing."
-                     if rejected else
-                     "Structural discovery is a separate costed GPU step, not run "
-                     "inline. Dispatch one with `python "
-                     "scripts/predict_med23_interface.py <GENE> --accession <ACC> "
-                     "--dispatch`.")})
-
-    # ── druggable site ─────────────────────────────────────────────────────
-    #
-    # This stage used to go `done` whenever some candidate had
-    # `interacting_region_mapped`. Those are different claims. A mapped
-    # interacting region says a contact is documented somewhere on the TF; a
-    # druggable site is a box of receptor coordinates you can dock into. The
-    # interface reported the second on evidence for the first, so a run with no
-    # structure at all showed a completed site stage.
-    #
-    # `receptor_residues` allows exactly two origins — an ensemble consensus,
-    # or a published receptor-side pocket — and returns blockers otherwise.
-    mapped = [v.gene for v in top
-              if (link := interface_evidence.get(v.gene))
-              and link.interacting_region_mapped and not link.calibration_only]
-    #
-    # The curated origin is enabled here and labelled as what it is. The MED23
-    # pocket from PDB 9F6Y is receptor-side coordinates someone deposited, so it
-    # is a legal docking box; it is *where ELK1 binds*, so it is calibration and
-    # not a site established for whatever this run shortlisted. Both halves of
-    # that go on screen. `curated_for` is deliberately not passed: it would
-    # refuse the pocket for every TF except ELK1, which is the right guard when
-    # a caller is about to assert the site belongs to their TF, and the wrong
-    # one when the interface is showing a labelled calibration surface.
-    residues, basis, blockers = receptor_residues(cfg.partner_gene,
-                                                  consensus=consensus,
-                                                  allow_curated=True)
-    site = None
-    if not blockers and free_receptor and Path(free_receptor).exists():
-        site = build_search_site(parse_mmcif(Path(free_receptor)), residues,
-                                 cfg.structure, receptor_path=str(free_receptor))
-        site.basis = basis
-
-    if site is not None and site.defensible:
-        emit("stage", {
-            "id": "site", "state": "done",
-            "detail": (f"{site.size[0]:.1f} x {site.size[1]:.1f} x {site.size[2]:.1f} A "
-                       f"box on {cfg.partner_gene} around {len(site.residues)} residues"),
-            "note": (f"From {basis}. Screened against the free receptor, not a "
-                     "TF-occupied one. This is the cavity that binds ELK1 — "
-                     "calibration, not a site established for "
-                     + (", ".join(v.gene for v in top) if top else "any candidate here")
-                     + "."),
-            "center": site.center, "size": site.size, "residues": site.residues})
-    else:
-        why = blockers or (site.blockers if site else
-                           [f"the free {cfg.partner_gene} structure is not on disk"])
-        emit("stage", {
-            "id": "site", "state": "abstained",
-            "detail": "; ".join(why)[:180],
-            "note": ("A docking box needs receptor-side coordinates: an ensemble "
-                     "consensus this run computed, or a published structure. "
-                     + (f"{len(mapped)} candidate(s) here have a documented "
-                        f"interacting region ({', '.join(mapped)}), which locates a "
-                        "contact on the TF and is not a pocket on "
-                        f"{cfg.partner_gene}." if mapped
-                        else "No candidate here has a documented contact either."))})
-
-    # ── screening ──────────────────────────────────────────────────────────
-    #
-    # Vina is minutes of CPU per compound, so the screen is not re-run per
-    # question — and it does not need to be: the box is a property of the
-    # receptor and the library, not of the disease context that was asked
-    # about. The recorded run is served with its seed and its file, labelled
-    # as recorded, exactly as `data.json` labels the cold-start landscape. A
-    # screen that never ran and a screen that ran earlier are different
-    # results and the interface says which one it is showing.
-    screen = _recorded_screen(site)
-    if site is None or not site.defensible:
-        emit("stage", {
-            "id": "screening", "state": "abstained",
-            "detail": "no defensible site, so no screen",
-            "note": "Docking without a site finds something everywhere and means nothing."})
-    elif screen is None:
-        emit("stage", {
-            "id": "screening", "state": "pending",
-            "detail": "ready to dock against the site above",
-            "note": f"No screen on file for this box. Run `python scripts/vina_smoke.py "
-                    f"--dock --json {SCREEN_FILE.relative_to(ROOT)}` to produce one."})
-    else:
-        s, poses = screen
-        emit("stage", {
-            "id": "screening", "state": "done",
-            "detail": (f"{s['scored']}/{s['docked']} compounds scored, "
-                       f"{s['clean_poses']} without geometry flags, best "
-                       f"{s['best']:.2f} kcal/mol"),
-            "note": (f"Recorded screen, seed {s['seed']}, from "
-                     f"{SCREEN_FILE.relative_to(ROOT)} — not re-run for this question; "
-                     "the box depends on the receptor, not the context. Approved-drug "
-                     "control library: a machinery check, not a designed screen. Vina "
-                     "scores rank poses — they are not affinities and not evidence of "
-                     "binding.")})
-
-    # What the 3D view highlights on MED23 for each shortlisted candidate. The
-    # two layers are different kinds of claim and stay separate: `ligands` are
-    # docked poses this project computed, `residues` would be a predicted
-    # interface, and there is no ensemble inline, so that list is empty and the
-    # panel says "not predicted" rather than borrowing the pocket.
-    for v in top:
-        hit = converged.get(v.gene)
-        residues = sorted(set(hit[1].get("partner_contact_residues", []))) if hit else []
-        emit("highlight", {
-            "gene": v.gene, "residues": residues,
-            "ligands": poses if screen else [],
-            # The union of what the shown poses contact. Computed, not
-            # predicted and not observed: these are the residues a compound
-            # this project docked came within 4.5 A of.
-            "ligand_residues": sorted({r for p in (poses if screen else [])
-                                       for r in p["residues"]}),
-            "note": ((f"{len(residues)} {cfg.partner_gene} residues, from an ensemble "
-                      f"where {hit[0].dominant_cluster_samples}/{hit[0].total_samples} "
-                      "samples agree. A prediction, not a contact.") if hit else
-                     (f"No interface between {v.gene} and {cfg.partner_gene} has been "
-                      "predicted, so nothing is highlighted for this candidate."))
-                    + (" The poses shown are docked into the ELK1 cavity."
-                       if screen else "")})
+    _structure_site_and_screen(emit, cfg, [v.gene for v in top],
+                               interface_evidence, free_receptor)
 
     # ── next experiment ────────────────────────────────────────────────────
     emit("stage", {
