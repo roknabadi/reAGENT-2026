@@ -2,6 +2,24 @@
 
 Newest on top. Format: ../README.md
 
+## 2026-08-15 (3) — Vraj
+Did: structural-to-drug arm built and calibrated. `interface.py` consensus
+  (validated on PDB 9F6Y: recovers all 7 published MED23 pocket residues incl.
+  pSer383, hardened against 12 defects an independent tester found — a
+  register-shifted ladder used to read as "12/12 converged"). `site.py` builds the
+  docking box on the FREE receptor 9F76, 23.4x24.1x26.5 A from real coordinates.
+  `chemistry.py` full RDKit arm with the three-arm library. `discovery_config.py`
+  holds every threshold. `run_cancer.py` runs the whole chain from a cancer name.
+  Stress test: 12 lineages, 402 papers, 0 blocked, and it recovered the known
+  master regulator for 10 of them unprompted — SOX10/skin, MYB/myeloid,
+  IRF4/lymphoid, HNF1B/kidney, FLI1/bone, TP63/head-and-neck, ISL1/PNS, PAX8/ovary.
+  Breast and pancreas abstained, which is correct for both.
+  Paperclip now does 6 evidence axes per candidate per Andrey's brief.
+Next: hero run on FLI1/Bone once Boltz is available.
+Blocked: **Modal GPU needs a payment method in my workspace** — the image builds,
+  the H100 allocation is refused. Handed to Amir in team/HANDOFF_BOLTZ_AMIR.md;
+  three commands and about ten minutes if his workspace has credits.
+
 ## 2026-08-15 (2) — Vraj
 Did: closed Andrey's three round-01 schema gaps on `fix/schema-gaps-round01`. They
   were one root cause: `RankedCandidate` welded `DependencyEvidence` to
