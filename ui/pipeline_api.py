@@ -45,7 +45,7 @@ from dependency_scout.models import (Claim, InterfaceTractability,
                                      MediatorLink, SupportType)
 from reagent_workflow import agent as A
 from reagent_workflow import verdict as V
-from reagent_workflow.chemistry import depict, parse_molblock
+from reagent_workflow.chemistry import depict, describe, parse_molblock
 from reagent_workflow.interface import InterfaceConsensus, parse_mmcif
 from reagent_workflow.literature import AXES, gather
 from reagent_workflow.resolve import resolve, vocabulary
@@ -300,6 +300,12 @@ def _read_screen(path: Path, site):
               # directly. Four kilobytes a compound, and it saves rebuilding a
               # molecule the screen already serialized.
               "sdf": r.get("pose_sdf", ""),
+              # What the molecule is made of, not just what it scored. These
+              # are the §18 descriptors the chemistry module already computes
+              # and nothing displayed: molecular weight, lipophilicity, polar
+              # surface, donors and acceptors. A reader deciding whether a
+              # compound is worth an experiment reads these before the score.
+              "descriptors": describe(r.get("smiles", "")),
               "svg": depict(r.get("smiles", ""))}
              for r in clean[:MAX_POSES_SHOWN]]
     return (summary, poses) if poses else None

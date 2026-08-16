@@ -344,6 +344,12 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .ligmeta .id-lookup_failed,.ligmeta .id-unparseable{color:var(--ink-3)}
 .ligmeta .why{color:var(--ink-3);font-style:italic}
 .ligmeta .bad{color:var(--fail);font-weight:600}
+/* What the molecule is made of. Computed by RDKit from the structure that was
+   docked, so they describe the compound on screen rather than a datasheet. */
+.props{display:flex;flex-wrap:wrap;gap:3px 10px;margin-top:5px}
+.props span{font-family:var(--mono);font-size:10px;color:var(--ink-2);
+  white-space:nowrap}
+.props i{font-style:normal;color:var(--ink-3);margin-right:4px}
 .ligmeta .smi{font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-top:3px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
@@ -1839,6 +1845,13 @@ function ligandDock(hl){
               ? 'no PubChem record for this exact structure'
               : `identity unchecked — ${l.identity.note||l.identity.status}`}</div>` : ''}
       ${l.rationale ? `<div class="k why">${l.rationale}</div>` : ''}
+      ${l.descriptors?.mw ? `<div class="props">${[
+          ['MW', l.descriptors.mw], ['cLogP', l.descriptors.clogp],
+          ['TPSA', l.descriptors.tpsa + ' Å²'], ['HBD', l.descriptors.hbd],
+          ['HBA', l.descriptors.hba], ['rot', l.descriptors.rotatable_bonds],
+          ['heavy', l.descriptors.heavy_atoms],
+          ['charge', l.descriptors.formal_charge]]
+        .map(([k,v])=>`<span><i>${k}</i>${v}</span>`).join('')}</div>` : ''}
       <div class="smi" title="${l.smiles||''}">${l.smiles||''}</div>
     </div></div>`;
 }
@@ -1902,7 +1915,13 @@ async function glContext(){
   const size=()=>{ const r=cvs.parentElement.getBoundingClientRect(); if(!r.width) return;
     rend.setPixelRatio(Math.min(2,devicePixelRatio||1)); rend.setSize(r.width,r.height,false);
     cam.aspect=r.width/r.height; cam.updateProjectionMatrix(); };
-  (function loop(){requestAnimationFrame(loop);controls.update();rend.render(scene,cam);})();
+  // A hidden view has a zero-size canvas, and rendering into one is a GL error
+  // per frame — the console fills with "Framebuffer is incomplete: Attachment
+  // has zero size" at 60Hz for as long as another tab is open. Nothing to draw
+  // into means nothing to draw.
+  (function loop(){requestAnimationFrame(loop);
+    if(!cvs.clientWidth || !cvs.clientHeight) return;
+    controls.update(); rend.render(scene,cam);})();
   // Observe the panel, not the window: collapsing the sources rail resizes this
   // canvas without a window resize, and a stale drawing buffer renders the
   // complex at the wrong aspect and pushes it out of frame.
