@@ -497,6 +497,10 @@ const $ = s => document.querySelector(s);
 const fmt = (v,d=2) => v===null||v===undefined ? '—' : v.toFixed(d);
 const D = await (await fetch('./data.json')).json();
 const T = D.thresholds;
+// Replaced by the `thresholds` event at the start of every live run. Null means
+// no run has reported its gate yet, and the panel says so rather than showing
+// the seed file's retired rule as if it were current.
+let GATE = null;
 // live-run state. data.json only seeds a cold page; a run replaces both.
 let pts = D.landscape, C = D.candidates;
 let liveContext = D.landscape_context;
@@ -786,6 +790,11 @@ function run(q){
   let got=false;
   live.addEventListener('stage', e => { got=true; setStage(JSON.parse(e.data)); });
   live.addEventListener('paper', e => addPaper(JSON.parse(e.data)));
+  // The gate this run actually applied. data.json seeds the cold page with the
+  // retired four-way AND; leaving it in place during a live run drew a shaded
+  // "only region that passes" around a rule that was not in force, and a
+  // specificity-first candidate then passed while sitting outside it.
+  live.addEventListener('thresholds', e => { GATE = JSON.parse(e.data); });
   live.addEventListener('landscape', e => {          // the plot is this run's, not a cache
     const d = JSON.parse(e.data);
     pts = d.points; liveContext = d.context;
@@ -852,7 +861,15 @@ const X=p=>p.sel, Y=p=>p.median;
 let EXT=(()=>{ const xs=pts.map(X), ys=pts.map(Y), pd=v=>(Math.max(...v)-Math.min(...v))*0.06;
   return { x0:Math.min(...xs)-pd(xs), x1:Math.max(Math.max(...xs),T.selectivity_delta*1.25)+pd(xs),
            y0:Math.min(...ys)-pd(ys), y1:Math.max(Math.max(...ys),T.median_target_effect*0.4)+pd(ys) };})();
-const recomputeExtent=()=>{ EXT=(()=>{const xs=pts.map(X), ys=pts.map(Y), pd=v=>(Math.max(...v)-Math.min(...v))*0.06;return { x0:Math.min(...xs)-pd(xs), x1:Math.max(Math.max(...xs),T.selectivity_delta*1.25)+pd(xs),y0:Math.min(...ys)-pd(ys), y1:Math.max(Math.max(...ys),T.median_target_effect*0.4)+pd(ys) };})(); view=null; sizePlot(); };
+// Frame the points, and keep the median-path guide line in view. Uses the
+// live gate when a run has reported one, so the line cannot fall off the axis
+// after the cutoff changes.
+const medianCut=()=>GATE?GATE.median_target_effect:T.median_target_effect;
+const computeExtent=()=>{const xs=pts.map(X), ys=pts.map(Y),
+  pd=v=>(Math.max(...v)-Math.min(...v))*0.06||0.05;
+  return { x0:Math.min(...xs)-pd(xs), x1:Math.max(...xs)+pd(xs),
+           y0:Math.min(Math.min(...ys),medianCut()*1.1)-pd(ys), y1:Math.max(...ys)+pd(ys) };};
+const recomputeExtent=()=>{ EXT=computeExtent(); view=null; sizePlot(); };
 const STEP=(lo,hi)=>{const raw=(hi-lo)/7,m=10**Math.floor(Math.log10(raw));
   return [1,2,2.5,5,10].map(s=>s*m).find(s=>s>=raw)||m*10;};
 const M={l:56,r:16,t:16,b:48};
@@ -900,17 +917,23 @@ function draw(){
     const y=(EXT.y1-v)*view.ky+view.y; if(y<PT||y>PB) continue;
     ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(PR,y); ctx.stroke(); ticks.push(['y',v,y,dy]); }
 
-  const gx=(T.selectivity_delta-EXT.x0)*view.kx+view.x, gy=(EXT.y1-T.median_target_effect)*view.ky+view.y;
-  ctx.save(); ctx.fillStyle=css('--pass'); ctx.globalAlpha=.11; ctx.fillRect(gx,PT,PR-gx,gy-PT); ctx.restore();
-  ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle=css('--pass'); ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.moveTo(gx,PT); ctx.lineTo(gx,gy); ctx.lineTo(PR,gy); ctx.stroke(); ctx.restore();
-  // Label inside the pass region when it is wide enough, otherwise point into it
-  // from the left. The plot now fills the panel, so the boundary often sits close
-  // to the right edge and the old right-only placement simply vanished.
-  ctx.fillStyle=css('--pass'); ctx.font='600 11px '+css('--sans');
-  const ly=Math.max(PT+14, gy-9);
-  if(gx<PR-130){ ctx.textAlign='left'; ctx.fillText('passes both gates →', gx+9, ly); }
-  else if(gx>PL+140){ ctx.textAlign='right'; ctx.fillText('passes both gates →', gx-9, ly); }
+  // One horizontal line for the median-path cutoff, and no shaded region.
+  // The old version shaded a corner and labelled it "passes both gates", which
+  // described a rule that is no longer the gate: a candidate now passes on
+  // either the median path or the specificity-first path, and the second is not
+  // expressible on these axes. Points are coloured by the real verdict, so the
+  // plot no longer asserts a boundary it cannot draw.
+  const medCut = GATE ? GATE.median_target_effect : T.median_target_effect;
+  const gy=(EXT.y1-medCut)*view.ky+view.y;
+  if(gy>PT && gy<PB){
+    ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle=css('--pass'); ctx.lineWidth=1.5;
+    ctx.globalAlpha=.75;
+    ctx.beginPath(); ctx.moveTo(PL,gy); ctx.lineTo(PR,gy); ctx.stroke(); ctx.restore();
+    ctx.fillStyle=css('--pass'); ctx.font='600 11px '+css('--sans');
+    ctx.textAlign='left'; ctx.globalAlpha=.9;
+    ctx.fillText('median-path cutoff (one of two paths)', PL+8, Math.max(PT+13, gy-7));
+    ctx.globalAlpha=1;
+  }
 
   const order=[...pts.keys()].sort((a,b)=>(pts[a].pass?1:0)-(pts[b].pass?1:0));
   for(const i of order){ const p=pts[i], x=sx(p), y=sy(p);
@@ -978,7 +1001,13 @@ cv.addEventListener('pointermove',e=>{
     <dt>median effect</dt><dd>${fmt(p.median)}</dd><dt>selectivity Δ</dt><dd>${fmt(p.sel)}</dd>
     <dt>dependent here</dt><dd>${Math.round(p.tfrac*100)}%</dd>
     <dt>dependent elsewhere</dt><dd>${Math.round(p.ofrac*100)}%</dd>
-    <dt>cell lines</dt><dd>${p.n}</dd></dl>`+(p.pass?'':`<div class="why">${p.why.join('<br>')}</div>`);
+    <dt>cell lines</dt><dd>${p.n}</dd>`
+    // With two paths to a pass, WHICH one carried a candidate is the
+    // informative part: a uniformly dependent context and a dependency confined
+    // to a quarter of it are different claims that look identical without this.
+    + (p.route&&p.route!=='none'?`<dt>passed via</dt><dd>${p.route}</dd>`:'')
+    + (p.q!==undefined&&p.q!==null?`<dt>q-value</dt><dd>${p.q<1e-3?p.q.toExponential(1):p.q.toFixed(3)}</dd>`:'')
+    + `</dl>`+(p.pass?'':`<div class="why">${p.why.join('<br>')}</div>`);
   tip.setAttribute('data-on','');
   tip.style.left=Math.min(mx+16,r.width-tip.offsetWidth-10)+'px';
   tip.style.top=Math.max(8,Math.min(my-tip.offsetHeight/2,r.height-tip.offsetHeight-10))+'px';
@@ -998,16 +1027,28 @@ const tally={}; pts.forEach(p=>p.why.forEach(w=>tally[w]=(tally[w]||0)+1));
 $('#whybars').innerHTML=Object.entries(tally).sort((a,b)=>b[1]-a[1]).map(([w,n])=>
   `<div class="bar"><div class="lab"><span>${w}</span><span>${n}</span></div>
    <div class="track"><div class="fill" style="width:${n/pts.length*100}%"></div></div></div>`).join('');
-$('#thr').innerHTML=`<dt>median effect ≤</dt><dd>${T.median_target_effect}</dd>
-  <dt>dependent here ≥</dt><dd>${T.target_dependent_fraction*100}%</dd>
-  <dt>dependent elsewhere ≤</dt><dd>${T.other_dependent_fraction*100}%</dd>
-  <dt>selectivity Δ ≥</dt><dd>${T.selectivity_delta}</dd>
-  <dt>cell lines ≥</dt><dd>${T.confidence_floor}</dd>`;
-$('#lnote').innerHTML=`<b>Amber</b> marks fewer than ${T.confidence_floor} cell lines — measured
-  too sparsely to trust, whatever the effect size. <b>The shaded corner is the only region that
-  passes</b>, and in ${liveContext||'this lineage'} ` + (nPass
-    ? `${nPass} TF${nPass===1?'':'s'} reach${nPass===1?'es':''} it.`
-    : `it is empty. Other lineages do contain hits.`);
+// A candidate passes on EITHER path, so there is no single corner of this plot
+// that means "passes". Only the median path lives on these axes at all; the
+// specificity-first path is about the fraction of models that are dependent,
+// which is not plotted here. Showing one shaded region as the gate was wrong in
+// the way that matters: INSM1 passes with a median of -0.15, well outside it.
+if(GATE){
+  $('#thr').innerHTML = GATE.paths.map(p=>
+    `<dt>${p.name}</dt><dd>${p.terms.join(' · ')}</dd>`).join('')
+    + `<dt>then</dt><dd>q &lt; ${GATE.fdr_alpha} (FDR)</dd>`
+    + `<dt>full confidence ≥</dt><dd>${GATE.confidence_floor} models</dd>`;
+  $('#lnote').innerHTML=`A TF passes on <b>either</b> path, so no single region of this plot is
+    "the passing one" — the specificity-first path is about the fraction of models that are
+    dependent, which is not on these axes. The dashed line is the median-path cutoff only.
+    <b>Amber</b> marks fewer than ${GATE.confidence_floor} cell lines. In
+    ${liveContext||'this context'} ` + (nPass
+      ? `${nPass} TF${nPass===1?'':'s'} clear${nPass===1?'s':''} the gate at FDR ${GATE.fdr_alpha}.`
+      : `none clears it at FDR ${GATE.fdr_alpha}. Other contexts do contain hits.`);
+}else{
+  $('#thr').innerHTML=`<dt>gate</dt><dd>not reported yet</dd>`;
+  $('#lnote').innerHTML=`Ask a question to run the pipeline; the gate it applies is
+    reported with the result rather than assumed here.`;
+}
 }
 refreshSidebar();
 

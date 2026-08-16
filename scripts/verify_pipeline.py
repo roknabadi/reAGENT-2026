@@ -3,7 +3,7 @@
 
     python scripts/verify_pipeline.py          # exits non-zero on any failure
 
-Four checks, in order of how badly they fail:
+Checks, in order of how badly they fail:
 
 1. **Inputs are pinned.** Every input file is hashed. If DepMap reissues a file
    under the same name, the fingerprint moves and every number below is from a
@@ -12,6 +12,12 @@ Four checks, in order of how badly they fail:
 2. **Determinism.** The statistics + gates run twice from the same inputs and
    must produce byte-identical output. A pipeline that cannot repeat itself
    cannot be checked by anyone.
+2b. **The canonical path.** Checks 2-5 exercise `dependency_scout` on 24Q2,
+   which is no longer what decides whether a TF is a candidate. This one
+   covers the gate that does, on the release it is written against, and adds
+   the granularity check the whole subtype pass exists for: four SCLC master
+   regulators must be rejected when SCLC is pooled into Lung and recovered
+   when it is not.
 3. **Golden values.** Known-correct numbers, verified by hand and independently
    reproduced by Kevin's separate scan. These catch a threshold or formula
    changing without anyone noticing the results moved.
@@ -28,10 +34,13 @@ import sys
 from dependency_scout.depmap import analyze_gene_effects, load_tf_universe
 from dependency_scout.provenance import InputFile, RunProvenance, digest_payload
 from dependency_scout.ranking import rank_all
+from reagent_workflow import verdict as V
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 D = ROOT / "downloads"
 GE, MODELS, TFS = D / "CRISPRGeneEffect.csv", D / "Model.csv", D / "lambert_tfs.csv"
+# The release the canonical gate is written against (check 2b).
+CANON_GE, CANON_MODELS = D / "24Q4" / "CRISPRGeneEffect.csv", D / "24Q4" / "Model.csv"
 
 # Verified by hand against DepMap 24Q2 and independently reproduced by Kevin's
 # separate all-lineage scan on 24Q4. A change here is a real change in results.
@@ -85,6 +94,66 @@ def main() -> int:
     else:
         fails.append("two identical runs produced different output")
         print(f"[2] FAIL not deterministic: {da[:16]} vs {db[:16]}")
+
+    # 2b — the canonical path, which is what the interface and the CLI now use.
+    #
+    # Checks 2-5 exercise `dependency_scout`'s own statistics on 24Q2. That
+    # module is still used, but it is no longer what decides whether a TF is a
+    # candidate -- the gate in stage1_depmap.py is, on 24Q4. Verifying only the
+    # old path would report a green pipeline while the path that produces every
+    # user-visible verdict went unchecked, which is the failure this script
+    # exists to catch.
+    if CANON_GE.exists():
+        cprov = RunProvenance(inputs=[InputFile.pin("gene_effect_24q4", CANON_GE),
+                                      InputFile.pin("models_24q4", CANON_MODELS),
+                                      InputFile.pin("tf_universe", TFS)])
+        print(f"[2b] canonical inputs pinned · fingerprint {cprov.fingerprint[:16]} "
+              f"· DepMap {V.DEPMAP_RELEASE}")
+        ge4, model4 = V.load_matrix(str(CANON_GE), str(CANON_MODELS), str(TFS))
+
+        def canon_rows(ctx, level=None):
+            return [{"gene": v.gene, "flag": v.dependency_flag, "route": v.route,
+                     "median": round(v.median_target, 6),
+                     "tfrac": round(v.target_dependent_fraction, 6),
+                     "ofrac": round(v.other_dependent_fraction, 6),
+                     "q": round(v.qvalue, 9)}
+                    for v in V.scan_context(ge4, model4, ctx, level=level)]
+
+        x, y = canon_rows("Lung", "lineage"), canon_rows("Lung", "lineage")
+        dx, dy = digest_payload(x), digest_payload(y)
+        if dx == dy:
+            print(f"[2b] deterministic · {len(x)} TFs, digest {dx[:16]}")
+        else:
+            fails.append("the canonical scan is not deterministic")
+            print(f"[2b] FAIL not deterministic: {dx[:16]} vs {dy[:16]}")
+
+        # Granularity: the reason the subtype pass exists. These four are
+        # dependencies of distinct SCLC subsets and are diluted to nothing when
+        # SCLC is pooled into Lung, so a pipeline that only ever asks at lineage
+        # level misses all of them without erroring.
+        lung = {r["gene"]: r for r in x}
+        sclc = {r["gene"]: r for r in canon_rows("Small Cell Lung Cancer", "subtype")}
+        for g in ("ASCL1", "POU2F3", "NEUROD1", "INSM1"):
+            l_, s_ = lung.get(g), sclc.get(g)
+            if not (l_ and s_):
+                fails.append(f"{g} absent from the canonical scan")
+                print(f"[2b] FAIL {g} absent"); continue
+            if s_["flag"] and not l_["flag"]:
+                print(f"[2b] granularity {g:8s} Lung=reject  SCLC=pass via "
+                      f"{s_['route']:18s} tfrac {s_['tfrac']:.2f}")
+            else:
+                fails.append(f"{g}: expected reject at Lung and pass at SCLC, got "
+                             f"{l_['flag']}/{s_['flag']}")
+                print(f"[2b] FAIL {g} Lung={l_['flag']} SCLC={s_['flag']}")
+
+        for g in sorted(PAN_ESSENTIAL | {"POLR2A"}):
+            r = lung.get(g)
+            if r and r["flag"]:
+                fails.append(f"{g} passes the canonical gate as a Lung dependency")
+                print(f"[2b] FAIL {g} passed via {r['route']}")
+        print(f"[2b] pan-essentials still rejected by the canonical gate")
+    else:
+        print(f"[2b] SKIP  {CANON_GE} not present — the canonical path is UNVERIFIED")
 
     # 3 — landscape shape
     npass = sum(r["pass"] for r in a)

@@ -11,6 +11,15 @@ And a box is only defensible if it is small and localised. Centring on the whole
 protein finds something everywhere and means nothing, so this module refuses
 rather than widening: no consensus residues, none of them present in the free
 structure, or a bounding volume too large to be a groove all return blockers.
+
+`receptor_residues()` guards the input side of that. The numbers fed to
+`build_search_site` must index the RECEPTOR; the CLI previously produced them
+by regexing integers out of a free-text description of the TF's own binding
+motif, so a run asked to box MED23 was handed ELK1's residues 374–384 and
+built a box around whatever MED23 happens to have at 374–384 — a different
+pocket entirely, on the other protein, reported as a defensible site. Numbering
+is per-chain and nothing about a valid residue index reveals which chain it
+belongs to, so that error is invisible downstream and has to be refused here.
 """
 from __future__ import annotations
 
@@ -20,6 +29,72 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .discovery_config import StructureConfig
 from .interface import Atom, InterfaceConsensus, InterfaceHypothesis
+
+# Experimentally determined receptor-side pockets. Keyed by receptor gene, and
+# usable only for the interaction they were measured on -- these are the
+# coordinates of one published complex, not a general property of the protein.
+#
+# A curated entry is the ONLY alternative to a computed consensus, and it
+# carries its citation so a site can always be traced to either an ensemble
+# this run produced or a structure someone deposited.
+# The accession is pinned alongside the gene symbol deliberately. A calibration
+# constant in this project read O75448 for MED23 for a week; O75448 is MED24, an
+# adjacent subunit of the same Mediator tail module of plausible length, and an
+# entire GPU control run modelled the wrong protein while scoring against MED23
+# residue numbering. A symbol on its own does not identify a protein.
+CURATED_POCKETS: dict[str, dict] = {
+    "MED23": {
+        "residues": [339, 343, 379, 382, 383, 533, 537],
+        "partner": "ELK1",
+        "uniprot": "Q9ULK4",          # MED23, 1368 aa. NOT O75448, which is MED24.
+        "source": "Monté et al. 2025, PDB 9F6Y (cryo-EM, 3.0 A)",
+        "free_receptor_pdb": "9F76",  # MED23 without the TF bound
+        "note": ("MED23 cavity contacting the phosphorylated ELK1 "
+                 "transactivation domain. Calibration only: it is where ELK1 "
+                 "binds, not a site established for any other TF."),
+    },
+}
+
+
+def receptor_residues(receptor_gene: str, *, consensus=None,
+                      allow_curated: bool = False,
+                      curated_for: str | None = None) -> tuple[list[int], str, list[str]]:
+    """The only two legal ways to obtain receptor-side residues.
+
+    Returns (residues, basis, blockers). A non-empty `blockers` means no site
+    may be built — the caller must abstain rather than fall back to anything
+    else, because every available fallback is a number from the wrong protein.
+
+    `consensus` is an `InterfaceConsensus`; its `partner_contact_residues` are
+    receptor-side by construction. A blocked consensus contributes nothing:
+    `partner_contact_residues` can be populated on a consensus whose
+    `target_segment` was rejected, and reading it anyway would resurrect a
+    result the consensus module already refused.
+    """
+    if consensus is not None:
+        if getattr(consensus, "blockers", None):
+            return [], "", [f"interface consensus was rejected: "
+                            f"{'; '.join(consensus.blockers)[:160]}"]
+        residues = list(getattr(consensus, "partner_contact_residues", []) or [])
+        if not residues:
+            return [], "", ["interface consensus produced no partner-side contact "
+                            "residues, so there is no surface to box"]
+        return sorted(residues), "ensemble consensus (computed this run)", []
+
+    if allow_curated:
+        entry = CURATED_POCKETS.get(receptor_gene)
+        if not entry:
+            return [], "", [f"no experimentally curated pocket is recorded for "
+                            f"{receptor_gene}"]
+        if curated_for and curated_for != entry["partner"]:
+            return [], "", [
+                f"the curated {receptor_gene} pocket was measured against "
+                f"{entry['partner']}, not {curated_for}; reusing it would assert a "
+                "binding site for a TF no one has placed there"]
+        return sorted(entry["residues"]), f"curated experimental: {entry['source']}", []
+
+    return [], "", ["no interface consensus for this run, and curated pockets were "
+                    "not enabled; a docking site requires one or the other"]
 
 
 class SearchSite(BaseModel):
