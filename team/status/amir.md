@@ -2,6 +2,40 @@
 
 Newest on top. Format: ../README.md
 
+## 2026-08-16 — Amir
+Did: **sessions and follow-up questions in the UI.** The interface was
+stateless: every question re-ran the DepMap scan, the retrieval and the
+structural tail, so "why was NKX2-1 rejected?" cost as much as the run that
+rejected it — and that run had already computed the answer and dropped it. Even
+the fold button paid for the whole pipeline to reach the structure stage. Now a
+run leaves a record behind (`ui/sessions.py`, stdlib-only store, 45-minute TTL,
+8 sessions, LRU eviction), `GET /api/run?q=…&session=<id>` is a follow-up, and
+`pipeline_api.follow_up` recomputes only the stages whose inputs changed:
+verdict/recall/screen recompute nothing, "what about &lt;GENE&gt;?" runs that
+gene's retrieval plus the structural tail, the fold button runs the structural
+tail alone. `?q=` with no session is byte-for-byte the run it always was, plus
+one additive `session` event.
+The part worth reviewing is the honesty, not the speed. Every replayed event
+carries the epoch at which it was *computed*, survives a second replay under
+that same epoch (so state cannot age backwards into looking fresh), and every
+retained stage opens its note with "Retained from the run at &lt;t&gt;, N minutes
+ago; not recomputed for this question." The router is biased the safe way: a
+question naming a disease or tissue the retained context does not cover, a
+symbol the scan never measured, or anything it does not recognise re-runs, and
+says why. No gate is re-decided on a follow-up — a gate's verdict travels with
+the state it was decided on, and a `require_interface_site` condition from the
+first request stays in force for the whole session.
+`tests/test_session_followup.py`, 37 tests (store bounds and expiry, routing,
+replay labelling, and the endpoint itself over real HTTP with the pipeline
+stubbed at the import seam). Suite green: 382 passed, 4 skipped (BenchFlow
+interpreter absent here), 2 xfailed. Uncommitted on the worktree branch, not
+pushed.
+Next: the `screen` follow-up currently serves the retained box and whatever was
+docked into it and never docks anything new — if we want "screen that site" to
+dock a fresh library against a retained box, that needs the screening emit block
+in `_structure_site_and_screen` factored out so both callers share it.
+Blocked: none.
+
 ## 2026-08-15 (3) — Amir
 Did: **retracted the ELK1–MED23 control result.** `scripts/calibrate_structure.py`
 carried `MED23 = "O75448"`, which is MED24 — a different subunit of the same

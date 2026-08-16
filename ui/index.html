@@ -183,6 +183,27 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .askq.set{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;
   overflow:hidden;cursor:pointer}
 .askq.set[data-open]{-webkit-line-clamp:unset;display:block;cursor:default}
+/* The conversation, not only the last question. A follow-up is unreadable next
+   to nothing — "what about FOXA1?" means whatever the question before it meant
+   — so the earlier turns stay above it. The tag on each turn is not decoration:
+   it says whether that turn re-ran the pipeline or was answered from state the
+   session already held, which is the same fact the retained stages below carry
+   one stage at a time. */
+.convo{list-style:none;margin:0 0 10px;padding:0 18px;display:flex;
+  flex-direction:column;gap:5px}
+.convo li{display:flex;gap:6px;align-items:baseline;font-size:11.5px;
+  line-height:1.45;color:var(--ink-3)}
+.convo li .qt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.convo .kind{flex:none;font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--ink-3);border:1px solid var(--line-2);
+  border-radius:4px;padding:1px 4px}
+.convo .kind[data-k=run]{color:var(--control);border-color:var(--control)}
+/* A stage that did not run for this question says so where its state is, not
+   only in the note underneath. Word, not colour. */
+.stage .rt{display:inline-block;margin-left:6px;font-size:9.5px;font-weight:600;
+  letter-spacing:.06em;text-transform:uppercase;vertical-align:1px;
+  color:var(--ink-3)}
 
 /* Four views of one run, switched in place. Stacked, they made a column two
    thousand pixels long where whichever one you wanted was off-screen. */
@@ -648,6 +669,7 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
     <div class="rail">
       <section class="ask">
         <h2><span class="lbl">Question</span></h2>
+        <ol id="convo" class="convo" hidden></ol>
         <p id="askq" class="askq">Ask a question above to start a run.</p>
       </section>
 
@@ -1010,8 +1032,12 @@ $('#q0').onkeydown = e => { if(e.key==='Enter') enter($('#q0').value || $('#q0')
 // every click. A query is a request to see the answer, so it opens the app.
 $('#go1').onclick = () => enter($('#q1').value);
 $('#q1').onkeydown = e => { if(e.key==='Enter') enter($('#q1').value); };
+// Back to the landing page ends the conversation. The next question asked from
+// there is a new one, not a follow-up on a run the reader has scrolled away
+// from — and a follow-up that silently attaches to a forgotten run is exactly
+// the state this interface is not allowed to have.
 $('#home').onclick = () => { $('#landing').removeAttribute('hidden-state');
-  $('#app').removeAttribute('data-on'); };
+  $('#app').removeAttribute('data-on'); newSession(); };
 
 function enter(q){
   $('#landing').setAttribute('hidden-state','');
@@ -1046,15 +1072,36 @@ $('#landTF').textContent = pts.length.toLocaleString();
 $('#landStages').textContent = STAGES.length;
 
 const NAMED_STATES = {ambiguous:'ambiguous', abstained:'abstained', blocked:'blocked'};
-function setStage({id,state,detail,note}){
+/* Rounded the same way the server rounds it, so the chip and the note under it
+   never disagree about how old a retained stage is. */
+function agoWords(s){
+  s = Math.max(0, Math.round(s||0));
+  if(s < 90) return s + (s===1?' second':' seconds');
+  const m = Math.floor(s/60);
+  if(m < 90) return m + (m===1?' minute':' minutes');
+  const h = Math.floor(m/60);
+  return h + (h===1?' hour':' hours');
+}
+function setStage({id,state,detail,note,retained,retained_age_s}){
   const el=$('#st-'+id); if(!el) return;
   el.dataset.s=state; el.classList.add('in');
   const nm=el.querySelector('.nm');
   nm.querySelector('.st')?.remove();
+  nm.querySelector('.rt')?.remove();
   if(NAMED_STATES[state]){
     const b=document.createElement('span');
     b.className='st'; b.textContent=NAMED_STATES[state];
     nm.append(b);
+  }
+  /* A retained stage is showing a verdict computed for an earlier question in
+     this session. The state is still that verdict — nothing is re-decided — but
+     the reader has to be able to tell "abstained just now" from "abstained four
+     minutes ago and not looked at again", so the age rides beside the name. */
+  if(retained){
+    const r=document.createElement('span'); r.className='rt';
+    r.textContent = 'retained · ' + agoWords(retained_age_s);
+    r.title = 'computed earlier in this session and not re-run for this question';
+    nm.append(r);
   }
   el.querySelector('.dt').textContent = detail||'';
   el.querySelector('.nt').textContent = note||'';
@@ -1100,8 +1147,10 @@ function addPaper(p){
   const box=$('#papers'); box.querySelector('.empty')?.remove();
   const a=document.createElement('a');
   a.className='paper'; a.href=p.url||'#'; a.target='_blank'; a.rel='noopener';
+  // A paper retrieved by an earlier question in this session is still a real
+  // retrieval, and it is still not this question's. Both halves get said.
   a.innerHTML=`<div class="t">${p.title}</div>${p.abstract?`<div class="a">${p.abstract}</div>`:''}
-    <div class="id">${p.id}</div>`;
+    <div class="id">${p.id}${p.retained?` · retrieved ${p.retained_at}`:''}</div>`;
   box.prepend(a);
   const n=box.querySelectorAll('.paper').length;
   $('#srcCount').textContent = n ? n : '';
@@ -1137,10 +1186,15 @@ function thinkBlock(step, meta, isError, sections, open){
   d.append(body); $('#thinking').append(d);
   flagPane('reason');
 }
-function addThinking(trace){
+/* `retainedAt` marks calls a previous question in this session paid for. The
+   trace object is shared across the session, so a follow-up's first `thinking`
+   event carries the earlier run's calls; rendering them unmarked would credit
+   this question with reasoning it did not do. */
+function addThinking(trace, retainedAt){
   for(const c of (trace.calls||[]).slice(thoughtsShown))
     thinkBlock(c.step,
-               c.error ? 'failed' : `${c.input_tokens}→${c.output_tokens} tok · ${c.seconds}s`,
+               (c.error ? 'failed' : `${c.input_tokens}→${c.output_tokens} tok · ${c.seconds}s`)
+               + (retainedAt ? ` · retained from ${retainedAt}` : ''),
                !!c.error,
                [['prompt', c.prompt], [c.error?'error':'reply', c.error||c.reply]]);
   thoughtsShown = (trace.calls||[]).length;
@@ -1203,6 +1257,44 @@ function setAnswer(d){
   showPane('answer');
 }
 
+/* ══ SESSION ══════════════════════════════════════════════ */
+/* A finished run leaves its state on the server and hands back an id; sending
+   that id with the next question is what makes it a follow-up instead of a
+   second pipeline run. Everything else about the conversation lives here: the
+   questions asked so far, and for each one whether it re-ran or was answered
+   from what the session already held.
+
+   The id is deliberately not persisted anywhere. A reload is a new reader
+   looking at a new page, and handing them a session whose run they never saw —
+   with its context, its shortlist and its docked poses — is the stale-state
+   problem wearing a different hat. */
+let SESSION = null;
+let TURNS = [];
+function newSession(){ SESSION = null; TURNS = []; renderConvo(); }
+function renderConvo(){
+  const box=$('#convo'), past=TURNS.slice(0,-1);
+  box.hidden = !past.length;
+  box.replaceChildren();
+  for(const t of past){
+    const li=document.createElement('li');
+    const q=document.createElement('span');
+    q.className='qt'; q.textContent = t.q || 'no question given'; q.title = t.q||'';
+    const k=document.createElement('span');
+    k.className='kind'; k.dataset.k = t.kind==='run' ? 'run' : 'reuse';
+    k.textContent = t.kind==='run' ? 'ran' : (t.kind||'…');
+    k.title = t.reason || '';
+    li.append(q,k); box.append(li);
+  }
+}
+/* A line under the question, for the things that are true of the whole run
+   rather than of one stage: a condition the request placed, a session that had
+   expired, or the ledger of what was retained and what actually ran. */
+function askCaveat(text){
+  const p=document.createElement('p');
+  p.className='caveat'; p.textContent=text;
+  $('#askq').after(p);
+}
+
 let es=null;
 function run(q, predict){
   es?.close();
@@ -1219,10 +1311,43 @@ function run(q, predict){
   asked.removeAttribute('data-open');
   asked.title = q ? 'Show the whole question' : '';
   asked.onclick = () => asked.toggleAttribute('data-open');
+  TURNS.push({q, kind:''});
+  renderConvo();
+  // The session id, when there is one, is the only difference between this and
+  // the request this page has always sent. Without it the server runs the whole
+  // pipeline exactly as before.
   const live = new EventSource('/api/run?q='+encodeURIComponent(q||'')
-                               + (predict ? '&predict='+encodeURIComponent(predict) : ''));
+                               + (predict ? '&predict='+encodeURIComponent(predict) : '')
+                               + (SESSION ? '&session='+encodeURIComponent(SESSION) : ''));
   es = live;
   let got=false;
+  // Which run this is, and whether it is reusing anything. It arrives before
+  // any stage, so the reader knows what they are about to watch.
+  live.addEventListener('session', e => {
+    const d = JSON.parse(e.data);
+    SESSION = d.id;
+    const t = TURNS[TURNS.length-1];
+    if(t){ t.kind = d.follow_up ? d.kind : 'run'; t.reason = d.reason; }
+    renderConvo();
+    if(d.expired)
+      askCaveat('The session this was following up on had expired, so nothing '
+        + 'was reused: this is a full run in a new session.');
+    else if(!d.follow_up && TURNS.length > 1)
+      askCaveat('Re-ran rather than following up — ' + d.reason + '.');
+  });
+  // The ledger for a follow-up: what ran now, what was served from state, and
+  // when that state was computed. Every retained stage repeats it in its own
+  // note; this is the one-line version, where the question is.
+  live.addEventListener('provenance', e => {
+    const d = JSON.parse(e.data);
+    const ran = d.recomputed_stages || [], kept = d.retained_stages || [];
+    askCaveat(ran.length
+      ? ran.join(', ') + ' ran for this question; ' + kept.length
+        + ' stage(s) are retained from the run at ' + d.retained_at
+        + ' and are marked retained below.'
+      : 'Nothing was recomputed. Every stage below is retained from the run at '
+        + d.retained_at + ', ' + agoWords(d.retained_age_s) + ' ago.');
+  });
   live.addEventListener('stage', e => {
     got=true;
     const d = JSON.parse(e.data);
@@ -1241,7 +1366,11 @@ function run(q, predict){
       if(d.docked != null)
         SCREEN = {scored:d.scored, docked:d.docked, clean:d.clean_poses,
                   shown:d.shown, best:d.best, verified:d.verified,
-                  bestVerified:d.best_verified};
+                  bestVerified:d.best_verified,
+                  // Counts travel to a panel in another view, away from the
+                  // stage note that carries their provenance, so the provenance
+                  // travels with them.
+                  retained: d.retained ? d.retained_at : null};
       else {
         const m = /^(\d+)\/(\d+) compounds scored, (\d+) without geometry flags/.exec(d.detail || '');
         SCREEN = m ? {scored:+m[1], docked:+m[2], clean:+m[3]} : null;
@@ -1300,7 +1429,8 @@ function run(q, predict){
   // The payload is `{trace: {...}}`; the trace is what has `calls` on it.
   // Passing the envelope meant `trace.calls` was always undefined, so the
   // reasoning pane silently stayed empty for every run it has ever streamed.
-  live.addEventListener('thinking', e => addThinking(JSON.parse(e.data).trace || {}));
+  live.addEventListener('thinking', e => { const d = JSON.parse(e.data);
+    addThinking(d.trace || {}, d.retained ? d.retained_at : ''); });
   live.addEventListener('summary', e => addSummary(JSON.parse(e.data)));
   live.addEventListener('answer', e => setAnswer(JSON.parse(e.data)));
   // A condition the request placed on the pipeline, echoed where the question
@@ -1308,10 +1438,9 @@ function run(q, predict){
   // stage abstaining later.
   live.addEventListener('policy', e => {
     const d=JSON.parse(e.data);
-    const p=document.createElement('p');
-    p.className='caveat';
-    p.textContent = (d.quote ? `“${d.quote}” — ` : '') + d.note;
-    $('#askq').after(p);
+    askCaveat((d.quote ? `“${d.quote}” — ` : '') + d.note
+      + (d.retained ? ` (read from the question asked at ${d.retained_at}; it is `
+                    + 'still in force for this session)' : ''));
   });
   /* A view that never received its data must stop pretending to be loading.
      The abstaining runs are the ones that produce no landscape at all, and a
@@ -1768,7 +1897,8 @@ const dockedSummary = shown => {
   const dropped = Math.max(0, SCREEN.scored - SCREEN.clean);
   return `${shown} of ${SCREEN.clean} clean pose${SCREEN.clean===1?'':'s'} shown`
        + ` · ${SCREEN.docked} docked`
-       + (dropped ? ` · ${dropped} dropped on geometry` : '');
+       + (dropped ? ` · ${dropped} dropped on geometry` : '')
+       + (SCREEN.retained ? ` · retained from the run at ${SCREEN.retained}` : '');
 };
 // Every pose in `hl.ligands` already passed the pocket/box/clash filter in
 // _read_screen — inside_box is never false and clash is never true by the

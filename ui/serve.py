@@ -10,6 +10,13 @@ result as it completes rather than appearing all at once at the end.
 
 Nothing here fabricates a stage. A stage that cannot run reports that it could
 not run, which is the whole point of the interface.
+
+A run also leaves a session behind, and a follow-up question can be answered
+from it. `?q=…` alone is exactly what it always was — one question, one full
+run — and now returns a session id as well; `?q=…&session=<id>` is a follow-up,
+which reuses whatever the earlier run computed and re-runs only the stages
+whose inputs changed. Retained state is always labelled as retained and dated;
+see `ui/sessions.py` for why that labelling is the whole of the design.
 """
 from __future__ import annotations
 
@@ -25,9 +32,16 @@ from urllib.parse import parse_qs, urlparse
 
 UI = Path(__file__).resolve().parent
 ROOT = UI.parent
+if str(UI) not in sys.path:
+    sys.path.insert(0, str(UI))
+import sessions  # noqa: E402  (needs UI on the path; stdlib-only, like this file)
+
 PAPERCLIP = shutil.which("paperclip") or str(ROOT / ".venv/bin/paperclip")
 # data.json is the cold-start view only. A run computes its own numbers.
 DATA = json.loads((UI / "data.json").read_text(encoding="utf-8"))
+# One store for the process. Bounded by count and by age, both in sessions.py:
+# this server is left open for hours at a time and a session holds a whole run.
+SESSIONS = sessions.Store()
 
 
 def _parse_search(stdout: str) -> list[dict]:
@@ -97,8 +111,24 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(f"event: {event}\ndata: {json.dumps(payload)}\n\n".encode())
         self.wfile.flush()
 
+    def _json(self, payload: dict, code: int = 200) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):  # noqa: N802
         url = urlparse(self.path)
+        if url.path == "/api/session":
+            # What a session is holding, without running anything. Useful from a
+            # console, and it is also how expiry is observable: a session past
+            # its TTL is gone here before it is silently gone from a follow-up.
+            s = SESSIONS.get((parse_qs(url.query).get("id") or [""])[0].strip())
+            return self._json(s.summary() if s else
+                              {"error": "no such session, or it expired"},
+                              200 if s else 404)
         if url.path != "/api/run":
             return super().do_GET()
 
@@ -109,6 +139,9 @@ class Handler(SimpleHTTPRequestHandler):
         # someone makes per run and pays for per run; nothing here starts a
         # dispatch on its own.
         predict = (params.get("predict") or [""])[0].strip().upper() or None
+        # A completed run to build this question on. Absent, this is the
+        # single-shot path it has always been.
+        sid = (params.get("session") or [""])[0].strip() or None
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -116,18 +149,24 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
 
         try:
-            self._run(q, predict)
+            self._run(q, predict, sid)
         except (BrokenPipeError, ConnectionResetError):
             pass   # the reader navigated away
 
-    def _run(self, q: str, predict: str | None = None) -> None:
-        """Delegate to the real pipeline. Nothing here is precomputed: the
-        landscape, the gates and the candidate table are all computed for the
-        context resolved from this question."""
+    def _run(self, q: str, predict: str | None = None,
+             sid: str | None = None) -> None:
+        """Delegate to the real pipeline, or to a follow-up on a finished run.
+
+        Nothing in a full run is precomputed: the landscape, the gates and the
+        candidate table are all computed for the context resolved from this
+        question. A follow-up reuses that work rather than redoing it, and
+        `pipeline_api` labels every piece it reuses with when it was computed.
+        Which of the two happened is the first thing the stream says.
+        """
         import sys
         if str(UI) not in sys.path:
             sys.path.insert(0, str(UI))
-        from pipeline_api import run_live
+        import pipeline_api
         from reagent_workflow.discovery_config import DiscoveryConfig
         from dependency_scout.models import MediatorLink
 
@@ -145,24 +184,90 @@ class Handler(SimpleHTTPRequestHandler):
         # directory is named rather than searched for.
         D = ROOT / "downloads"
         release = D / "24Q4"
-        try:
-            run_live(
-                q,
-                (release / "CRISPRGeneEffect.csv", release / "Model.csv",
-                 D / "lambert_tfs.csv"),
-                DiscoveryConfig(),
-                self._sse,
-                interface_evidence=evidence,
-                free_receptor=D / "9F76.cif",
-                predict=predict,
-            )
-        except (BrokenPipeError, ConnectionResetError):
-            raise
-        except Exception as e:
-            self._sse("stage", {"id": "discovery", "state": "blocked",
-                                "detail": f"{type(e).__name__}: {str(e)[:160]}",
-                                "note": "the run failed; nothing is served in its place"})
-            self._sse("done", {"ok": False})
+        cfg = DiscoveryConfig()
+
+        session = SESSIONS.get(sid)
+        # An id that names nothing is not a reason to answer from nothing. The
+        # session either expired or never existed; either way this question gets
+        # a real run, in a new session, and the stream says which happened
+        # rather than leaving the page to wonder why its follow-up went slow.
+        expired = bool(sid) and session is None
+        if session is None:
+            session = SESSIONS.new()
+
+        # Classification reads the record that the run below replaces, so both
+        # happen under the session's lock. Otherwise a second tab can decide
+        # "this is a cheap follow-up" against a record that is halfway through
+        # being rewritten by the first one's scan.
+        with session.lock:
+            fu = None
+            if session.record:
+                fu = (sessions.FollowUp(
+                          "predict", predict,
+                          f"an explicit request to fold {predict}, which needs the "
+                          "structural tail and nothing above it", True)
+                      # The fold button names one candidate on a run that already
+                      # happened. Reading that back out of free text would be a
+                      # worse way to learn something the caller stated outright.
+                      if predict else sessions.classify(q, session.record))
+            session.questions.append(q)
+
+            self._sse("session", {
+                "id": session.id,
+                "follow_up": bool(fu and fu.cheap),
+                "kind": fu.kind if fu else "run",
+                "reason": (fu.reason if fu else
+                           "the session expired, so this question is a full run in a "
+                           "new one" if expired else
+                           "a new session" if not sid else
+                           "this session holds no completed run to build on"),
+                "expired": expired,
+                "questions": list(session.questions),
+                "recomputed_stages": list(fu.recompute) if fu and fu.cheap else None,
+            })
+
+            try:
+                if fu is not None and fu.cheap:
+                    session.record = pipeline_api.follow_up(
+                        q, session.record, session.runtime, fu, self._sse, cfg,
+                        free_receptor=D / "9F76.cif",
+                        # A condition the first request placed on the pipeline is
+                        # still in force for the session. A follow-up that dropped
+                        # it would run a screen the original request forbade, which
+                        # is a gate weakened by nothing but the passage of time.
+                        require_site=bool(session.record.get("require_site")))
+                else:
+                    # A full run replaces the session's state rather than adding
+                    # to it: this question resolved its own context, and merging
+                    # a new scan into an old one is how a table ends up holding
+                    # two cohorts' numbers under one heading.
+                    #
+                    # Both halves are swapped in together, after the run
+                    # returns. A run that raises leaves the session exactly as
+                    # it was — a record whose live objects had already been
+                    # thrown out is a session that half-remembers one run and
+                    # half-remembers another.
+                    fresh: dict = {}
+                    session.record = pipeline_api.run_live(
+                        q,
+                        (release / "CRISPRGeneEffect.csv", release / "Model.csv",
+                         D / "lambert_tfs.csv"),
+                        cfg,
+                        self._sse,
+                        interface_evidence=evidence,
+                        free_receptor=D / "9F76.cif",
+                        predict=predict,
+                        runtime=fresh,
+                    )
+                    session.runtime = fresh
+            except (BrokenPipeError, ConnectionResetError):
+                raise
+            except Exception as e:
+                self._sse("stage", {
+                    "id": "discovery", "state": "blocked",
+                    "detail": f"{type(e).__name__}: {str(e)[:160]}",
+                    "note": "the run failed; nothing is served in its place"})
+                self._sse("done", {"ok": False})
 
 
 def main() -> int:

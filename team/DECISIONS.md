@@ -19,6 +19,33 @@ from computational results.
 
 ---
 
+## 2026-08-16 — A follow-up may reuse a finished run's state, and must date every part of it
+Decided by: Amir
+Why: The interface re-ran the whole pipeline for every question, so the cheapest
+possible follow-up — "why was NKX2-1 rejected?", whose answer the previous run
+computed and discarded — cost a full DepMap scan, a Paperclip search per axis
+per candidate, and the structural tail. Sessions remove that cost. The risk they
+introduce is the one this project exists to catch: a stage reporting a
+conclusion it did not compute. Resolved by provenance rather than by
+recomputation — every replayed event carries the epoch at which it was computed,
+that epoch survives further replays, and every retained stage, the answer's
+caveat and the stage badge all say what was retained and from when. Computed
+result, not evidence: nothing about the science changes, and no gate is
+re-decided on a follow-up (a gate's verdict travels with the state it was
+decided on, and a `require_interface_site` condition from the first request
+stays in force for the session). Routing is biased toward re-running: a question
+naming a disease or tissue outside the retained context, a symbol the scan never
+measured, or anything unrecognised gets a full run and is told so.
+`tests/test_session_followup.py` (37 tests) holds all of that in place; suite
+green at 382 passed / 2 xfailed.
+Alternatives rejected: (a) caching keyed on the question string — identical
+questions are rare and near-identical ones are the dangerous case; (b) serving
+retained state unlabelled, which is fast and indistinguishable on screen from a
+fabricated result; (c) letting the model decide whether a follow-up is cheap,
+which puts an unbounded classifier in front of "is this the same cohort?".
+Reversible: yes — the session id is optional on every endpoint, and `?q=` with
+no session is the single-shot path unchanged.
+
 ## 2026-08-16 — Committing straight to `main`, per explicit per-request ask, recorded so the rule and the practice stop silently disagreeing
 Decided by: Vraj
 Why: `CLAUDE.md` says "Work on a branch. Never commit or push to `main` unless

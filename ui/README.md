@@ -39,6 +39,52 @@ Three views:
   A predicted model is a hypothesis, not a contact, and the panel says that on
   every prediction.
 
+## Sessions and follow-ups
+
+A run leaves its state on the server and the stream opens with a `session`
+event carrying the id. Sending that id back makes the next question a follow-up
+on the same run instead of a second run.
+
+```text
+GET /api/run?q=<question>                       one question, the whole pipeline
+GET /api/run?q=<question>&session=<id>          a follow-up on that run
+GET /api/run?q=…&predict=<GENE>[&session=<id>]  fold one candidate
+GET /api/session?id=<id>                        what a session holds, as JSON
+```
+
+`?q=` with no session is unchanged: a full run, plus the `session` event so the
+page has an id for next time. Two new events join the stream — `session` (which
+run this is, and whether it is reusing anything) and, on a follow-up,
+`provenance` (which stages were retained and which ran).
+
+| Follow-up | Recognised by | What runs |
+|---|---|---|
+| `verdict` | "why was NKX2-1 rejected?" | nothing — the scan's own verdict, quoted with its numbers |
+| `recall` | "what did the run find?" | nothing |
+| `screen` | "screen that site", "which compounds docked?" | nothing — the retained box and its screen |
+| `gene` | "what about FOXA1?" | that gene's retrieval, then the structural tail |
+| `predict` | "co-fold FOXA1", or the fold button | the structural tail only |
+| *(re-run)* | anything else | the whole pipeline, and the stream says why |
+
+Naming a disease or tissue the retained context does not cover, or a symbol the
+retained scan never measured, re-runs. That is the default in both directions:
+an unrecognised question re-runs rather than being answered from state.
+
+**Retained state is always labelled.** Every replayed event carries when it was
+computed, every replayed stage opens its note with that, the answer's caveat
+names what ran and what did not, and the stage badge reads `retained · 12
+minutes ago`. The rule the rest of the pipeline lives under — a stage never
+reports a conclusion it did not compute this run — is honoured here by saying
+which run computed it, not by pretending this one did. No gate is re-decided on
+a follow-up: a gate's verdict travels with the state it was decided on, and a
+condition the first request placed on the pipeline stays in force for the whole
+session.
+
+Sessions expire (45 minutes idle) and are capped (8, least recently used
+dropped first) because `serve.py` is a long-lived process and a session holds a
+whole run. An id that has expired is gone rather than resurrected: the question
+gets a real run in a new session and the page says so.
+
 ## Flow
 
 ```text
