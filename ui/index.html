@@ -337,6 +337,17 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
    travels with it, so the label is in the header rather than in a footnote. */
 .ligdock .borrowed{margin-left:auto;text-transform:none;letter-spacing:0;
   font-size:10.5px;color:var(--await)}
+/* Collapsing leaves the molecules and takes back the canvas. The strip is the
+   part that cannot be given up — the detail is a lookup, and the structure
+   underneath is the thing being talked about. */
+.dockfold{margin-left:auto;background:none;border:1px solid var(--line);
+  color:var(--ink-3);width:22px;height:22px;border-radius:6px;cursor:pointer;
+  display:grid;place-items:center;font-size:11px;line-height:1;flex:none;
+  transition:color .15s,border-color .15s,transform .2s}
+.dockfold:hover{color:var(--ink);border-color:var(--line-2)}
+.ligdock .borrowed + .dockfold{margin-left:8px}
+.ligdock[data-fold] .ligone{display:none}
+.ligdock[data-fold] .dockfold{transform:rotate(180deg)}
 .ligstrip{display:flex;gap:7px;overflow-x:auto;padding-bottom:2px;
   scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
 .ligstrip::-webkit-scrollbar{height:5px}
@@ -1965,6 +1976,8 @@ function predictBlock(M, c, hl){
    it touches, and the SMILES the screen was actually run on. Selecting a chip
    is what puts that compound in the pocket, so the strip and the viewer never
    disagree about which one is being looked at. */
+let dockFolded = localStorage.dsDock === 'fold';
+
 function ligandDock(hl){
   const el = $('#ligdock'), ligs = ligandsOf(hl);
   el.hidden = !hl;
@@ -1988,7 +2001,9 @@ function ligandDock(hl){
   <div class="hd"><span>Docked compounds</span>
     <span class="of">${i+1} / ${ligs.length}</span>
     ${ligandsAreOwn(hl) ? '' : `<span class="borrowed">into the ${
-       hl.site_owner || 'calibration'} cavity, not ${hl.gene}'s site</span>`}</div>
+       hl.site_owner || 'calibration'} cavity, not ${hl.gene}'s site</span>`}
+    <button class="dockfold" id="dockfold" title="Collapse to the molecules"
+            aria-expanded="true">⌄</button></div>
   <div class="ligstrip">${ligs.map((g,k)=>`<div class="lig" data-lig="${k}"
        aria-current="${k===i}" tabindex="0" role="button"
        title="Show ${g.name} in the structure">
@@ -2019,13 +2034,25 @@ function ligandDock(hl){
         .map(([k,v])=>`<span><i>${k}</i>${v}</span>`).join('')}</div>` : ''}
       <div class="smi" title="${l.smiles||''}">${l.smiles||''}</div>
     </div></div>`;
+  el.toggleAttribute('data-fold', dockFolded);
+  $('#dockfold').onclick = () => {
+    dockFolded = !dockFolded;
+    localStorage.dsDock = dockFolded ? 'fold' : 'open';
+    el.toggleAttribute('data-fold', dockFolded);
+    $('#dockfold').setAttribute('aria-expanded', String(!dockFolded));
+    $('#dockfold').title = dockFolded ? 'Show the compound detail'
+                                      : 'Collapse to the molecules';
+    // The camera framed itself around the panel's old height.
+    renderStructure?.();
+  };
 }
 function receptorPanel(M, c, hl){
   const gene=c?.gene||'this candidate';
   const site=siteLayer(hl);
   return `<h3>${M.gene} <span class="muted">${M.pdb_id}</span></h3>
   <p class="sub">${M.method} · ${M.form} · ${M.residues_resolved}/${M.residues_total}
-     residues (${Math.round(M.coverage*100)}%) · drag to rotate</p>
+     residues (${Math.round(M.coverage*100)}%) · drag to rotate ·
+     shift-drag to move · scroll to zoom</p>
   <div class="panel"><dl>
     <dt>receptor</dt><dd>${M.gene} (${M.uniprot})</dd>
     <dt>coordinates</dt><dd><a href="${M.url}" target="_blank" rel="noopener">PDB ${M.pdb_id}</a> · ${M.licence}</dd>
@@ -2191,6 +2218,24 @@ async function paintMol(M, hl){
   if(!molv){
     molv = $3.createViewer(el, {backgroundAlpha:0});
     new ResizeObserver(()=>{ molv.resize(); molv.render(); }).observe(el);
+    // Shift-drag moves the structure. The viewer rotates on a plain drag and
+    // pans on a right-drag, which is a convention nobody discovers and a
+    // trackpad makes awkward — and something always ends up behind the compound
+    // strip or the detail card. Bound in the capture phase and stopped there,
+    // so the viewer never sees the same drag and tries to rotate on it too.
+    let panFrom = null;
+    el.addEventListener('mousedown', e => {
+      if(!e.shiftKey) return;
+      panFrom = [e.clientX, e.clientY];
+      e.preventDefault(); e.stopPropagation();
+    }, true);
+    addEventListener('mousemove', e => {
+      if(!panFrom) return;
+      molv.translate(e.clientX - panFrom[0], e.clientY - panFrom[1]);
+      panFrom = [e.clientX, e.clientY];
+      e.preventDefault(); e.stopPropagation();
+    }, true);
+    addEventListener('mouseup', () => { panFrom = null; }, true);
   }
   repButtons();
 
@@ -2236,14 +2281,22 @@ async function paintMol(M, hl){
       m.setStyle({}, {stick:{colorscheme:'greenCarbon', radius:.18},
                       sphere:{colorscheme:'greenCarbon', scale:.22}});
     }
-    // Frame the site rather than the whole protein: MED23 is 1,258 residues
-    // and the thing being claimed is seven of them.
-    // Frame the whole subunit, not the site. Fitting seven residues fills the
-    // canvas with a wall of ribbon and loses the fold, which is the one thing a
-    // reader needs to orient against before any highlight means anything. The
-    // site is found by its colour, and the inspector names it on contact.
-    molv.zoomTo();
-    molv.zoom(.92);
+    // Centre on the site, then pull back until the fold is around it. Framing
+    // the whole subunit put the cavity wherever it happened to fall — usually
+    // low, behind the compound strip, which is the one thing on screen that
+    // must not hide the pose it is describing. Framing the site alone fills the
+    // canvas with a wall of ribbon and loses the fold, which is what a reader
+    // orients against before any highlight means anything. This is both: the
+    // site is the centre of the frame and the protein is still a protein
+    // around it.
+    const focus = [...new Set([...pocket, ...pred, ...lig])];
+    if(focus.length){ molv.zoomTo({resi: focus}); molv.zoom(.38); }
+    else { molv.zoomTo(); molv.zoom(.92); }
+    // What is left is the panel's own height: the site is centred in the canvas,
+    // and the canvas is shorter than it looks by however tall the strip is.
+    const dock = $('#ligdock');
+    const dockH = (!dock || dock.hidden) ? 0 : dock.getBoundingClientRect().height;
+    if(dockH > 40) molv.translate(0, -dockH / 2);
 
     // Everything the cursor can land on, resolved once per paint so the hover
     // handler stays a lookup rather than a search. A residue can belong to
