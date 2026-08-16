@@ -151,9 +151,10 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .body > *{min-width:0;min-height:0}
 
 /* ── timeline rail ── */
-.rail{border-right:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:18px 0 30px}
-.rail h2,.srcs h2{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--ink-3);font-weight:600;margin:0 0 12px;padding:0 18px;
+.rail{border-right:1px solid var(--line);background:var(--sunk);overflow-y:auto;
+  padding:26px 0 40px}
+.rail h2,.srcs h2{font-size:10px;text-transform:uppercase;letter-spacing:.11em;
+  color:var(--ink-3);font-weight:600;margin:0 0 14px;padding:0 18px;
   display:flex;align-items:center;gap:8px}
 /* Slim, quiet scrollbars on the panels that actually scroll. The platform
    default is a wide flat bar that reads as chrome rather than content on a
@@ -225,7 +226,7 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 @keyframes slideIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 
 /* ── sources rail ── */
-.srcs{border-left:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:18px 0 30px;
+.srcs{border-left:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:26px 0 40px;
   position:relative}
 .srcs h2{display:flex;align-items:center;gap:8px;padding-right:12px}
 .srcs h2 .cnt{font-family:var(--mono);color:var(--ink-2);letter-spacing:0}
@@ -244,8 +245,9 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 /* Reasoning log. Collapsed by default: it is there to be checked, not read
    every time, and it must not push the pipeline out of view. */
 #thinking{max-height:40vh;overflow-y:auto}
-.tcall{margin:0 14px 8px;background:var(--card);border:1px solid var(--line);
-  border-radius:var(--r);overflow:hidden}
+.tcall{margin:0 14px 6px;background:var(--card);border:1px solid transparent;
+  border-radius:var(--r);overflow:hidden;transition:border-color .15s}
+.tcall:hover,.tcall[open]{border-color:var(--line)}
 .tcall>summary{cursor:pointer;padding:9px 11px;font-size:11.5px;display:flex;
   align-items:center;gap:8px;list-style:none}
 .tcall>summary::-webkit-details-marker{display:none}
@@ -260,10 +262,10 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
   border-radius:6px;white-space:pre-wrap;word-break:break-word;
   font-family:var(--mono);font-size:10.5px;color:var(--ink-2);max-height:190px;
   overflow-y:auto}
-.paper{margin:0 14px 9px;background:var(--card);border:1px solid var(--line);
+.paper{margin:0 14px 4px;background:transparent;border:1px solid transparent;
   border-radius:var(--r);padding:11px 12px;animation:slideIn .45s ease both;
-  text-decoration:none;display:block;transition:border-color .15s}
-.paper:hover{border-color:var(--line-2)}
+  text-decoration:none;display:block;transition:background .15s,border-color .15s}
+.paper:hover{background:var(--card);border-color:var(--line)}
 .paper .t{font-size:12.5px;font-weight:500;line-height:1.4;margin-bottom:5px}
 .paper .a{font-size:11.5px;color:var(--ink-2);line-height:1.45;
   display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
@@ -425,7 +427,7 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
   color:var(--ink-3);font:inherit;font-size:11px;cursor:pointer}
 .reps button:hover{color:var(--ink-2)}
 .reps button[aria-current=true]{background:var(--card);color:var(--ink)}
-.leg{position:absolute;left:18px;top:16px;font-size:12px;background:var(--glass);
+.leg{position:absolute;left:18px;top:16px;font-size:11.5px;background:var(--glass);
   backdrop-filter:blur(9px);border:1px solid var(--line);border-radius:var(--r);padding:11px 13px}
 .leg .row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .leg .row:last-child{margin:0}
