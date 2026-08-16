@@ -22,25 +22,25 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# ── configuration (§37) — thresholds live here, never inline ────────────────
-DEFAULTS = {
-    "contact_cutoff_angstrom": 4.5,
-    "min_dominant_cluster_fraction": 0.60,
-    "preferred_cluster_fraction": 0.80,
-    "min_contact_occupancy": 0.60,
-    "segment_contact_coverage": 0.80,
-    "cluster_jaccard_threshold": 0.35,
-}
-
-
 class ConsensusConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     contact_cutoff_angstrom: float = Field(default=4.5, gt=0)
     min_dominant_cluster_fraction: float = Field(default=0.60, ge=0, le=1)
-    preferred_cluster_fraction: float = Field(default=0.80, ge=0, le=1)
     min_contact_occupancy: float = Field(default=0.60, ge=0, le=1)
     segment_contact_coverage: float = Field(default=0.80, ge=0, le=1)
     cluster_jaccard_threshold: float = Field(default=0.35, ge=0, le=1)
+    min_ensemble_samples: int = Field(default=3, ge=2)
+    """Fewest independent samples that can demonstrate anything. One structure
+    is trivially 1/1 with every residue at occupancy 1.0 — a number that means
+    nothing. Duplicates of one prediction collapse to one observation first."""
+    min_contacts_per_sample: int = Field(default=3, ge=1)
+    """One residue pair repeated across samples is agreement about almost
+    nothing. A site needs contact, not a touch."""
+    max_segment_length: int = Field(default=40, ge=1)
+    """A 'compact segment' that spans most of a domain is not compact. §13."""
+    min_partner_occupancy: float = Field(default=0.50, ge=0, le=1)
+    """Partner residues seen in fewer than this fraction of the dominant cluster
+    are not part of the consensus site and must not widen the docking box."""
 
 
 @dataclass(frozen=True)
@@ -104,6 +104,10 @@ class InterfaceConsensus(BaseModel):
     dominant_cluster_samples: int = Field(ge=0)
     ensemble_support: float = Field(ge=0, le=1)
     target_segment: TargetSegment | None = None
+    """None whenever `blockers` is non-empty: a refusal must not ship a
+    populated segment that a consumer could read as a result."""
+    rejected_segment: TargetSegment | None = None
+    """What the segment would have been, kept for diagnosis only."""
     partner_contact_residues: list[int] = Field(default_factory=list)
     alternative_clusters: list[list[str]] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
@@ -126,6 +130,11 @@ def contacts_between(atoms: list[Atom], target_chain: str, partner_chain: str,
     Uniform grid rather than an all-pairs scan: MED23 is ~1200 residues and the
     quadratic version is slow enough to discourage running a real ensemble.
     """
+    if target_chain == partner_chain:
+        raise ValueError(
+            f"target and partner chain are both {target_chain!r}: a chain cannot "
+            "form an interface with itself, and self-contacts at 0 A would read "
+            "as perfect occupancy everywhere")
     tgt = [a for a in atoms if a.chain == target_chain and a.element != "H"]
     par = [a for a in atoms if a.chain == partner_chain and a.element != "H"]
     if not tgt or not par:
@@ -155,10 +164,26 @@ def contacts_between(atoms: list[Atom], target_chain: str, partner_chain: str,
         for (t, p), (d, tb, pb) in sorted(best.items())])
 
 
-def parse_mmcif(path) -> list[Atom]:
-    """Minimal mmCIF atom reader. ATOM records only — ligands and waters are not
-    part of a protein-protein interface and would inflate the contact set."""
+# Modified residues deposited as HETATM but chemically part of the chain. 9F6Y
+# carries the ELK1 phosphoserine as SEP; dropping it deletes the residue that
+# makes the interaction phosphorylation-dependent in the first place.
+POLYMER_HETATM = {
+    "SEP", "TPO", "PTR",              # phospho- Ser / Thr / Tyr
+    "MSE", "CSO", "CME", "OCS",       # selenomethionine, oxidised cysteines
+    "KCX", "MLY", "M3L", "ALY",       # modified lysines
+    "HYP", "PCA", "SAC", "CIR", "NEP",
+}
+
+
+def parse_mmcif(path, extra_polymer_residues: set[str] | None = None) -> list[Atom]:
+    """Minimal mmCIF atom reader.
+
+    ATOM records plus the modified residues in POLYMER_HETATM, which are part of
+    the polymer despite being deposited as HETATM. Waters, ions and true ligands
+    stay excluded — they are not part of a protein-protein interface.
+    """
     import pathlib
+    keep_het = POLYMER_HETATM | (extra_polymer_residues or set())
     lines = pathlib.Path(path).read_text().splitlines()
     i = next(k for k, l in enumerate(lines) if l.startswith("_atom_site."))
     cols = []
@@ -171,7 +196,9 @@ def parse_mmcif(path) -> list[Atom]:
         if l.startswith("#"):
             break
         f = l.split()
-        if len(f) < len(cols) or f[ix["group_PDB"]] != "ATOM":
+        if len(f) < len(cols):
+            continue
+        if f[ix["group_PDB"]] != "ATOM" and f[ix["label_comp_id"]] not in keep_het:
             continue
         out.append(Atom(
             chain=f[ix["auth_asym_id"]], resi=int(f[ix["auth_seq_id"]]),
@@ -195,24 +222,28 @@ def cluster_interfaces(samples: list[SampleInterface],
     sets, so two samples agreeing on the partner surface but placing a different
     part of the target do not count as agreement.
     """
-    live = [s for s in samples if not s.is_empty]
+    # Deterministic input order: sample order is a scheduling artifact and must
+    # not reach the verdict. Sorting means a shuffled ensemble clusters the same.
+    live = sorted((s for s in samples if not s.is_empty), key=lambda s: s.sample)
+
     clusters: list[list[SampleInterface]] = []
     for s in live:
         for c in clusters:
-            # min, not mean: two samples that agree on the partner surface but
-            # dock different regions of the target are describing different
-            # hypotheses. Averaging lets partner agreement alone carry them over
-            # the threshold and manufactures convergence that is not there.
-            sim = sum(
-                min(_jaccard(s.target_residues, m.target_residues),
-                    _jaccard(s.partner_residues, m.partner_residues))
-                for m in c) / len(c)
-            if sim >= cfg.cluster_jaccard_threshold:
+            # COMPLETE linkage: a sample joins only if it clears the threshold
+            # against EVERY member, not against the running mean. Averaging
+            # allows chaining, and chaining is how a peptide sliding one residue
+            # at a time along a groove — the signature of a sampler that found
+            # nothing — becomes a single "fully converged" cluster whose first
+            # and last members barely overlap.
+            if all(min(_jaccard(s.target_residues, m.target_residues),
+                       _jaccard(s.partner_residues, m.partner_residues))
+                   >= cfg.cluster_jaccard_threshold for m in c):
                 c.append(s)
                 break
         else:
             clusters.append([s])
-    clusters.sort(key=len, reverse=True)
+    # Ties broken by first sample name so the dominant cluster is reproducible.
+    clusters.sort(key=lambda c: (-len(c), c[0].sample))
     return clusters
 
 
@@ -260,22 +291,44 @@ def build_consensus(samples: list[SampleInterface],
                     cfg: ConsensusConfig | None = None) -> InterfaceConsensus:
     """Ensemble → consensus, or an explicit refusal (§35)."""
     cfg = cfg or ConsensusConfig()
+
+    # How many DISTINCT predictions arrived. Identical contact sets are one
+    # observation however many times they are handed over: a retry loop or a
+    # fan-out that lost its seed would otherwise turn one model into
+    # "converged in 8/8". The samples are kept in the denominator so support
+    # still reflects what actually ran; only the verdict changes.
+    distinct = len({(tuple(sorted(s.target_residues)), tuple(sorted(s.partner_residues)))
+                    for s in samples if not s.is_empty})
     total = len(samples)
+
     if total == 0:
         return InterfaceConsensus(total_samples=0, dominant_cluster_samples=0,
                                   ensemble_support=0.0,
                                   blockers=["no structural samples were produced"])
 
+    thin = [s for s in samples
+            if not s.is_empty and len(s.contacts) < cfg.min_contacts_per_sample]
+    samples = [s for s in samples
+               if s.is_empty or len(s.contacts) >= cfg.min_contacts_per_sample]
+
     clusters = cluster_interfaces(samples, cfg)
     if not clusters:
         return InterfaceConsensus(total_samples=total, dominant_cluster_samples=0,
                                   ensemble_support=0.0,
-                                  blockers=["no sample placed the target in contact "
-                                            "with the partner"])
+                                  blockers=["no sample placed the target in substantial "
+                                            "contact with the partner"
+                                            + (f" ({len(thin)} sample(s) had fewer than "
+                                               f"{cfg.min_contacts_per_sample} contacts)"
+                                               if thin else "")])
 
     dominant = clusters[0]
     support = len(dominant) / total
     blockers: list[str] = []
+    if distinct < cfg.min_ensemble_samples:
+        blockers.append(
+            f"only {distinct} distinct prediction(s) among {total} sample(s); at least "
+            f"{cfg.min_ensemble_samples} independent predictions are required before "
+            "agreement means anything")
     if support < cfg.min_dominant_cluster_fraction:
         blockers.append(
             f"ensemble did not converge: dominant interface in {len(dominant)}/{total} "
@@ -286,13 +339,29 @@ def build_consensus(samples: list[SampleInterface],
         blockers.append(
             f"no target residue reaches {cfg.min_contact_occupancy:.0%} contact "
             "occupancy within the dominant cluster")
+    elif segment.length > cfg.max_segment_length:
+        blockers.append(
+            f"the reproducible target region spans {segment.length} residues, beyond "
+            f"the {cfg.max_segment_length}-residue limit for a compact segment: this "
+            "is an extended surface rather than a short motif")
 
-    partner = sorted({r for s in dominant for r in s.partner_residues})
+    # Only partner residues the dominant cluster actually agrees on. A residue
+    # touched by one outlier sample is not part of the site and must not widen
+    # the docking box that is built from this list.
+    n_dom = len(dominant)
+    partner_tally = Counter(r for s in dominant for r in s.partner_residues)
+    partner = sorted(r for r, k in partner_tally.items()
+                     if k / n_dom >= cfg.min_partner_occupancy)
+    if not partner and not blockers:
+        blockers.append(
+            f"no partner residue is contacted in at least "
+            f"{cfg.min_partner_occupancy:.0%} of the dominant cluster")
     return InterfaceConsensus(
         total_samples=total,
         dominant_cluster_samples=len(dominant),
         ensemble_support=round(support, 4),
-        target_segment=segment if not blockers else segment,
+        target_segment=None if blockers else segment,
+        rejected_segment=segment if blockers else None,
         partner_contact_residues=partner,
         alternative_clusters=[[s.sample for s in c] for c in clusters[1:]],
         blockers=blockers,

@@ -76,7 +76,9 @@ class ExperimentalCalibrationTests(unittest.TestCase):
 
 class ConvergenceTests(unittest.TestCase):
     def test_consensus_interface_requires_repeated_samples(self):
-        agree = [span(f"s{i}", range(216, 230), range(339, 346)) for i in range(4)]
+        # distinct predictions that agree, as a real ensemble is: identical
+        # contact sets would be one prediction handed over four times
+        agree = [span(f"s{i}", range(216, 230 - i), range(339, 346)) for i in range(4)]
         agree.append(span("s4", range(700, 714), range(900, 907)))   # one outlier
         c = build_consensus(agree)
         self.assertEqual(c.total_samples, 5)
@@ -107,7 +109,7 @@ class ConvergenceTests(unittest.TestCase):
     def test_support_is_measured_against_every_sample_not_just_contacting_ones(self):
         """Three agreeing plus two that never touched must read 3/5, not 3/3 —
         otherwise failed samples silently inflate confidence."""
-        s = [span(f"a{i}", range(10, 20), range(50, 56)) for i in range(3)]
+        s = [span(f"a{i}", range(10, 20 - i), range(50, 56)) for i in range(3)]
         s += [SampleInterface(sample=f"empty{i}") for i in range(2)]
         c = build_consensus(s)
         self.assertEqual(c.total_samples, 5)
@@ -116,7 +118,7 @@ class ConvergenceTests(unittest.TestCase):
 
 class SegmentTests(unittest.TestCase):
     def test_contact_occupancy_returns_a_tight_contiguous_segment(self):
-        cluster = [span(f"s{i}", range(216, 229), range(339, 346)) for i in range(4)]
+        cluster = [span(f"s{i}", range(216, 229), range(339, 346 - (i % 2))) for i in range(4)]
         cluster.append(sample("s4", [(216, 339), (300, 400)]))       # noisy tail
         seg = smallest_confident_segment(cluster, ConsensusConfig())
         self.assertIsNotNone(seg)
@@ -142,7 +144,7 @@ class SegmentTests(unittest.TestCase):
 
     def test_thresholds_are_configuration_not_constants(self):
         cluster = [span("a", range(10, 20), range(50, 56)),
-                   span("b", range(10, 20), range(50, 56)),
+                   span("b", range(10, 19), range(50, 56)),
                    span("c", range(80, 90), range(50, 56))]
         strict = ConsensusConfig(min_dominant_cluster_fraction=0.95)
         self.assertTrue(build_consensus(cluster, strict).blockers)
@@ -159,8 +161,8 @@ class ClusteringTests(unittest.TestCase):
         self.assertEqual(len(cluster_interfaces([a, b], ConsensusConfig())), 2)
 
     def test_clusters_are_returned_largest_first(self):
-        s = [span(f"big{i}", range(10, 20), range(50, 56)) for i in range(3)]
-        s += [span(f"small{i}", range(300, 310), range(400, 406)) for i in range(2)]
+        s = [span(f"big{i}", range(10, 20 - i), range(50, 56)) for i in range(3)]
+        s += [span(f"small{i}", range(300, 310 - i), range(400, 406)) for i in range(2)]
         cl = cluster_interfaces(s, ConsensusConfig())
         self.assertEqual([len(c) for c in cl], [3, 2])
 
