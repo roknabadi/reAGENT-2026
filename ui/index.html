@@ -335,8 +335,6 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 /* Whose cavity these were docked into. A compound shown against a candidate
    who did not supply the box is a claim about that candidate unless the label
    travels with it, so the label is in the header rather than in a footnote. */
-.ligdock .borrowed{margin-left:auto;text-transform:none;letter-spacing:0;
-  font-size:10.5px;color:var(--await)}
 /* Collapsing leaves the molecules and takes back the canvas. The strip is the
    part that cannot be given up — the detail is a lookup, and the structure
    underneath is the thing being talked about. */
@@ -345,7 +343,6 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
   display:grid;place-items:center;font-size:11px;line-height:1;flex:none;
   transition:color .15s,border-color .15s,transform .2s}
 .dockfold:hover{color:var(--ink);border-color:var(--line-2)}
-.ligdock .borrowed + .dockfold{margin-left:8px}
 .ligdock[data-fold] .ligone{display:none}
 .ligdock[data-fold] .dockfold{transform:rotate(180deg)}
 .ligstrip{display:flex;gap:7px;overflow-x:auto;padding-bottom:2px;
@@ -1908,7 +1905,12 @@ const ligandsAreOwn = hl => !!hl?.ligands?.length;
 
 const legendReceptor = hl => { const site = siteLayer(hl); return `
   <span><i style="background:var(--ink-3)"></i>MED23 backbone · observed</span>
-  <span><i style="background:var(${site.calibration?'--control':'--fail'})"></i>${site.label} · ${site.state}</span>`
+  <span><i style="background:var(${site.calibration?'--control':'--fail'})"></i>${site.label} · ${site.state}${
+    // Whose cavity the compounds went into belongs here, with the layer it
+    // describes, not across the top of the chemistry. It is the same fact
+    // either way; over the compound cards it read as a warning about them.
+    hl && ligandsOf(hl).length && !ligandsAreOwn(hl) && hl.gene
+      ? ` · not ${hl.gene}'s site` : ''}</span>`
   + (hl?.residues?.length
      ? ` <span><i style="background:var(--fail)"></i>predicted interface · computed</span>` : '')
   + (ligandsOf(hl).length
@@ -2000,8 +2002,7 @@ function ligandDock(hl){
   el.innerHTML = `
   <div class="hd"><span>Docked compounds</span>
     <span class="of">${i+1} / ${ligs.length}</span>
-    ${ligandsAreOwn(hl) ? '' : `<span class="borrowed">into the ${
-       hl.site_owner || 'calibration'} cavity, not ${hl.gene}'s site</span>`}
+
     <button class="dockfold" id="dockfold" title="Collapse to the molecules"
             aria-expanded="true">⌄</button></div>
   <div class="ligstrip">${ligs.map((g,k)=>`<div class="lig" data-lig="${k}"
