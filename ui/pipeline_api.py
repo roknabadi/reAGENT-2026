@@ -401,7 +401,7 @@ def _read_screen(path: Path, site):
 LIBRARY_SIZE = 6           # proposal + identity checks + docking, kept interactive
 
 
-def _live_screen(site, genes: list[str], emit, trace):
+def _live_screen(site, genes: list[str], emit, trace, design: bool = False):
     """Propose a library for this site, check it, dock it, and keep the record.
 
     The site's residues and their chemistry are what the proposal is made from,
@@ -433,10 +433,16 @@ def _live_screen(site, genes: list[str], emit, trace):
         "candidate_transcription_factor": gene,
     }
     emit("stage", {"id": "screening", "state": "running",
-                   "detail": f"proposing a library for this site ({LIBRARY_SIZE} compounds)",
-                   "note": "The library is proposed from the site's own residues, "
-                           "then every structure is identity-checked before docking."})
-    proposed, _ = A.propose_library(trace, described, n=LIBRARY_SIZE)
+                   "detail": (f"{'designing' if design else 'proposing'} a library "
+                              f"for this site ({LIBRARY_SIZE} compounds)"),
+                   "note": ("New structures, drawn for this site's residues and "
+                            "chemistry, then checked against PubChem by InChIKey: "
+                            "a structure PubChem does not hold is novel by that "
+                            "check, and one it does hold is a rediscovery."
+                            if design else
+                            "The library is proposed from the site's own residues, "
+                            "then every structure is identity-checked before docking.")})
+    proposed, _ = A.propose_library(trace, described, n=LIBRARY_SIZE, design=design)
     emit("thinking", {"trace": trace.as_dict()})
     if not proposed:
         return None
@@ -1123,13 +1129,16 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # not what was asked. `_live_screen` proposes a library from this site's own
     # residues and chemistry, checks every structure, and docks what survives.
     screen = None if design else _recorded_screen(site, genes)
-    if design:
+    if design and supported:
+        # Announced only once the site is supported. Saying "designing a
+        # library" and then abstaining in the next breath describes a run that
+        # did not happen.
         emit("stage", {
             "id": "screening", "state": "running",
             "detail": "designing a library for this site rather than reusing one",
             "note": "The request asked for compounds to be designed. Nothing on "
-                    "file is served for it: the library is proposed from this "
-                    "site's residues and their chemistry, every structure is "
+                    "file is served for it: the library is drawn for this site's "
+                    "residues and their chemistry, every structure is "
                     "standardized and checked against PubChem by InChIKey, and "
                     "what fails either check is reported rather than dropped."})
     if not supported:
@@ -1161,7 +1170,8 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
         # site's own residues, check every structure, and dock it. The library
         # is generated rather than stored because a constant list answers the
         # same question for every site the pipeline will ever build.
-        screen = _live_screen(site, genes, emit, trace) if trace is not None else None
+        screen = (_live_screen(site, genes, emit, trace, design=design)
+                  if trace is not None else None)
         if screen is None:
             poses = []
             emit("stage", {

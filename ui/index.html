@@ -376,6 +376,9 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
    claim about binding — it is a claim that this molecule is the molecule it is
    named after, which a model writing SMILES cannot be assumed to get right. */
 .ligmeta .id-verified{color:var(--pass)}
+/* Designed here and not in PubChem: the one status in this panel that is a
+   result rather than a caveat. */
+.ligmeta .id-novel{color:var(--pass);font-weight:500}
 .ligmeta .id-not_in_pubchem{color:var(--await)}
 .ligmeta .id-lookup_failed,.ligmeta .id-unparseable{color:var(--ink-3)}
 .ligmeta .why{color:var(--ink-3);font-style:italic}
@@ -2019,12 +2022,24 @@ function ligandDock(hl){
                                 : '<span class="muted">none in the cavity</span>'}</div>
       ${l.closest!=null?`<div class="k">closest approach ${l.closest} Å${
           l.offset!=null?` \u00b7 ${l.offset} Å from box centre`:''}</div>`:''}
-      ${l.identity?.status ? `<div class="k id-${l.identity.status}">${
-          l.identity.status==='verified'
-            ? `identity verified \u00b7 PubChem ${l.identity.cid} ${l.identity.name||''}`
-            : l.identity.status==='not_in_pubchem'
-              ? 'no PubChem record for this exact structure'
-              : `identity unchecked — ${l.identity.note||l.identity.status}`}</div>` : ''}
+      ${l.identity?.status ? `<div class="k id-${
+          l.provenance==='designed' && l.identity.status==='not_in_pubchem'
+            ? 'novel' : l.identity.status}">${
+          // The same lookup answers two different questions. For a compound
+          // proposed by name, "PubChem does not have this" means the SMILES is
+          // not the molecule it was called — a fault. For a compound designed
+          // here, it is the evidence that the structure is new.
+          l.provenance==='designed'
+            ? (l.identity.status==='not_in_pubchem'
+                 ? 'novel — designed here, no PubChem record for this structure'
+                 : l.identity.status==='verified'
+                   ? `not novel — PubChem already holds this structure (CID ${l.identity.cid})`
+                   : `novelty unchecked — ${l.identity.note||l.identity.status}`)
+            : (l.identity.status==='verified'
+                 ? `identity verified \u00b7 PubChem ${l.identity.cid} ${l.identity.name||''}`
+                 : l.identity.status==='not_in_pubchem'
+                   ? 'no PubChem record for this exact structure'
+                   : `identity unchecked — ${l.identity.note||l.identity.status}`)}</div>` : ''}
       ${l.rationale ? `<div class="k why">${l.rationale}</div>` : ''}
       ${l.descriptors?.mw ? `<div class="props">${[
           ['MW', l.descriptors.mw], ['cLogP', l.descriptors.clogp],

@@ -457,7 +457,41 @@ Reply with JSON only:
 "ppi_inhibitor"|"natural_product"|"fragment"}]}"""
 
 
-def propose_library(trace: AgentTrace, site: dict, n: int = 8) -> tuple[list, object]:
+DESIGN_LIBRARY_SYSTEM = """You design new small molecules for a described \
+protein site. Not a catalogue search — structures that did not exist before \
+this request. Nothing you return is a predicted binder; it is a starting design \
+that will be standardized, checked against PubChem, docked, and reported with \
+whatever it fails.
+
+You are given the site's actual residues and their chemistry. Design from them. \
+A transcription-factor groove on a Mediator subunit is a wide, shallow, largely \
+hydrophobic surface — not an enzyme active site. Flat rigid lipophilic cores \
+that can lie against a groove, with polar groups arranged to point out at \
+solvent rather than buried, suit it; compact polar fragments and charged \
+zwitterions do not.
+
+Rules:
+- Design NEW structures. Do not return approved drugs, tool compounds or named \
+natural products. If a scaffold you are drawing is a known drug, change it \
+until it is not, and say what you changed it from.
+- Every SMILES must be valid and chemically sensible: correct valences, no \
+exotic metals, nothing that could not be made. A SMILES that parses into \
+nonsense is worse than no molecule.
+- Vary the scaffolds. Six variations on one core test one idea, not six.
+- Keep them in a drug-like range: roughly 250-550 Da, no long aliphatic chains, \
+no more than two ionizable groups.
+- Name each one descriptively for what it is, not after a real drug — e.g. \
+"biaryl amide 1", "indole sulfonamide 2".
+- Say in one SHORT clause -- twelve words at most -- which feature of THIS site \
+the design is aimed at. Long rationales truncate the reply and lose compounds.
+
+Reply with JSON only:
+{"compounds": [{"name": "<descriptive name>", "smiles": "<SMILES>", \
+"rationale": "<one clause about this site>", "kind": "designed"}]}"""
+
+
+def propose_library(trace: AgentTrace, site: dict, n: int = 8,
+                    design: bool = False) -> tuple[list, object]:
     """A screening library for one described site, proposed rather than stored.
 
     The alternative was a constant: twelve approved drugs written into a script,
@@ -469,13 +503,21 @@ def propose_library(trace: AgentTrace, site: dict, n: int = 8) -> tuple[list, ob
     docked. Nothing about this makes a compound a binder; it makes the library
     relevant and its members identifiable.
     """
+    # Designing and screening are different requests and get different
+    # instructions. The screening prompt asks for real, checkable compounds
+    # BECAUSE a checkable structure is worth more than an imaginative one; ask
+    # it to design and it returns the catalogue, which answers "did you make
+    # something new" with no.
     prompt = (f"Site:\n{json.dumps(site, indent=1)}\n\n"
-              f"Propose {n} compounds to dock against it. JSON only.")
+              + (f"Design {n} new compounds for it. JSON only." if design
+                 else f"Propose {n} compounds to dock against it. JSON only."))
     # Room to finish the list. At 2,000 the reply truncated mid-object and the
     # scanner below then parsed some inner fragment instead, so the caller got
     # an empty library and no error -- the failure mode this budget exists to
     # avoid, not a cost saving worth making.
-    call = ask(trace, "propose_library", LIBRARY_SYSTEM, prompt, max_tokens=6000)
+    call = ask(trace, "design_library" if design else "propose_library",
+               DESIGN_LIBRARY_SYSTEM if design else LIBRARY_SYSTEM,
+               prompt, max_tokens=6000)
     if call.error:
         return [], call
     data = _json_block(call.reply) or {}
