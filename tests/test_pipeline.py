@@ -21,7 +21,14 @@ class PipelineTests(unittest.TestCase):
         ranked = {r.dependency.gene: r for r in rank_all(records)}
         self.assertTrue(ranked["SELECTIVE_TF"].gate.eligible)
         self.assertFalse(ranked["PAN_ESSENTIAL"].gate.eligible)
-        self.assertIn("too broad", " ".join(ranked["PAN_ESSENTIAL"].gate.failures))
+        # Why it fails, not merely that it does. The wording moved with the
+        # specificity-first port — the old gate rejected a pan-essential gene
+        # for being "too broad", the new one for failing both paths — but the
+        # claim under test is the same one: a gene every lineage needs is not
+        # a selective dependency, and the reason has to be stated.
+        why = " ".join(ranked["PAN_ESSENTIAL"].gate.failures)
+        self.assertIn("fails both", why)
+        self.assertIn("specificity-first path", why)
         self.assertEqual(ranked["SELECTIVE_TF"].dependency.source.tier.value, "synthetic")
 
     def test_vina_cannot_be_requested_without_auditable_inputs(self):
