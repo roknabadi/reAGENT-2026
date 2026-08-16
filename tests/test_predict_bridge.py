@@ -186,20 +186,46 @@ def test_failed_dispatch_abstains(workspace, monkeypatch):
     assert emit.highlights()[0]["residues"] == []
 
 
-def test_unconverged_consensus_highlights_nothing(workspace, monkeypatch):
-    """An ensemble that ran and disagreed is a result, and it is not residues."""
-    rejected = json.loads(json.dumps(CONSENSUS))
-    rejected["partner_contact_residues"] = []
-    rejected["consensus"].update(
-        status="ambiguous", next_action="sample_more", target_segment=None,
+def unconverged(status: str, next_action: str) -> dict:
+    rec = json.loads(json.dumps(CONSENSUS))
+    rec["partner_contact_residues"] = []
+    rec["consensus"].update(
+        status=status, next_action=next_action, target_segment=None,
         dominant_cluster_samples=1, ensemble_support=1 / 3,
         blockers=["ensemble did not converge: dominant interface in 1/3 samples"])
-    install_fake_predictor(monkeypatch, workspace, gene="TESTTF", record=rejected)
+    return rec
+
+
+def test_ambiguous_ensemble_is_its_own_state(workspace, monkeypatch):
+    """§10: ambiguous is not abstained.
+
+    An ensemble that produced localized hypotheses and could not choose between
+    them licenses a different next action from one that produced nothing —
+    preserve them and sample more. Collapsing the two states loses the minority
+    hypothesis that the ELK1 control showed a majority vote can bury.
+    """
+    install_fake_predictor(monkeypatch, workspace, gene="TESTTF",
+                           record=unconverged("ambiguous", "sample_more"))
     emit = Emitter()
     run_downstream(emit, "TESTTF", predict="TESTTF")
 
     structure = emit.final("structure")
-    assert structure["state"] == "abstained"
+    assert structure["state"] == "ambiguous", structure
+    assert "retained" in structure["detail"]
+    assert "sample more" in structure["note"]
+    # Kept, but never drawn and never docked.
+    assert emit.highlights()[0]["residues"] == []
+
+
+def test_refused_ensemble_abstains(workspace, monkeypatch):
+    """§10: no defensible localized hypothesis stops, and says why."""
+    install_fake_predictor(monkeypatch, workspace, gene="TESTTF",
+                           record=unconverged("refused", "abstain"))
+    emit = Emitter()
+    run_downstream(emit, "TESTTF", predict="TESTTF")
+
+    structure = emit.final("structure")
+    assert structure["state"] == "abstained", structure
     assert "did not converge" in structure["detail"]
     assert emit.highlights()[0]["residues"] == []
 

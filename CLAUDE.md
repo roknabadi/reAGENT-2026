@@ -1,6 +1,8 @@
 # Project instructions
 
-- Read `PROJECT.md` and `SOURCE_POLICY.md` before changing the project.
+- Read `PROJECT.md`, `SOURCE_POLICY.md` and `team/SCIENCE_BRIEF.md` before
+  changing the project. The science brief is Andrey's specification for how the
+  pipeline must behave; where the code disagrees with it, the code is the bug.
 - This is a general target-discovery and drug-prioritization pipeline: disease
   or biological state → candidate targets → ranking → specificity and
   therapeutic window → druggable site → structure → screening → next

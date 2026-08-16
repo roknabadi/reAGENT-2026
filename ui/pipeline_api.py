@@ -165,6 +165,14 @@ def _read_screen(path: Path, site):
               "residues": r["geometry"].get("pocket_contacts", []),
               "contacts": r["geometry"].get("n_pocket_contacts", 0),
               "closest": r["geometry"].get("closest_pocket_approach"),
+              # §17: a score without its geometry is the most convincing wrong
+              # number this project can produce. Offset from the box centre,
+              # whether the pose is inside the box at all, and whether it
+              # clashes are what separate a pose in the site from a pose that
+              # merely scored well somewhere.
+              "offset": r["geometry"].get("offset_from_box_centre"),
+              "inside_box": r["geometry"].get("inside_box"),
+              "clash": bool(r.get("clash")),
               "smiles": r.get("smiles", ""),
               "provenance": r.get("provenance", ""),
               # The molecule itself, twice: the heavy-atom skeleton of the pose
@@ -439,18 +447,46 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
                     "question. Convergence across seeds is model self-consistency. "
                     "A predicted interface is a hypothesis, not a contact."})
     else:
+        # An ensemble that ran and disagreed is not the same result as no
+        # ensemble at all, and neither is a refusal. §10 of the science brief
+        # names three states and licenses a different next action for each:
+        # converged may build a site, ambiguous must preserve its hypotheses and
+        # sample more, refused stops. Collapsing ambiguous into abstained throws
+        # away the localized minority hypothesis that the ELK1 control showed a
+        # majority vote can bury — which is the exact failure the three-state
+        # classification exists to prevent.
+        ambiguous = {g: (c, r) for g, (c, r) in predicted.items()
+                     if c.status == "ambiguous"}
         rejected = [f"{g}: {'; '.join(c.blockers)[:90]}" for g, (c, _) in predicted.items()]
-        emit("stage", {
-            "id": "structure", "state": "abstained",
-            "detail": ("; ".join(rejected) if rejected
-                       else "no ensemble on file for any candidate in this run"),
-            "note": (predict_note or
-                     ("Ensembles that ran but did not converge highlight nothing."
-                      if rejected else
-                      "Structural discovery is a separate costed GPU step, not run "
-                      "inline. Ask for one with the button on the structure panel, "
-                      "or `python scripts/predict_med23_interface.py <GENE> "
-                      "--dispatch`."))})
+        if ambiguous:
+            kept = []
+            for g, (c, _) in ambiguous.items():
+                local = [h for h in c.alternative_hypotheses if getattr(h, "localized", False)]
+                kept.append(f"{g}: {len(c.alternative_hypotheses)} hypothes(es) retained, "
+                            f"{len(local)} localized, best support "
+                            f"{c.ensemble_support:.0%}")
+            emit("stage", {
+                "id": "structure", "state": "ambiguous",
+                "detail": "; ".join(kept),
+                "note": ("The ensemble holds localized interface hypotheses and none "
+                         "of them carried the vote. They are kept, not discarded: a "
+                         "minority hypothesis can be the correct one, which is why "
+                         "this is not a refusal. Next action is to sample more seeds. "
+                         "No site is built and nothing is docked from an unconverged "
+                         "ensemble.")})
+        else:
+            emit("stage", {
+                "id": "structure", "state": "abstained",
+                "detail": ("; ".join(rejected) if rejected
+                           else "no ensemble on file for any candidate in this run"),
+                "note": (predict_note or
+                         ("No defensible localized hypothesis in the ensemble, so "
+                          "nothing is highlighted and no site is built from it."
+                          if rejected else
+                          "Structural discovery is a separate costed GPU step, not "
+                          "run inline. Ask for one with the button on the structure "
+                          "panel, or `python scripts/predict_med23_interface.py "
+                          "<GENE> --dispatch`."))})
 
     # ── druggable site ─────────────────────────────────────────────────────
     #

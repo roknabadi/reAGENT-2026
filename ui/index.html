@@ -162,7 +162,16 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
   border-bottom:1px solid var(--line)}
 .askq{margin:0;padding:0 18px;font-size:13px;line-height:1.5;color:var(--ink)}
 .askq:not(.set){color:var(--ink-3)}
-#anstext{padding:0 18px;font-size:12.5px;line-height:1.62;color:var(--ink-2)}
+/* A multi-sentence request is normal here — the pipeline reads control flow out
+   of it — but ten lines of question above the timeline pushed every stage below
+   the fold, and the stages are the thing being watched while a run is going.
+   Clamped to four lines, expandable, and the answer scrolls inside its own box
+   for the same reason. */
+.askq.set{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;
+  overflow:hidden;cursor:pointer}
+.askq.set[data-open]{-webkit-line-clamp:unset;display:block;cursor:default}
+#anstext{padding:0 18px;font-size:12.5px;line-height:1.62;color:var(--ink-2);
+  max-height:32vh;overflow-y:auto}
 #anstext p{margin:0 0 9px}
 #anstext p:last-child{margin-bottom:0}
 #anstext p:first-child{color:var(--ink)}
@@ -185,6 +194,18 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .stage[data-s=done] .dot{border-color:var(--pass);background:var(--pass)}
 .stage[data-s=blocked] .dot{border-color:var(--fail);background:var(--fail)}
 .stage[data-s=abstained] .dot{border-color:var(--await);background:var(--await)}
+/* Ambiguous is a state, not a soft failure: hypotheses were produced and kept,
+   none carried the vote, and the licensed next action is to sample more. Drawn
+   as a half-filled dot so it reads as "partway" rather than as a verdict, and
+   the state is also spelled out in the badge below — colour is never the only
+   encoding here. */
+.stage[data-s=ambiguous] .dot{border-color:var(--control);
+  background:linear-gradient(90deg,var(--control) 50%,transparent 50%)}
+.stage .st{display:inline-block;margin-left:6px;font-size:9.5px;font-weight:600;
+  letter-spacing:.06em;text-transform:uppercase;vertical-align:1px}
+.stage[data-s=ambiguous] .st{color:var(--control)}
+.stage[data-s=abstained] .st{color:var(--await)}
+.stage[data-s=blocked] .st{color:var(--fail)}
 .stage .nm{font-size:13px;font-weight:500;color:var(--ink-3);transition:color .3s}
 .stage:not([data-s=pending]) .nm{color:var(--ink)}
 .stage .dt{font-size:12px;color:var(--ink-2);margin-top:1px;line-height:1.45}
@@ -263,6 +284,8 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .ligmeta .n{font-size:12px;font-weight:500}
 .ligmeta .sc{font-family:var(--mono);font-size:11px;color:var(--ink-2);margin-left:4px}
 .ligmeta .k{font-size:11px;color:var(--ink-2);margin-top:2px}
+.ligmeta .geo{color:var(--ink-3)}
+.ligmeta .bad{color:var(--fail);font-weight:600}
 .ligmeta .smi{font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-top:3px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
@@ -340,6 +363,7 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
 .pill i{width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
 .p-pass{color:var(--pass)}.p-fail{color:var(--fail)}
 .p-await{color:var(--await)}.p-ctrl{color:var(--control)}
+.p-none{color:var(--ink-3)}
 .star{color:var(--pass);font-size:11px}
 
 #detail{border-left:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:20px 20px 50px}
@@ -866,9 +890,17 @@ $('#stages').innerHTML = STAGES.map(([id,nm])=>
   `<div class="stage" id="st-${id}" data-s="pending"><div class="dot"></div>
     <div class="nm">${nm}</div><div class="dt"></div><div class="nt"></div></div>`).join('');
 
+const NAMED_STATES = {ambiguous:'ambiguous', abstained:'abstained', blocked:'blocked'};
 function setStage({id,state,detail,note}){
   const el=$('#st-'+id); if(!el) return;
   el.dataset.s=state; el.classList.add('in');
+  const nm=el.querySelector('.nm');
+  nm.querySelector('.st')?.remove();
+  if(NAMED_STATES[state]){
+    const b=document.createElement('span');
+    b.className='st'; b.textContent=NAMED_STATES[state];
+    nm.append(b);
+  }
   el.querySelector('.dt').textContent = detail||'';
   el.querySelector('.nt').textContent = note||'';
 }
@@ -997,6 +1029,8 @@ function setAnswer(d){
   $('#ansmodel').textContent = d.model || '';
   $('#anscaveat').textContent = d.caveat || '';
   const a=$('#ans'); a.hidden=false; a.setAttribute('data-in','');
+  a.scrollIntoView({block:'nearest', behavior:
+    matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
 }
 
 let es=null;
@@ -1009,6 +1043,9 @@ function run(q, predict){
   const asked=$('#askq');
   asked.textContent = q || 'no question given';
   asked.classList.toggle('set', !!q);
+  asked.removeAttribute('data-open');
+  asked.title = q ? 'Show the whole question' : '';
+  asked.onclick = () => asked.toggleAttribute('data-open');
   const live = new EventSource('/api/run?q='+encodeURIComponent(q||'')
                                + (predict ? '&predict='+encodeURIComponent(predict) : ''));
   es = live;
@@ -1188,7 +1225,12 @@ function draw(){
     ctx.beginPath(); ctx.arc(x,y, on?5.5:(p.pass?4:2.4),0,6.284);
     if(p.pass){ctx.fillStyle=css('--pass');ctx.globalAlpha=1;}
     else if(p.low_n){ctx.fillStyle=css('--await');ctx.globalAlpha=on?1:.55;}
-    else {ctx.fillStyle=css('--fail');ctx.globalAlpha=on?1:.3;}
+    // Most transcription factors are not selective dependencies, and that is
+    // the expected result rather than a failure — drawing 1,500 of them in the
+    // error colour made a normal distribution look like an alarm panel. Neutral
+    // ink for the population, colour reserved for the ones that cleared a gate
+    // and for the ones held back by sample size.
+    else {ctx.fillStyle=css('--ink-3');ctx.globalAlpha=on?.9:.22;}
     ctx.fill(); ctx.globalAlpha=1;
     if(on){ctx.strokeStyle=css('--bg');ctx.lineWidth=2;ctx.stroke();}
   }
@@ -1269,7 +1311,16 @@ const nPass=pts.filter(p=>p.pass).length;
 $('#lsub').textContent=`${liveContext} · DepMap 24Q2 Chronos`;
 $('#nTF').textContent=pts.length.toLocaleString();
 $('#nPass').textContent=nPass; if(nPass) $('#nPass').classList.remove('zero');
-const tally={}; pts.forEach(p=>p.why.forEach(w=>tally[w]=(tally[w]||0)+1));
+// Group by the reason, not by the numbers inside it. Each failure carries that
+// gene's own medians and fractions in parentheses, so tallying the raw strings
+// produced one row per gene — fifteen hundred near-identical sentences, counted
+// once each, which said nothing about why the population failed. Stripping the
+// parenthetical leaves the category, and the category is the answer.
+const tally={};
+pts.forEach(p=>p.why.forEach(w=>{
+  const key=String(w).replace(/\s*\([^)]*\)\s*$/,'').trim();
+  tally[key]=(tally[key]||0)+1;
+}));
 $('#whybars').innerHTML=Object.entries(tally).sort((a,b)=>b[1]-a[1]).map(([w,n])=>
   `<div class="bar"><div class="lab"><span>${w}</span><span>${n}</span></div>
    <div class="track"><div class="fill" style="width:${n/pts.length*100}%"></div></div></div>`).join('');
@@ -1302,8 +1353,15 @@ refreshSidebar();
 function renderCandidates(){
 $('#csub').textContent=`${C.length} in ${liveContext||'DepMap 24Q2'} · dependency numbers joined to typed interface evidence`;
 const dep=c=>c.awaiting?['p-await','awaiting data']:c.gate_pass?['p-pass','passes']:['p-fail','rejected'];
+/* "none found" claimed more than the run can support. Retrieval missing a paper
+   and a contact not existing are different facts, and this column only ever
+   knew the first: asked about ELK1 — which has a deposited complex with MED23 —
+   the same six axes came back with nothing that documented it, and the table
+   would have said "none found" about a structure in the PDB. So the label says
+   what happened, and the colour drops to neutral: an absence of retrieved
+   evidence is not a failed candidate. */
 const con=c=>c.control?['p-ctrl','control']:c.involvement==='direct'?['p-pass','direct']
-  :c.involvement==='unknown'?['p-fail','none found']:['p-await',c.involvement];
+  :c.involvement==='unknown'?['p-none','none retrieved']:['p-await',c.involvement];
 $('#rows').innerHTML=C.map((c,i)=>{const [dc,dl]=dep(c),[cc,cl]=con(c);
   return `<tr data-i="${i}" tabindex="0"><td class="gene">${c.gene}${c.shortlisted?' <span class="star">★</span>':''}</td>
   <td class="ctx">${c.awaiting?'—':c.context}</td><td class="num">${c.n??'—'}</td><td class="num">${fmt(c.median)}</td>
@@ -1457,7 +1515,10 @@ function receptorPanel(M, c, hl){
       <div class="n">${l.name} <span class="sc">${l.score.toFixed(2)} kcal/mol</span></div>
       <div class="k">contacts ${l.residues?.length ? l.residues.join(', ')
                                 : '<span class="muted">none in the cavity</span>'}</div>
-      ${l.closest!=null?`<div class="k">closest approach ${l.closest} Å</div>`:''}
+      ${l.closest!=null?`<div class="k">closest approach ${l.closest} Å${
+          l.offset!=null?` · ${l.offset} Å from box centre`:''}</div>`:''}
+      <div class="k geo">${l.inside_box===false?'<b class="bad">outside the box</b>'
+        :'in the box'} · ${l.clash?'<b class="bad">clash</b>':'no clash'}</div>
       <div class="smi" title="${l.smiles||''}">${l.smiles||''}</div>
     </div></div>`).join('')}
   ${hl?.residues?.length || !c?.gene ? '' : `<p class="note">
@@ -1467,7 +1528,9 @@ function receptorPanel(M, c, hl){
       chains. Minutes, and it spends GPU time. The residues it agrees on become
       the site a compound would have to occupy to keep ${c.gene} off it.</span></p>`}
   <p class="note">The cavity shown is where <b>ELK1</b> binds, from the deposited
-    complex. It is not a site established for ${gene}.
+    complex — an interaction that depends on ELK1 being phosphorylated at Ser383,
+    a modification the current prediction path does not transmit. It is not a
+    site established for ${gene}.
     ${hl?.residues?.length
       ? 'The red residues are a computational prediction for this candidate — a hypothesis, not a contact.'
       : 'No interface has been predicted for this candidate, so nothing is highlighted for it.'}</p>
