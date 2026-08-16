@@ -2268,6 +2268,7 @@ async function paintMol(M, hl){
     // docked. `mark` takes the receptor's side of the contact, `shown.sdf`
     // below draws the compound's.
     const patches=[];
+    let contactSticks=false;
     const mark=(resi,color,contact)=>{
       if(!resi.length) return;
       if(molRep==='atoms'){ molv.addStyle({resi},{sphere:{color, scale:.95}}); return; }
@@ -2275,8 +2276,9 @@ async function paintMol(M, hl){
       // Only under the cartoon. The other two representations already cover
       // the site in their own geometry — a stick inside the whole-protein
       // surface is a stick nobody can see — so there the patch stays.
-      if(contact && molRep==='cartoon') molv.addStyle({resi},{stick:{color, radius:.16}});
-      else patches.push({resi, color});
+      if(contact && molRep==='cartoon'){
+        molv.addStyle({resi},{stick:{color, radius:.16}}); contactSticks=true;
+      } else patches.push({resi, color});
     };
     mark(pocket, site.calibration ? C.pocket : C.pred);
     mark(lig, C.lig, true); mark(pred, C.pred);
@@ -2284,9 +2286,14 @@ async function paintMol(M, hl){
     if(molRep==='surface')
       molv.addSurface($3.SurfaceType.VDW, {opacity:.62, color:C.body}, {});
     // A patch over each highlighted set, so the residues read as a surface on
-    // the protein rather than as decoration threaded through it.
-    for(const {resi,color} of patches)
-      molv.addSurface($3.SurfaceType.VDW, {opacity:.55, color}, {resi});
+    // the protein rather than as decoration threaded through it — but not
+    // over a contact drawn as sticks. The cavity and the residues a compound
+    // touches are the same handful of residues, so its film landed on top of
+    // the side chains and fogged the one thing the picture is now about. The
+    // thickened ribbon still carries every layer's colour without it.
+    if(!contactSticks)
+      for(const {resi,color} of patches)
+        molv.addSurface($3.SurfaceType.VDW, {opacity:.55, color}, {resi});
 
     if(shown?.sdf){
       const m=molv.addModel(shown.sdf,'sdf');
