@@ -48,7 +48,8 @@ from reagent_workflow.chemistry import depict, parse_molblock
 from reagent_workflow.interface import InterfaceConsensus, parse_mmcif
 from reagent_workflow.literature import AXES, gather
 from reagent_workflow.resolve import resolve, vocabulary
-from reagent_workflow.site import build_search_site, receptor_residues
+from reagent_workflow.site import (CURATED_POCKETS, build_search_site,
+                                   receptor_residues)
 
 DOWNSTREAM = ("literature", "discovery", "ranking", "specificity", "site",
               "structure", "screening", "experiment")
@@ -56,6 +57,7 @@ DOWNSTREAM = ("literature", "discovery", "ranking", "specificity", "site",
 ROOT = Path(__file__).resolve().parents[1]
 SCREEN_FILE = ROOT / "runs" / "vina_smoke.json"
 MAX_POSES_SHOWN = 3
+SCREEN_SEED = 20260816     # fixed: a screen you cannot repeat is not a result
 
 
 class _Recorder:
@@ -175,6 +177,11 @@ def _read_screen(path: Path, site):
               "clash": bool(r.get("clash")),
               "smiles": r.get("smiles", ""),
               "provenance": r.get("provenance", ""),
+              # Why this compound was proposed for this site, and whether the
+              # structure is one the outside world recognises. A generated
+              # library is only usable if both travel with it.
+              "rationale": r.get("rationale", ""),
+              "identity": r.get("identity") or {},
               # The molecule itself, twice: the heavy-atom skeleton of the pose
               # that was scored, in the receptor's frame, and the 2D structure
               # a chemist reads. A score with no molecule beside it is a number
@@ -187,6 +194,73 @@ def _read_screen(path: Path, site):
               "svg": depict(r.get("smiles", ""))}
              for r in clean[:MAX_POSES_SHOWN]]
     return (summary, poses) if poses else None
+
+
+LIBRARY_SIZE = 6           # proposal + identity checks + docking, kept interactive
+
+
+def _live_screen(site, genes: list[str], emit, trace):
+    """Propose a library for this site, check it, dock it, and keep the record.
+
+    The site's residues and their chemistry are what the proposal is made from,
+    so the library is about this groove rather than about docking in general.
+    Every structure is standardized and looked up in PubChem by InChIKey before
+    it is docked: a model asked for a named compound can return a SMILES that
+    parses cleanly and is a different molecule, and only a check outside this
+    process can catch that.
+
+    Returns the same `(summary, poses)` shape a recorded screen returns, so the
+    view cannot tell — and does not need to — whether the screen was read from
+    disk or run just now. The stage note says which.
+    """
+    if not A.available():
+        return None
+    from reagent_workflow import screen as S
+
+    gene = genes[0] if genes else ""
+    pocket = CURATED_POCKETS.get("MED23", {})
+    labels = [f"{r}" for r in site.residues]
+    described = {
+        "receptor": "MED23", "structure": "PDB 9F76 (apo)",
+        "site_residues": labels,
+        "site_size_angstrom": [round(x, 1) for x in site.size],
+        "basis": site.basis,
+        "note": (pocket.get("note", "")
+                 + " This is a protein-protein interface groove, not an enzyme "
+                   "active site."),
+        "candidate_transcription_factor": gene,
+    }
+    emit("stage", {"id": "screening", "state": "running",
+                   "detail": f"proposing a library for this site ({LIBRARY_SIZE} compounds)",
+                   "note": "The library is proposed from the site's own residues, "
+                           "then every structure is identity-checked before docking."})
+    proposed, _ = A.propose_library(trace, described, n=LIBRARY_SIZE)
+    emit("thinking", {"trace": trace.as_dict()})
+    if not proposed:
+        return None
+
+    def log(msg):
+        emit("stage", {"id": "screening", "state": "running",
+                       "detail": f"screening {len(proposed)} proposed compounds",
+                       "note": str(msg)[:220]})
+
+    usable, rejected = S.prepare_compounds(proposed, log=log)
+    if not usable:
+        return None
+    try:
+        record = S.dock(site, parse_mmcif(Path(site.receptor_path)), usable,
+                        None, seed=SCREEN_SEED, log=log)
+    except Exception as e:                                   # noqa: BLE001
+        emit("stage", {"id": "screening", "state": "blocked",
+                       "detail": f"docking failed: {type(e).__name__}",
+                       "note": str(e)[:220]})
+        return None
+    record["rejected_proposals"] = rejected
+
+    out = ROOT / "runs" / "screens" / f"{(gene or 'MED23').upper()}_MED23.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    return _read_screen(out, site)
 
 
 def _recorded_interface(gene: str):
@@ -376,7 +450,7 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
                + (f" {len(errors)} axis search(es) failed." if errors else "")})
 
     _structure_site_and_screen(emit, cfg, named, interface_evidence, free_receptor,
-                               predict, require_site)
+                               predict, require_site, trace)
 
     emit("stage", {
         "id": "experiment", "state": "done",
@@ -400,7 +474,7 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
 def _structure_site_and_screen(emit, cfg, genes: list[str],
                                interface_evidence: dict, free_receptor,
                                predict: str | None = None,
-                               require_site: bool = False) -> None:
+                               require_site: bool = False, trace=None) -> None:
     """Everything downstream of the shortlist that depends only on the partner.
 
     Split out of `run_live` because it is the half of the pipeline that does
@@ -592,12 +666,31 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
             "detail": "no defensible site, so no screen",
             "note": "Docking without a site finds something everywhere and means nothing."})
     elif screen is None:
-        poses = []
-        emit("stage", {
-            "id": "screening", "state": "pending",
-            "detail": "ready to dock against the site above",
-            "note": f"No screen on file for this box. Run `python scripts/vina_smoke.py "
-                    f"--dock --json {SCREEN_FILE.relative_to(ROOT)}` to produce one."})
+        # Nothing on file for this box, so run one: propose a library from the
+        # site's own residues, check every structure, and dock it. The library
+        # is generated rather than stored because a constant list answers the
+        # same question for every site the pipeline will ever build.
+        screen = _live_screen(site, genes, emit, trace) if trace is not None else None
+        if screen is None:
+            poses = []
+            emit("stage", {
+                "id": "screening", "state": "abstained",
+                "detail": "no screen was produced for this box",
+                "note": "Either no library could be proposed and identified, or "
+                        "docking failed. Nothing is shown in place of a screen "
+                        "that did not run."})
+        else:
+            s_, poses = screen
+            emit("stage", {
+                "id": "screening", "state": "done",
+                "detail": (f"{s_['scored']}/{s_['docked']} compounds scored, "
+                           f"{s_['clean_poses']} without geometry flags, best "
+                           f"{s_['best']:.2f} kcal/mol"),
+                "note": (f"Library proposed for this site and docked now, seed "
+                         f"{s_['seed']}. Every structure was standardized and "
+                         "identity-checked against PubChem by InChIKey before "
+                         "docking. Vina scores rank poses — not affinities, not "
+                         "evidence of binding.")})
     else:
         s, poses = screen
         emit("stage", {
@@ -911,7 +1004,7 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
 
     _structure_site_and_screen(emit, cfg, [v.gene for v in top],
                                interface_evidence, free_receptor, predict,
-                               policy["require_interface_site"])
+                               policy["require_interface_site"], trace)
 
     # ── next experiment ────────────────────────────────────────────────────
     emit("stage", {

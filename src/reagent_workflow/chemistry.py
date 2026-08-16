@@ -18,6 +18,7 @@ a compound with no public source never reaches a screen.
 """
 from __future__ import annotations
 
+import json
 import math
 import statistics
 from enum import StrEnum
@@ -391,3 +392,68 @@ def parse_molblock(block: str) -> dict:
         if a in keep and b in keep:
             bonds.append([keep[a], keep[b]])
     return {"atoms": atoms, "bonds": bonds}
+
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+def inchikey(smiles: str) -> str | None:
+    """InChIKey for a structure, or None if it cannot be built.
+
+    The key is what makes a structure checkable against the outside world: two
+    people who draw the same molecule get the same key, and a name does not.
+    """
+    from rdkit import Chem, RDLogger
+    RDLogger.DisableLog("rdApp.*")
+    mol = Chem.MolFromSmiles(smiles or "")
+    if mol is None:
+        return None
+    try:
+        return Chem.MolToInchiKey(mol)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def verify_identity(smiles: str, timeout: float = 15.0) -> dict:
+    """Is this structure a compound the outside world already knows?
+
+    A SMILES string that parses is a valid molecule, not a correct one. A model
+    asked for "a compound like imatinib" can return something that parses
+    cleanly, is not imatinib, and no amount of RDKit checking will notice —
+    the check has to leave the process. So the structure is hashed to an
+    InChIKey and looked up in PubChem: a hit returns the CID and the name
+    PubChem itself uses, and a miss says plainly that this structure is not a
+    known compound rather than implying it failed.
+
+    Never raises and never blocks a screen. A network problem is reported as a
+    network problem, because "unverified because PubChem was unreachable" and
+    "unverified because this molecule does not exist in PubChem" are different
+    facts and a screen must not confuse them.
+    """
+    key = inchikey(smiles)
+    if not key:
+        return {"status": "unparseable", "inchikey": None, "cid": None,
+                "name": None, "note": "RDKit could not build a structure"}
+
+    import urllib.error
+    import urllib.request
+    url = ("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/"
+           f"{key}/property/Title,IUPACName/JSON")
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            props = (json.loads(r.read()).get("PropertyTable", {})
+                     .get("Properties") or [{}])[0]
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {"status": "not_in_pubchem", "inchikey": key, "cid": None,
+                    "name": None,
+                    "note": "no PubChem record for this exact structure"}
+        return {"status": "lookup_failed", "inchikey": key, "cid": None,
+                "name": None, "note": f"PubChem returned HTTP {e.code}"}
+    except Exception as e:                                   # noqa: BLE001
+        return {"status": "lookup_failed", "inchikey": key, "cid": None,
+                "name": None, "note": f"PubChem unreachable: {type(e).__name__}"}
+
+    return {"status": "verified", "inchikey": key,
+            "cid": props.get("CID"),
+            "name": props.get("Title") or props.get("IUPACName"),
+            "note": "structure matches a PubChem record by InChIKey"}

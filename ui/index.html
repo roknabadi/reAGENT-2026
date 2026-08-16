@@ -285,6 +285,13 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .ligmeta .sc{font-family:var(--mono);font-size:11px;color:var(--ink-2);margin-left:4px}
 .ligmeta .k{font-size:11px;color:var(--ink-2);margin-top:2px}
 .ligmeta .geo{color:var(--ink-3)}
+/* Whether the structure is one a public database recognises. Verified is not a
+   claim about binding — it is a claim that this molecule is the molecule it is
+   named after, which a model writing SMILES cannot be assumed to get right. */
+.ligmeta .id-verified{color:var(--pass)}
+.ligmeta .id-not_in_pubchem{color:var(--await)}
+.ligmeta .id-lookup_failed,.ligmeta .id-unparseable{color:var(--ink-3)}
+.ligmeta .why{color:var(--ink-3);font-style:italic}
 .ligmeta .bad{color:var(--fail);font-weight:600}
 .ligmeta .smi{font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-top:3px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1519,6 +1526,13 @@ function receptorPanel(M, c, hl){
           l.offset!=null?` · ${l.offset} Å from box centre`:''}</div>`:''}
       <div class="k geo">${l.inside_box===false?'<b class="bad">outside the box</b>'
         :'in the box'} · ${l.clash?'<b class="bad">clash</b>':'no clash'}</div>
+      ${l.identity?.status ? `<div class="k id-${l.identity.status}">${
+          l.identity.status==='verified'
+            ? `identity verified · PubChem ${l.identity.cid} ${l.identity.name||''}`
+            : l.identity.status==='not_in_pubchem'
+              ? 'no PubChem record for this exact structure'
+              : `identity unchecked — ${l.identity.note||l.identity.status}`}</div>` : ''}
+      ${l.rationale ? `<div class="k why">${l.rationale}</div>` : ''}
       <div class="smi" title="${l.smiles||''}">${l.smiles||''}</div>
     </div></div>`).join('')}
   ${hl?.residues?.length || !c?.gene ? '' : `<p class="note">

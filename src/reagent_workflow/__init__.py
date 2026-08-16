@@ -23,6 +23,17 @@ if _ENV_FILE.is_file():
         if _key and not _key.startswith("#") and _key not in _os.environ:
             _os.environ[_key] = _value.strip().strip('"').strip("'")
 
+# Same failure, different variable. proto-tools keeps its tool environments
+# under PROTO_HOME, `activate.sh` points that at the repo's `.proto`, and a
+# process started any other way silently falls back to ~/.proto — where nothing
+# is installed. The symptom is not an error: the first docking call starts a
+# multi-minute micromamba install of an environment that already exists twenty
+# metres away. Pointed at the repo copy here, for the same reason the key is.
+_ROOT = _pathlib.Path(__file__).resolve().parents[2]
+if (_ROOT / ".proto").is_dir():
+    _os.environ.setdefault("PROTO_HOME", str(_ROOT / ".proto"))
+    _os.environ.setdefault("PROTO_MODEL_CACHE", str(_ROOT / ".proto" / "models"))
+
 from .config import RunConfig  # noqa: E402
 from .models import SCHEMA_VERSION, Stage  # noqa: E402
 

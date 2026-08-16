@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from reagent_workflow.discovery_config import DiscoveryConfig       # noqa: E402
 from reagent_workflow.interface import parse_mmcif                  # noqa: E402
+from reagent_workflow.screen import pose_geometry                    # noqa: E402
 from reagent_workflow.site import (CURATED_POCKETS, build_search_site,  # noqa: E402
                                    receptor_residues)
 
@@ -63,63 +64,6 @@ SEED_DRUGS: list[tuple[str, str, str]] = [
     ("dexamethasone", "CC1CC2C3CCC4=CC(=O)C=CC4(C)C3(F)C(O)CC2(C)C1(O)C(=O)CO", "approved"),
     ("metformin", "CN(C)C(=N)NC(N)=N", "approved"),
 ]
-
-
-def pose_geometry(sdf: str, site, receptor_atoms, pocket: set[int]):
-    """Where the pose actually landed, relative to the box we asked for.
-
-    Vina is told to search a box; it is not prevented from placing a ligand at
-    the box edge, and a score alone cannot distinguish a pose in the pocket
-    from one skimming its corner. So the pose is measured, not assumed:
-
-      offset       distance from the pose centroid to the box centre
-      inside       centroid within the box at all
-      contacts     pocket residues with a heavy atom within 4.5 A
-      min_contact  closest approach to any pocket residue
-      clash        any heavy-atom pair closer than 2.0 A
-
-    A pose with a good score, no contacts and a large offset is docking into
-    the wrong place, and that combination is exactly what a bare score hides.
-    """
-    coords = []
-    for line in sdf.splitlines():
-        parts = line.split()
-        if len(parts) >= 4:
-            try:
-                x, y, z = float(parts[0]), float(parts[1]), float(parts[2])
-            except ValueError:
-                continue
-            if parts[3].isalpha() and parts[3] != "H":
-                coords.append((x, y, z))
-    if not coords:
-        return {"parsed": False}
-
-    cx = sum(c[0] for c in coords) / len(coords)
-    cy = sum(c[1] for c in coords) / len(coords)
-    cz = sum(c[2] for c in coords) / len(coords)
-    offset = math.dist((cx, cy, cz), site.center)
-
-    near, closest, clash = set(), float("inf"), False
-    for a in receptor_atoms:
-        if a.element == "H":
-            continue
-        for c in coords:
-            d = math.dist(c, (a.x, a.y, a.z))
-            if d < 2.0:
-                clash = True
-            if a.resi in pocket:
-                closest = min(closest, d)
-                if d <= 4.5:
-                    near.add(a.resi)
-    return {"parsed": True, "heavy_atoms": len(coords),
-            "centroid": [round(cx, 2), round(cy, 2), round(cz, 2)],
-            "offset_from_box_centre": round(offset, 2),
-            "inside_box": site.contains(cx, cy, cz),
-            "pocket_contacts": sorted(near),
-            "n_pocket_contacts": len(near),
-            "closest_pocket_approach": (round(closest, 2)
-                                        if closest != float("inf") else None),
-            "clash": clash}
 
 
 def main() -> int:

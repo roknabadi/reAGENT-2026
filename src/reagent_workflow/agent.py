@@ -143,13 +143,27 @@ def ask(trace: AgentTrace, step: str, system: str, prompt: str,
                               error=f"{type(e).__name__}: {str(e)[:200]}"))
 
 
+def _repair_escapes(block: str) -> str:
+    """Double the backslashes JSON does not recognise as escapes.
+
+    SMILES write cis/trans geometry with backslashes -- `C/C=C\\C` -- and a lone
+    backslash before an ordinary character is not a legal JSON escape. A reply
+    carrying one structure like that fails to parse *as a whole*, and the
+    scanner below then succeeds on some smaller object nested inside it, so the
+    caller receives a fragment of the answer and no error. Repairing the escape
+    is safe because the alternative reading is invalid JSON either way.
+    """
+    return re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', block)
+
+
 def _json_block(text: str) -> dict | None:
     """First JSON object in a reply. Models wrap JSON in prose and fences."""
     for m in re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.S):
-        try:
-            return json.loads(m.group(0))
-        except json.JSONDecodeError:
-            continue
+        for candidate in (m.group(0), _repair_escapes(m.group(0))):
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
     return None
 
 
@@ -361,3 +375,73 @@ def answer(trace: AgentTrace, question: str, record: dict) -> tuple[str, object]
                f"Question:\n{question}\n\nRecord of this run:\n{body}\n\n"
                "Answer the question.", max_tokens=1100)
     return (call.reply if not call.error else ""), call
+
+
+LIBRARY_SYSTEM = """You propose small molecules to screen against a described \
+protein site. You are proposing a starting library, not predicting binders, and \
+nothing you return will be treated as evidence of anything until it has been \
+docked and checked.
+
+You are given the site's actual residues and their chemistry. Use them. A \
+hydrophobic groove and a charged surface call for different molecules, and a \
+protein-protein interface is a wide shallow surface — flat, rigid, moderately \
+lipophilic scaffolds are more appropriate than compact globular fragments.
+
+Rules:
+- Propose REAL, well-known compounds wherever possible: approved drugs, tool \
+compounds, published PPI inhibitors, natural products. Their structures are \
+checkable against public databases, and a checkable structure is worth more \
+here than an imaginative one.
+- Write each SMILES carefully and completely. A SMILES that parses into the \
+wrong molecule is worse than no molecule: it is a wrong answer that looks \
+correct. If you are not confident of a compound's exact structure, choose a \
+different compound you do know exactly.
+- Vary the set. Several near-identical scaffolds test one hypothesis, not many.
+- Say in one SHORT clause -- twelve words at most -- why each is worth \
+docking against THIS site. Long rationales truncate the reply and lose \
+compounds.
+
+Reply with JSON only:
+{"compounds": [{"name": "<common name>", "smiles": "<SMILES>", \
+"rationale": "<one clause about this site>", "kind": "approved"|"tool"|\
+"ppi_inhibitor"|"natural_product"|"fragment"}]}"""
+
+
+def propose_library(trace: AgentTrace, site: dict, n: int = 8) -> tuple[list, object]:
+    """A screening library for one described site, proposed rather than stored.
+
+    The alternative was a constant: twelve approved drugs written into a script,
+    identical for every site the pipeline will ever build, which tests the
+    docking machinery and nothing about the site. Proposing from the site's own
+    residues at least asks the right question — and because a model can write a
+    SMILES that parses into the wrong molecule, every structure returned here is
+    standardized and then checked against PubChem by InChIKey before it is
+    docked. Nothing about this makes a compound a binder; it makes the library
+    relevant and its members identifiable.
+    """
+    prompt = (f"Site:\n{json.dumps(site, indent=1)}\n\n"
+              f"Propose {n} compounds to dock against it. JSON only.")
+    # Room to finish the list. At 2,000 the reply truncated mid-object and the
+    # scanner below then parsed some inner fragment instead, so the caller got
+    # an empty library and no error -- the failure mode this budget exists to
+    # avoid, not a cost saving worth making.
+    call = ask(trace, "propose_library", LIBRARY_SYSTEM, prompt, max_tokens=6000)
+    if call.error:
+        return [], call
+    data = _json_block(call.reply) or {}
+    compounds = list(data.get("compounds") or [])
+    if compounds:
+        return compounds, call
+
+    # A list this long can be cut off mid-object, and a truncated outer object
+    # does not parse -- at which point the scanner above succeeds on some
+    # complete inner object instead and the caller gets a fragment with no
+    # "compounds" key and no error. Recover every compound that arrived whole.
+    for m in re.finditer(r'\{[^{}]*"smiles"\s*:\s*"[^"]*"[^{}]*\}', call.reply, re.S):
+        for candidate in (m.group(0), _repair_escapes(m.group(0))):
+            try:
+                compounds.append(json.loads(candidate))
+                break
+            except json.JSONDecodeError:
+                continue
+    return compounds, call
