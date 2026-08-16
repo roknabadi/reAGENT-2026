@@ -229,6 +229,20 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
   transition:border-color .15s,color .15s}
 .predict-btn:hover:not(:disabled){border-color:var(--ink-3)}
 .predict-btn:disabled{opacity:.6;cursor:progress}
+/* A docked compound, shown as a molecule rather than as a row in a table:
+   the 2D structure a chemist reads, its score, the residues it touches, and
+   the SMILES the screen was actually run on. */
+.lig{display:grid;grid-template-columns:118px 1fr;gap:10px;align-items:center;
+  margin:8px 0;padding:8px 9px;background:var(--card);border:1px solid var(--line);
+  border-radius:var(--r)}
+.lig2d{color:var(--ink-2);display:grid;place-items:center;min-height:74px}
+.lig2d svg{width:100%;height:auto;max-height:96px;display:block}
+.ligmeta{min-width:0}
+.ligmeta .n{font-size:12px;font-weight:500}
+.ligmeta .sc{font-family:var(--mono);font-size:11px;color:var(--ink-2);margin-left:4px}
+.ligmeta .k{font-size:11px;color:var(--ink-2);margin-top:2px}
+.ligmeta .smi{font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-top:3px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ── main views ── */
 main{position:relative;overflow:hidden}
@@ -1296,9 +1310,9 @@ const legendReceptor = hl => `
   <span><i style="background:var(--ink-3)"></i>MED23 backbone · observed</span>
   <span><i style="background:var(--control)"></i>ELK1-binding cavity · observed</span>`
   + (hl?.residues?.length
-     ? `<span><i style="background:var(--fail)"></i>predicted interface · computed</span>` : '')
+     ? ` <span><i style="background:var(--fail)"></i>predicted interface · computed</span>` : '')
   + (hl?.ligands?.length
-     ? `<span><i style="background:var(--pass)"></i>docked pose &amp; contacts · computed</span>` : '');
+     ? ` <span><i style="background:var(--pass)"></i>docked pose &amp; contacts · computed</span>` : '');
 
 function receptorPanel(M, c, hl){
   const gene=c?.gene||'this candidate';
@@ -1313,10 +1327,17 @@ function receptorPanel(M, c, hl){
     <dt>${gene} interface</dt><dd>${hl?.residues?.length
         ? hl.residues.join(', ') : '<span class="muted">not predicted</span>'}</dd>
     <dt>docked</dt><dd>${hl?.ligands?.length
-        ? hl.ligands.map(l=>`<div><b>${l.name}</b> ${l.score.toFixed(2)} kcal/mol
-             &middot; contacts ${l.residues?.length ? l.residues.join(', ')
-                                : '<span class="muted">none in the cavity</span>'}</div>`).join('')
+        ? `${hl.ligands.length} of ${hl.ligands.length} shown, ranked by score`
         : '<span class="muted">no screen run</span>'}</dd></dl></div>
+  ${(hl?.ligands||[]).map(l=>`<div class="lig">
+    <div class="lig2d">${l.svg||''}</div>
+    <div class="ligmeta">
+      <div class="n">${l.name} <span class="sc">${l.score.toFixed(2)} kcal/mol</span></div>
+      <div class="k">contacts ${l.residues?.length ? l.residues.join(', ')
+                                : '<span class="muted">none in the cavity</span>'}</div>
+      ${l.closest!=null?`<div class="k">closest approach ${l.closest} Å</div>`:''}
+      <div class="smi" title="${l.smiles||''}">${l.smiles||''}</div>
+    </div></div>`).join('')}
   ${hl?.residues?.length || !c?.gene ? '' : `<p class="note">
     <button class="predict-btn" data-gene="${c.gene}">Predict ${c.gene}–${M.gene}
       interface on GPU</button>
@@ -1407,7 +1428,14 @@ async function paintReceptor(M, highlight){
   const c0=A.reduce((a,p)=>[a[0]+p[1],a[1]+p[2],a[2]+p[3]],[0,0,0]).map(v=>v/A.length);
   const V=p=>new THREE.Vector3(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2]);
   const span=Math.max(...A.map(p=>Math.hypot(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2])));
-  const R={body:span*.009, back:span*.010, pocket:span*.040, pred:span*.034, lig:span*.030};
+  // Ångströms, not fractions of the protein. Coordinates are already in Å, so
+  // a carbon drawn at 1.5 Å against a 1.5 Å bond length merges with its
+  // neighbours the way atoms actually do, and the protein reads as a body
+  // rather than a bead necklace. Scaling radii by the size of the molecule —
+  // which is what the rest of this file does, correctly, for structures whose
+  // spans differ by an order of magnitude — is exactly wrong here, because
+  // there is only ever one receptor and its atoms are the size they are.
+  const R={body:1.5, back:.85, pocket:2.0, pred:2.0, lig:2.0, atom:1.5, bond:.3};
   const pocket=new Set(M.pocket?.residues||[]);
   const pred=new Set(highlight?.residues||[]);
   // Every resolved heavy atom, minus the residues that get their own colour —
@@ -1430,6 +1458,17 @@ async function paintReceptor(M, highlight){
     const o=new THREE.Object3D();
     list.forEach((p,i)=>{o.position.copy(V(p));o.updateMatrix();m.setMatrixAt(i,o.matrix);});
     grp.add(m); };
+  // One bond, drawn where it is rather than as a line: a cylinder takes the
+  // same lighting as everything else, so a molecule reads as an object in the
+  // scene instead of a wireframe pasted over it.
+  const stick=(a,b,color,rad)=>{
+    const d=new THREE.Vector3().subVectors(b,a), len=d.length();
+    if(!len) return;
+    const mesh=new THREE.Mesh(new THREE.CylinderGeometry(rad,rad,len,8,1),
+      new THREE.MeshStandardMaterial({color,roughness:.35,metalness:.15}));
+    mesh.position.copy(a).addScaledVector(d,.5);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), d.normalize());
+    grp.add(mesh); };
   renderStructure=()=>{
     const CO={body:new THREE.Color(css('--line-2')),
               back:new THREE.Color(css('--ink-3')),
@@ -1450,11 +1489,25 @@ async function paintReceptor(M, highlight){
     // shown as one sphere at its Cα is a dot buried in the body, where the
     // same residue drawn as its atoms is a patch on the surface.
     const ofRes=set=>(M.atoms||A).filter(p=>set.has(p[0]));
-    balls(ofRes(pocket),CO.pocket,R.pocket*.5);
-    if(lig.size) balls(ofRes(lig),CO.lig,R.lig*.5,.9);
-    if(pred.size) balls(ofRes(pred),CO.pred,R.pred*.5);
-    for(const L of (highlight?.ligands||[]))
-      balls([[0,...L.centroid]],CO.lig,R.lig,.85);
+    balls(ofRes(pocket),CO.pocket,R.pocket);
+    if(lig.size) balls(ofRes(lig),CO.lig,R.lig);
+    if(pred.size) balls(ofRes(pred),CO.pred,R.pred);
+    // The docked molecules, as the atoms and bonds that were scored rather
+    // than a dot at the centroid. Coordinates come from the pose's own
+    // molblock, in this receptor's frame, so a compound sits where Vina put
+    // it — the picture and the number are the same result.
+    for(const L of (highlight?.ligands||[])){
+      const A2=L.pose?.atoms;
+      if(!A2?.length){ balls([[0,...L.centroid]],CO.lig,R.lig,.85); continue; }
+      const P2=A2.map(a=>new THREE.Vector3(a[1]-c0[0],a[2]-c0[1],a[3]-c0[2]));
+      for(const [i,j] of (L.pose.bonds||[])) stick(P2[i],P2[j],CO.lig,R.bond);
+      const m=new THREE.InstancedMesh(new THREE.SphereGeometry(R.atom,14,10),
+        new THREE.MeshStandardMaterial({color:CO.lig,roughness:.3,metalness:.15}),
+        P2.length);
+      const o=new THREE.Object3D();
+      P2.forEach((v,i)=>{o.position.copy(v);o.updateMatrix();m.setMatrixAt(i,o.matrix);});
+      grp.add(m);
+    }
   };
   size(); frameCamera(cam,controls,cvs,span); renderStructure();
 }

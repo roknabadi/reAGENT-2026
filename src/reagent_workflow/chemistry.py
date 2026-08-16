@@ -307,3 +307,87 @@ def estimate_screen_size(timings: list[float], remaining_seconds: float,
         estimated_n=n, clamped=(n != raw),
         note=(f"benchmark supports {raw}; clamped to [{cfg.fast_vina_min_n}, "
               f"{cfg.fast_vina_max_n}]" if n != raw else "within configured bounds"))
+
+
+# ── depiction ───────────────────────────────────────────────────────────────
+#
+# A docking score is a number about a molecule nobody can see. The interface
+# shows the pose in the receptor, and these two functions give it the molecule
+# itself: the 2D structure a chemist reads at a glance, and the 3D atoms and
+# bonds of the pose that was actually scored.
+
+def depict(smiles: str, width: int = 240, height: int = 150) -> str:
+    """2D structure as inline SVG, coloured by the page rather than by RDKit.
+
+    Drawn with the black-and-white palette and then re-pointed at
+    `currentColor`, so one depiction is legible on both the light and the dark
+    theme. RDKit's default palette hardcodes black bonds, which vanish on a
+    dark background — and shipping two SVGs per compound to avoid that is a
+    lot of bytes to solve a problem CSS already solves.
+    """
+    from rdkit import Chem, RDLogger
+    from rdkit.Chem.Draw import rdMolDraw2D
+
+    RDLogger.DisableLog("rdApp.*")
+    mol = Chem.MolFromSmiles(smiles or "")
+    if mol is None:
+        return ""
+    drawer = rdMolDraw2D.MolDraw2DSVG(width, height)
+    opts = drawer.drawOptions()
+    opts.useBWAtomPalette()
+    opts.clearBackground = False
+    opts.bondLineWidth = 1
+    rdMolDraw2D.PrepareAndDrawMolecule(drawer, mol)
+    drawer.FinishDrawing()
+    svg = drawer.GetDrawingText()
+    return (svg.replace("<?xml version='1.0' encoding='iso-8859-1'?>", "")
+               .replace("#000000", "currentColor")
+               .replace("stroke:#000", "stroke:currentColor")
+               .strip())
+
+
+_MOLBLOCK_COUNTS = 3          # line index of the counts line in a V2000 molblock
+
+
+def parse_molblock(block: str) -> dict:
+    """Atoms and bonds out of a V2000 molblock, without a chemistry toolkit.
+
+    The docked pose arrives as a molblock in the receptor's coordinate frame,
+    which is exactly what a viewer needs — parsing it here rather than in the
+    browser keeps the interface free of a chemistry dependency, and keeps the
+    numbers it draws the same numbers the screen recorded.
+
+    Hydrogens are dropped: Vina's output carries them, they triple the atom
+    count, and they hide the heavy-atom skeleton the pose is about.
+    """
+    lines = (block or "").splitlines()
+    if len(lines) <= _MOLBLOCK_COUNTS:
+        return {"atoms": [], "bonds": []}
+    try:
+        n_atoms = int(lines[_MOLBLOCK_COUNTS][0:3])
+        n_bonds = int(lines[_MOLBLOCK_COUNTS][3:6])
+    except (ValueError, IndexError):
+        return {"atoms": [], "bonds": []}
+
+    atoms, keep = [], {}
+    for i in range(n_atoms):
+        parts = lines[_MOLBLOCK_COUNTS + 1 + i].split()
+        if len(parts) < 4:
+            continue
+        element = parts[3]
+        if element == "H":
+            continue
+        keep[i + 1] = len(atoms)          # molblock indices are 1-based
+        atoms.append([element, round(float(parts[0]), 2),
+                      round(float(parts[1]), 2), round(float(parts[2]), 2)])
+
+    bonds = []
+    for j in range(n_bonds):
+        line = lines[_MOLBLOCK_COUNTS + 1 + n_atoms + j]
+        try:
+            a, b = int(line[0:3]), int(line[3:6])
+        except (ValueError, IndexError):
+            continue
+        if a in keep and b in keep:
+            bonds.append([keep[a], keep[b]])
+    return {"atoms": atoms, "bonds": bonds}
