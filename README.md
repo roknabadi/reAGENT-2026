@@ -48,7 +48,7 @@ Shared instructions are in `CLAUDE.md`; the Tamarind connection is in
 ## Start a shell
 
 ```bash
-cd /Users/amir/Documents/reAGENT-2026
+cd path/to/reAGENT-2026
 source ./activate.sh
 ./scripts/check_readiness.sh
 ```
@@ -72,18 +72,25 @@ After activation, these commands are available:
 - Proto authoring skills: `.claude/skills` and `.agents/skills`
 - Claude project MCP configuration: `.mcp.json`
 
-## Authentication still requiring Amir
+## Authentication requiring a human
 
 These steps open a browser or require a personal/event credential and therefore
-cannot be completed unattended:
+cannot be completed unattended. Done on Amir's machine as of 2026-08-15:
 
-1. `paperclip login`
-2. `modal setup` after claiming the event credits on Saturday
-3. Visit <https://biohub.ai>, create a personal API key, and put it in `.env`
+1. ~~`paperclip login`~~ — done
+2. ~~`modal setup`~~ — done (`amir-roknabadi`; `proto-tools deploy --apps boltz2
+   --test` passes 2/2 smoke tests on an H100)
+3. ~~Visit <https://biohub.ai>, create a personal API key, and put it in
+   `.env`~~ — done
+
+Still open:
+
 4. Visit <https://hackathon.bnchdev.org> and sign in with Google
 5. Start `claude` in this directory, run `/mcp`, and authenticate the Paperclip
    and Benchling servers
 6. Open `apps/Sundial.app` once and complete its sign-in if you plan to use it
+
+Each collaborator does 1–3 on their own machine with their own credentials.
 
 Never paste keys into source files or commit `.env`.
 
@@ -152,29 +159,58 @@ the source of truth: every run lives in `runs/<run_id>/` and resumes from disk
 with no conversation history. The agent's constitution is [`SOUL.md`](SOUL.md);
 each stage loads only the rules it needs.
 
-### Three-model structural consensus
+### Structural evaluation: Boltz2, over replicate seeds
 
-Two models predict the complex and may vote on the interface — **Boltz2** and
-**AlphaFold2**, both of which take the whole complex and pair heterocomplex MSAs
-through Proto. **ESMFold2 checks monomers only and never votes**: it is a
-single-sequence model, and counting its opinion on an interface it was never
-shown would manufacture consensus rather than measure it.
-
-Agreement is judged on **overlapping confidence intervals across replicate
-seeds**, not on point estimates — two runs of a stochastic model differ, and the
-interval is what separates a real disagreement from replicate noise.
+**The pipeline runs Boltz2 only by default.** It is the model Proto prefers for
+complexes because it predicts them explicitly, and a second PDB-trained model
+agreeing with it is weak evidence — they share training data and fail together
+on the same kinds of interface. With one interface model there is no consensus
+between models to report, and `compare_models` does not claim one.
 
 ```bash
 reagent-agent structure run <run_id>      # after approval
-# consensus: unanimous | verdict: inconsistent
-# iptm intervals overlap (0.58-0.68 vs 0.62-0.70); plddt intervals disjoint
+# == structure (consistent) ==
+# - boltz2 reports interface confidence ipTM 0.66.
 ```
 
-Consensus and verdict are reported separately on purpose: the interface models
-can both clear the confidence floor while still disagreeing on per-residue
-confidence. Unanimity is **not** independent confirmation — these models share
-PDB-derived training data, so they fail together on the same kinds of interface,
-and the comparison says so in its own caveat.
+Two optional models are off by default in `RunConfig`:
+
+- `enable_alphafold2` — a second opinion on the interface. Agreement is recorded
+  as agreement, never as confirmation.
+- `enable_esmfold2_monomer` — per-chain folding check. It is a single-sequence
+  model and **never votes on the interface**, whether it runs or not: counting
+  its opinion on something it was never shown would manufacture consensus rather
+  than measure it.
+
+What is compared by default is **replicates of one model**
+(`structure_replicates`, default 3), judged on **overlapping confidence
+intervals** rather than point estimates — two runs of a stochastic model differ,
+and the interval is what separates a real disagreement from replicate noise.
+
+### Interface consensus over the ensemble
+
+Replicate structures are reduced to residue contacts and clustered, and **every
+cluster is scored and kept** as an `InterfaceHypothesis` — its samples, support,
+segment and compactness, agreed partner residues, interface-specific confidence,
+and its own blockers. The verdict is one of three:
+
+| status | meaning | next action |
+|---|---|---|
+| `converged` | one cluster cleared every criterion | `build_search_site` |
+| `ambiguous` | nothing converged, but a localized hypothesis survived | `sample_more` |
+| `refused` | nothing defensible | `abstain` |
+
+**Only `converged` can generate a docking site.** An `ambiguous` consensus docks
+only when a named person picks a hypothesis and signs for it, and the site
+records who did.
+
+The middle state exists because of a measurement, not a hunch. On the
+ELK1–MED23 control, 3 of 15 samples recovered the published interface and each
+time the sample that found it was in a **minority** — the cluster that won the
+vote was wrong. A majority rule over an ensemble can report the wrong interface
+while holding the right one, so losing clusters keep the residues that make them
+checkable instead of being reduced to a list of sample names. Nothing selects on
+confidence: it is recorded per hypothesis and acted on nowhere.
 
 ### Run report — prompt, research, conclusions
 
@@ -224,9 +260,9 @@ The package also installs `agent` and `reagent-agent` console scripts. Prefer
 ships one) and may be shadowed on your `PATH`.
 
 That single command runs the whole loop on synthetic fixtures: gates and
-ranking, the hero checkpoint, approval, a cached Boltz2/ESMFold2 comparison, the
-next experiment, the final report, and a BenchFlow JSONL trace it then validates
-with the installed BenchFlow.
+ranking, the hero checkpoint, approval, a cached Boltz2 structure, the next
+experiment, the final report, and a BenchFlow JSONL trace it then validates with
+the installed BenchFlow.
 
 ### Step by step
 
@@ -241,7 +277,7 @@ reagent-agent checkpoint show demo-002          # the case for and against
 reagent-agent checkpoint resolve demo-002 demo-002-hero \
     --decision approve --by "your-name"
 reagent-agent structure validate demo-002       # compile Proto inputs, run nothing
-reagent-agent structure run demo-002            # cached Boltz2 + ESMFold2, no Modal
+reagent-agent structure run demo-002            # cached Boltz2, no Modal
 reagent-agent experiment demo-002               # next experiment + self-improvement
 reagent-agent report demo-002                   # final_report.md
 reagent-agent trace demo-002 --summary          # internal event counts
@@ -256,14 +292,18 @@ accepted shape is `InputBundle` in `src/reagent_workflow/ingest.py`.
 
 ### What it does and does not claim
 
-- Boltz2 predicts the target–partner complex; ESMFold2 checks monomers only and
-  is never used as an interface predictor.
-- Model agreement is recorded as agreement, not as validation.
+- Boltz2 predicts the target–partner complex, and is the only interface model
+  that runs by default. ESMFold2 checks monomers when enabled and is never used
+  as an interface predictor.
+- Agreement — between replicates, or between models when a second is enabled —
+  is recorded as agreement, not as validation.
+- An ensemble that does not converge yields `ambiguous` or `refused`, never a
+  site. A minority hypothesis is retained for inspection, not promoted.
 - Missing evidence scores zero and lowers completeness; its weight is never
   redistributed.
 - Broadly essential genes are rejected, and so is any target–partner link with
   no supporting assay (`interaction_support`) or no mapped interacting region
-  (`interface_region_mapped`), with the reason written to
+  (`interacting_region_mapped`), with the reason written to
   `decisions/rejections.jsonl`.
 - Live Modal dispatch is off by default and needs both an approved checkpoint
   and an explicit `--allow-live-modal`.
