@@ -1254,6 +1254,12 @@ function run(q, predict){
   // retired four-way AND; leaving it in place during a live run drew a shaded
   // "only region that passes" around a rule that was not in force, and a
   // specificity-first candidate then passed while sitting outside it.
+  RUN_PARTNER='MED23';
+  live.addEventListener('partner', e => {
+    const d = JSON.parse(e.data);
+    RUN_PARTNER = (d.gene || 'MED23').toUpperCase();
+    renderStructure?.();
+  });
   live.addEventListener('thresholds', e => {
     GATE = JSON.parse(e.data);
     $('#depmapBadge').textContent = depmapRelease();
@@ -1697,6 +1703,10 @@ let glc=null, painted=null;
    a result: it is the receptor, true for every run, and it must not be cleared
    when a new run replaces the seeded candidates. */
 let MED23=null;
+/* The receptor THIS run is about. The backend reads it from the question and
+   emits it; MED23 is still the default but it is no longer an assumption. A
+   view that always draws MED23 answers every question with the same protein. */
+let RUN_PARTNER='MED23';
 /* gene -> {residues, ligands, interpretation, note}. Populated by a run that
    produces an interface or a docked pose. Empty means empty. */
 let HIGHLIGHT={};
@@ -2374,13 +2384,25 @@ showPair = async c => {
   // MED23 — including ELK1, whose solved complex is the landing hero already —
   // and a solved complex is shown only for a pair with a different partner,
   // like the POU2F3–POU2AF2 control.
-  const useReceptor = MED23 && (!c?.partner || c.partner === MED23.gene || (!S && !P));
-  view.toggleAttribute('data-nostruct', !S && !P && !MED23);
-  if(!S && !P && !MED23){
+  // ...but only when this run is about MED23. The last clause used to be a bare
+  // `(!S && !P)`, so a candidate with no coordinates fell back to MED23 whatever
+  // receptor the question named: a run about KMT2A drew MED23, captioned it as
+  // the site, and looked identical to a run that really was about MED23. The
+  // stages had already abstained by then, and the picture disagreed with them.
+  const recName = (MED23?.gene || 'MED23').toUpperCase();
+  const onReceptor = RUN_PARTNER === recName;
+  const useReceptor = MED23 && onReceptor
+                   && (!c?.partner || c.partner.toUpperCase() === recName || (!S && !P));
+  const nothingToDraw = !S && !P && !useReceptor;
+  view.toggleAttribute('data-nostruct', nothingToDraw);
+  if(nothingToDraw){
     painted=null; renderStructure=null; $('#leg').innerHTML=''; ligandDock(null);
     view.removeAttribute('data-loading');
     $('#nostruct').innerHTML=`<div><span class="g">${pairOf(c)}</span>
-      ${c.partner?'no coordinates for this pair':'no contact partner to model'}</div>`;
+      ${!onReceptor
+        ? `no coordinates on file for ${RUN_PARTNER}. The deposited receptor here is
+           ${recName}, and drawing it would show a protein this run is not about.`
+        : (c.partner?'no coordinates for this pair':'no contact partner to model')}</div>`;
     $('#saside').innerHTML=missingPanel(c);
     return;
   }
