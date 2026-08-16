@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, urlparse
 UI = Path(__file__).resolve().parent
 ROOT = UI.parent
 PAPERCLIP = shutil.which("paperclip") or str(ROOT / ".venv/bin/paperclip")
+# data.json is the cold-start view only. A run computes its own numbers.
 DATA = json.loads((UI / "data.json").read_text(encoding="utf-8"))
 
 
@@ -105,98 +106,41 @@ class Handler(SimpleHTTPRequestHandler):
             pass   # the reader navigated away
 
     def _run(self, q: str) -> None:
-        land = DATA["landscape"]
-        cands = DATA["candidates"]
-        T = DATA["thresholds"]
+        """Delegate to the real pipeline. Nothing here is precomputed: the
+        landscape, the gates and the candidate table are all computed for the
+        context resolved from this question."""
+        import sys
+        if str(UI) not in sys.path:
+            sys.path.insert(0, str(UI))
+        from pipeline_api import run_live
+        from reagent_workflow.discovery_config import DiscoveryConfig
+        from dependency_scout.models import MediatorLink
 
-        self._sse("stage", {"id": "question", "state": "done",
-                            "detail": q or "no question given",
-                            "note": "Scoped to public DepMap dependency data and the "
-                                    "PMC full-text corpus."})
+        evidence = {}
+        for f in sorted((ROOT / "examples").glob("*_link_*.json")):
+            gene = f.stem.split("_link_")[1].split("_")[0].upper()
+            try:
+                evidence[gene] = MediatorLink.model_validate_json(
+                    f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
 
-        # 1 — literature. The only stage that can genuinely fail here.
-        self._sse("stage", {"id": "literature", "state": "running",
-                            "detail": "searching PMC full text"})
-        papers = paperclip_search(q or "transcription factor coactivator interface", 6)
-        for p in papers:
-            self._sse("paper", p)
-        self._sse("stage", {
-            "id": "literature",
-            "state": "done" if papers else "blocked",
-            "detail": f"{len(papers)} papers retrieved" if papers
-                      else "Paperclip returned nothing — CLI missing, not logged in, or no match",
-            "note": "Retrieved, not read. A title is not evidence." if papers else
-                    "The agent's reach is bounded by what the corpus indexes."})
-
-        # 2 — discovery
-        self._sse("stage", {"id": "discovery", "state": "running",
-                            "detail": f"{len(land)} transcription factors"})
-        self._sse("stage", {"id": "discovery", "state": "done",
-                            "detail": f"{len(land)} screened in {DATA['landscape_context']}",
-                            "note": "DepMap 24Q2 Chronos, restricted to the Lambert TF catalogue.",
-                            "metric": len(land)})
-
-        # 3 — ranking / gates
-        passed = [x for x in land if x["pass"]]
-        tally: dict[str, int] = {}
-        for x in land:
-            for w in x["why"]:
-                tally[w] = tally.get(w, 0) + 1
-        self._sse("stage", {
-            "id": "ranking", "state": "done" if passed else "abstained",
-            "detail": f"{len(passed)} of {len(land)} clear every gate",
-            "note": "; ".join(f"{n} × {w}" for w, n in
-                              sorted(tally.items(), key=lambda kv: -kv[1])[:2]),
-            "metric": len(passed)})
-
-        # 4 — specificity
-        scored = [c for c in cands if not c["awaiting"]]
-        self._sse("stage", {
-            "id": "specificity", "state": "done" if scored else "blocked",
-            "detail": f"{len(scored)} candidates with a selective dependency",
-            "note": "Cancer-cell selectivity is not normal-tissue safety.",
-            "metric": len(scored)})
-
-        # 5 — druggable site
-        mapped = [c for c in cands if c["region_mapped"] and not c["control"]]
-        self._sse("stage", {
-            "id": "site", "state": "done" if mapped else "abstained",
-            "detail": (", ".join(f"{c['gene']}–{c['partner']}" for c in mapped)
-                       if mapped else "no mapped interacting region"),
-            "note": "A whole-protein pull-down is association, not contact.",
-            "metric": len(mapped)})
-
-        # 6 — structure, per target-partner pair rather than one fixed complex
-        structs = DATA.get("structures") or {}
-        pairs = {f"{c['gene']}|{c['partner']}" for c in cands if c["partner"]}
-        have = sorted(k for k in structs if k in pairs)
-        self._sse("stage", {
-            "id": "structure", "state": "done" if have else "blocked",
-            "detail": ", ".join(
-                f"{structs[k]['gene']}–{structs[k]['partner']} PDB {structs[k]['pdb_id']}"
-                f" at {structs[k]['resolution_a']} Å" for k in have)
-                if have else "no candidate pair has deposited coordinates",
-            "note": f"{len(have)} of {len(pairs)} pairs solved; "
-                    f"{len(DATA.get('predicted') or {})} targets fall back to an AlphaFold "
-                    f"monomer. A structure is not a binding claim."})
-
-        # 7 — screening: genuinely not built yet, and says so
-        self._sse("stage", {
-            "id": "screening", "state": "pending",
-            "detail": "not run",
-            "note": "Needs an approved-drug library and a defined box. Blocked until a "
-                    "human signs checkpoint 4."})
-
-        # 8 — the intersection is the finding
-        both = [c for c in cands
-                if not c["awaiting"] and c["involvement"] == "direct" and not c["control"]]
-        self._sse("stage", {
-            "id": "experiment", "state": "done",
-            "detail": (f"{len(both)} candidate(s) with both a dependency and a mapped contact"
-                       if both else "no candidate has both a dependency and a mapped contact"),
-            "note": "Every ranked dependency lacks a documented contact; every mapped "
-                    "contact lacks dependency numbers. That gap is the next experiment."})
-        self._sse("done", {"ok": True})
+        D = ROOT / "downloads"
+        try:
+            run_live(
+                q,
+                (D / "CRISPRGeneEffect.csv", D / "Model.csv", D / "lambert_tfs.csv"),
+                DiscoveryConfig(),
+                self._sse,
+                interface_evidence=evidence,
+            )
+        except (BrokenPipeError, ConnectionResetError):
+            raise
+        except Exception as e:
+            self._sse("stage", {"id": "discovery", "state": "blocked",
+                                "detail": f"{type(e).__name__}: {str(e)[:160]}",
+                                "note": "the run failed; nothing is served in its place"})
+            self._sse("done", {"ok": False})
 
 
 def main() -> int:
