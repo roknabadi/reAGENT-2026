@@ -128,15 +128,43 @@ def main() -> int:
                     help="actually run Vina (CPU, several minutes)")
     ap.add_argument("--json", type=pathlib.Path)
     ap.add_argument("--limit", type=int, default=len(SEED_DRUGS))
+    ap.add_argument("--gene", help="dock into the interface predicted for this TF "
+                                   "(runs/interfaces/<GENE>_MED23/consensus.json) "
+                                   "instead of the curated ELK1 cavity")
     args = ap.parse_args()
 
     cfg = DiscoveryConfig()
     partner = cfg.partner_gene
 
     # ── 1. the site, from a legal source only ──────────────────────────────
+    #
+    # Two legal sources, and `--gene` selects the second. The therapeutic
+    # hypothesis is that a compound sits where the TF would sit, so the box
+    # that matters is the one the co-fold puts *that* TF on — the curated
+    # cavity is where ELK1 binds and is calibration for everyone else. A
+    # consensus that did not converge writes no residues, so this refuses
+    # rather than docking into an interface the ensemble rejected.
     curated = CURATED_POCKETS.get(partner, {})
-    residues, basis, blockers = receptor_residues(
-        partner, allow_curated=True, curated_for=curated.get("partner"))
+    if args.gene:
+        path = (ROOT / "runs" / "interfaces" / f"{args.gene.upper()}_{partner}"
+                / "consensus.json")
+        if not path.is_file():
+            print(f"REFUSED  no ensemble for {args.gene}-{partner}: {path} is not on "
+                  f"disk. Run scripts/predict_med23_interface.py {args.gene.upper()} "
+                  "--accession <UNIPROT> --dispatch first.", file=sys.stderr)
+            return 2
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        residues = list(rec.get("partner_contact_residues") or [])
+        blockers = ([] if residues else
+                    [f"the {args.gene}-{partner} consensus produced no partner-side "
+                     f"residues: {'; '.join(rec['consensus'].get('blockers', []))[:160]}"])
+        basis = (f"ensemble consensus for {args.gene.upper()}-{partner}, "
+                 f"{rec['consensus']['dominant_cluster_samples']}/"
+                 f"{rec['consensus']['total_samples']} samples agree "
+                 f"({rec['consensus']['ensemble_support']:.0%})")
+    else:
+        residues, basis, blockers = receptor_residues(
+            partner, allow_curated=True, curated_for=curated.get("partner"))
     if blockers:
         print(f"REFUSED  {'; '.join(blockers)}", file=sys.stderr)
         return 2
@@ -169,7 +197,10 @@ def main() -> int:
     record = {
         "receptor": {"path": str(FREE_RECEPTOR), "gene": partner,
                      "form": "free (no TF bound)", "n_atoms": len(atoms)},
-        "site": {"basis": basis, "source": curated.get("source"),
+        "site": {"basis": basis,
+                 "source": (f"Boltz-2 ensemble, {args.gene.upper()}-{partner}"
+                            if args.gene else curated.get("source")),
+                 "target": args.gene.upper() if args.gene else curated.get("partner"),
                  "requested_residues": residues,
                  "resolved_residues": site.residues,
                  "center": list(site.center), "size": list(site.size),
@@ -181,9 +212,13 @@ def main() -> int:
         "limitations": [
             "Vina scores rank poses. They are not free energies, not "
             "affinities, and not evidence of binding.",
-            f"The site is the experimental {partner} pocket from the deposited "
-            "ELK1 complex. It is where ELK1 binds; no TF discovered by this "
-            "pipeline has been placed there.",
+            (f"The site is a Boltz-2 prediction of where {args.gene.upper()} "
+             f"contacts {partner}. It is a computational hypothesis about the "
+             "interface, not an observed one, and a compound scored against it "
+             "inherits that uncertainty." if args.gene else
+             f"The site is the experimental {partner} pocket from the deposited "
+             "ELK1 complex. It is where ELK1 binds; no TF discovered by this "
+             "pipeline has been placed there."),
             "The receptor is rigid and unliganded. No induced fit is modelled.",
             "Approved drugs are a machinery control, not a designed library. A "
             "good score here is a reason to inspect the pose, not a hit.",

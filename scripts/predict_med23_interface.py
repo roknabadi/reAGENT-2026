@@ -65,7 +65,7 @@ def workdir(gene: str) -> pathlib.Path:
     return OUT / f"{gene.upper()}_MED23"
 
 
-def score(gene: str, cfg: ConsensusConfig) -> dict | None:
+def score(gene: str, cfg: ConsensusConfig, log=print) -> dict | None:
     """Samples on disk → one consensus, or an explicit refusal.
 
     Chain A is the transcription factor and chain B is MED23, so the residues
@@ -117,24 +117,141 @@ def score(gene: str, cfg: ConsensusConfig) -> dict | None:
     out = workdir(gene) / "consensus.json"
     out.write_text(json.dumps(record, indent=2), encoding="utf-8")
 
-    print(f"\n{len(samples)} sample(s) -> {out.relative_to(ROOT)}")
-    print(f"  support   {consensus.ensemble_support:.0%} "
+    log(f"\n{len(samples)} sample(s) -> {out.relative_to(ROOT)}")
+    log(f"  support   {consensus.ensemble_support:.0%} "
           f"({consensus.dominant_cluster_samples}/{consensus.total_samples})")
     if consensus.blockers:
         for b in consensus.blockers:
-            print(f"  REFUSED   {b}")
-        print("  no residues written: a rejected consensus highlights nothing")
+            log(f"  REFUSED   {b}")
+        log("  no residues written: a rejected consensus highlights nothing")
     else:
-        print(f"  MED23     {resolved}")
-        print(f"  vs ELK1   {record['overlaps_elk1_cavity']} shared with the "
+        log(f"  MED23     {resolved}")
+        log(f"  vs ELK1   {record['overlaps_elk1_cavity']} shared with the "
               f"cavity in 9F6Y")
     return record
+
+
+def accession_for(gene: str) -> tuple[str | None, str]:
+    """Gene symbol -> reviewed human UniProt accession, or an explanation.
+
+    A symbol does not identify a protein, so this asks UniProt rather than
+    guessing, and asks it narrowly: reviewed (SwissProt) entries, human,
+    matching the gene symbol exactly. Anything less specific returns several
+    accessions and picking one would be the guess this exists to avoid.
+    `verify_accession` still checks the answer before it is used.
+    """
+    import urllib.parse
+    import urllib.request
+    q = (f'gene_exact:{gene} AND organism_id:9606 AND reviewed:true')
+    url = ("https://rest.uniprot.org/uniprotkb/search?"
+           + urllib.parse.urlencode({"query": q, "fields": "accession",
+                                     "format": "json", "size": "5"}))
+    try:
+        with urllib.request.urlopen(url, timeout=30) as r:
+            hits = json.loads(r.read()).get("results", [])
+    except Exception as e:
+        return None, f"UniProt lookup for {gene} failed: {type(e).__name__}"
+    accs = [h.get("primaryAccession") for h in hits if h.get("primaryAccession")]
+    if not accs:
+        return None, f"UniProt has no reviewed human entry for the symbol {gene}"
+    if len(accs) > 1:
+        return None, (f"{gene} maps to {len(accs)} reviewed human accessions "
+                      f"({', '.join(accs)}); name one explicitly rather than "
+                      "letting this pick")
+    return accs[0], accs[0]
+
+
+def prepare(gene: str, accession: str, log=print) -> tuple[list[dict], str, str]:
+    """Sequences for both chains, verified, as a Boltz complex.
+
+    Raises `ValueError` with every problem found rather than returning a
+    half-checked pair: a wrong accession is the cheapest way to model the wrong
+    protein, and nothing downstream can detect it.
+    """
+    from calibrate_structure import fetch_sequence, verify_accession
+
+    # MED23 is checked against 9F76 as well as its gene name -- it is supposed
+    # to be a chain of the structure this project renders, and that is a second,
+    # independent way to catch the adjacent-subunit substitution. The TF gets
+    # the gene-name check only: it has no reference structure here, and
+    # demanding one would refuse every candidate the pipeline can propose.
+    seqs, problems = {}, []
+    for acc, name, pdb in ((accession, gene, None),
+                           (MED23_ACC, "MED23", MED23["free_receptor_pdb"])):
+        seq, url, pdbs, genes = fetch_sequence(acc, name)
+        seqs[name] = seq
+        if pdb:
+            problems.extend(verify_accession(acc, name, genes, pdbs, pdb_id=pdb))
+        elif name.upper() not in [g.upper() for g in (genes or [])]:
+            problems.append(f"{acc} has gene names {genes or '[]'}, which do not "
+                            f"include {name}: this is not the protein asked for.")
+        log(f"{name:8s} {acc}  {len(seq)} aa  {url}")
+    if problems:
+        raise ValueError("; ".join(problems))
+
+    tf, med23 = seqs[gene], seqs["MED23"]
+    complexes = [{"chains": [
+        {"id": "A", "sequence": tf, "entity_type": "protein"},
+        {"id": "B", "sequence": med23, "entity_type": "protein"},
+    ]}]
+    log(f"complex  chain A {gene} {len(tf)} aa · chain B MED23 {len(med23)} aa "
+        f"= {len(tf) + len(med23)} residues")
+    return complexes, tf, med23
+
+
+def dispatch(gene: str, accession: str, samples: int = 3, log=print,
+             cfg: ConsensusConfig | None = None) -> dict | None:
+    """Fetch, verify, align, fold `samples` seeds on Modal, score the ensemble.
+
+    The whole paid path in one call, so the interface can trigger exactly what
+    the command line runs rather than a second implementation of it. Returns
+    the consensus record, or None if nothing came back.
+    """
+    gene = gene.upper()
+    cfg = cfg or ConsensusConfig()
+    complexes, tf, med23 = prepare(gene, accession, log)
+
+    from pou2f3_control import build_msas
+    from proto_tools.modal.client import dispatch_to_modal
+    from proto_tools.tools.structure_prediction.boltz2.boltz2 import (Boltz2Config,
+                                                                     Boltz2Input)
+
+    wd = workdir(gene)
+    wd.mkdir(parents=True, exist_ok=True)
+    msas, depth, _ = build_msas(tf, med23, wd / "msa", names=(gene.lower(), "med23"))
+    log(f"MSA      chain A {depth[0]} sequences, chain B {depth[1]} sequences "
+        "(ColabFold server, per chain, unpaired)")
+
+    t0, written = time.time(), []
+    for i, seed in enumerate(SEEDS[:samples], 1):
+        # One dispatch per member: `diffusion_samples` returns only the best
+        # sample by confidence, which cannot say whether independent samples
+        # agree, and agreement is the entire question.
+        t1 = time.time()
+        try:
+            result = dispatch_to_modal(
+                "boltz2-prediction",
+                Boltz2Input(complexes=complexes, msas=[msas]),
+                Boltz2Config(diffusion_samples=1, include_pae_matrix=True,
+                             seed=seed, device="modal"))
+        except Exception as e:
+            log(f"  seed {seed}  FAILED  {type(e).__name__}: {str(e)[:120]}")
+            continue
+        payload = result.model_dump(mode="json") if hasattr(result, "model_dump") \
+            else result
+        p = wd / f"sample_{i}_seed{seed}.json"
+        p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        written.append(p)
+        log(f"  seed {seed}  {time.time() - t1:.0f}s  -> {p.name}")
+
+    log(f"{len(written)}/{samples} samples in {time.time() - t0:.0f}s")
+    return score(gene, cfg, log=log) if written else None
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("gene", help="transcription factor gene symbol, e.g. POU2F3")
-    ap.add_argument("--accession", help="its UniProt accession; required to dispatch")
+    ap.add_argument("--accession", help="its UniProt accession; looked up if omitted")
     ap.add_argument("--dispatch", action="store_true",
                     help="run the ensemble on Modal GPU (paid, minutes per sample)")
     ap.add_argument("--score", action="store_true",
@@ -147,89 +264,32 @@ def main() -> int:
     if a.score and not a.dispatch:
         return 0 if score(gene, cfg) else 2
 
-    from calibrate_structure import fetch_sequence, verify_accession
-
-    if not a.accession:
-        print("REFUSED  --accession is required: a gene symbol does not identify "
-              "a protein, and the wrong accession models the wrong protein "
-              "without anything downstream being able to tell", file=sys.stderr)
-        return 2
-
-    # MED23 is checked against 9F76 as well as its gene name — it is supposed to
-    # be a chain of the structure this project renders, and that is a second,
-    # independent way to catch the adjacent-subunit substitution. The TF gets
-    # the gene-name check only: it has no reference structure here, and
-    # demanding one would refuse every candidate the pipeline can propose.
-    seqs, problems = {}, []
-    for acc, name, pdb in ((a.accession, gene, None),
-                           (MED23_ACC, "MED23", MED23["free_receptor_pdb"])):
-        seq, url, pdbs, genes = fetch_sequence(acc, name)
-        seqs[name] = seq
-        if pdb:
-            problems.extend(verify_accession(acc, name, genes, pdbs, pdb_id=pdb))
-        elif name.upper() not in [g.upper() for g in (genes or [])]:
-            problems.append(f"{acc} has gene names {genes or '[]'}, which do not "
-                            f"include {name}: this is not the protein asked for.")
-        print(f"{name:8s} {acc}  {len(seq)} aa  {url}")
-        print(f"         gene names {genes}")
-    if problems:
-        for p in problems:
-            print(f"REFUSED  {p}", file=sys.stderr)
-        return 2
-
-    tf, med23 = seqs[gene], seqs["MED23"]
-    complexes = [{"chains": [
-        {"id": "A", "sequence": tf, "entity_type": "protein"},
-        {"id": "B", "sequence": med23, "entity_type": "protein"},
-    ]}]
-    print(f"\ncomplex  chain A {gene} {len(tf)} aa · chain B MED23 {len(med23)} aa "
-          f"= {len(tf) + len(med23)} residues")
-    print(f"ensemble {a.samples} seeds {SEEDS[:a.samples]}, full length, no template, "
-          "no constraint: the model proposes the site")
+    accession = a.accession
+    if not accession:
+        accession, note = accession_for(gene)
+        if not accession:
+            print(f"REFUSED  {note}", file=sys.stderr)
+            return 2
+        print(f"accession {accession} (UniProt, reviewed, human)")
 
     if not a.dispatch:
+        try:
+            prepare(gene, accession, print)
+        except ValueError as e:
+            print(f"REFUSED  {e}", file=sys.stderr)
+            return 2
+        print(f"ensemble {a.samples} seeds {SEEDS[:a.samples]}, full length, no "
+              "template, no constraint: the model proposes the site")
         print("\nplan only — nothing was dispatched and nothing was paid for.")
         print("Add --dispatch to run it, and expect GPU minutes per sample at this "
               "length. Ask before spending: see team/CHECKPOINTS.md.")
         return 0
 
-    from pou2f3_control import build_msas
-    from proto_tools.modal.client import dispatch_to_modal
-    from proto_tools.tools.structure_prediction.boltz2.boltz2 import (Boltz2Config,
-                                                                     Boltz2Input)
-
-    wd = workdir(gene)
-    wd.mkdir(parents=True, exist_ok=True)
-    msas, depth, _ = build_msas(tf, med23, wd / "msa")
-    print(f"MSA      chain A {depth[0]} sequences, chain B {depth[1]} sequences "
-          "(ColabFold server, per chain, unpaired)")
-
-    t0, written = time.time(), []
-    for i, seed in enumerate(SEEDS[:a.samples], 1):
-        # One dispatch per member: `diffusion_samples` returns only the best
-        # sample by confidence, which cannot say whether independent samples
-        # agree, and agreement is the entire question.
-        t1 = time.time()
-        try:
-            result = dispatch_to_modal(
-                "boltz2-prediction",
-                Boltz2Input(complexes=complexes, msas=[msas]),
-                Boltz2Config(diffusion_samples=1, include_pae_matrix=True,
-                             seed=seed, device="modal"))
-        except Exception as e:
-            print(f"  seed {seed}  FAILED  {type(e).__name__}: {str(e)[:120]}")
-            continue
-        payload = result.model_dump(mode="json") if hasattr(result, "model_dump") \
-            else result
-        p = wd / f"sample_{i}_seed{seed}.json"
-        p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        written.append(p)
-        print(f"  seed {seed}  {time.time() - t1:.0f}s  -> {p.name}")
-
-    print(f"\n{len(written)}/{a.samples} samples in {time.time() - t0:.0f}s")
-    if not written:
-        return 1
-    return 0 if score(gene, cfg) else 1
+    try:
+        return 0 if dispatch(gene, accession, a.samples, cfg=cfg) else 1
+    except ValueError as e:
+        print(f"REFUSED  {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

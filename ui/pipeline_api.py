@@ -57,19 +57,42 @@ SCREEN_FILE = ROOT / "runs" / "vina_smoke.json"
 MAX_POSES_SHOWN = 3
 
 
-def _recorded_screen(site) -> tuple[dict, list[dict]] | None:
+def _screen_files(genes: list[str]) -> list[Path]:
+    """Screens to consider, most specific first.
+
+    A screen docked into a TF's predicted interface answers a different
+    question from one docked into the curated ELK1 cavity, so the per-gene file
+    is tried first and the calibration screen is the fallback. Which one is
+    served is decided by whether its residues match the box that was actually
+    built, not by which file happens to exist.
+    """
+    return [ROOT / "runs" / "screens" / f"{g.upper()}_MED23.json"
+            for g in genes] + [SCREEN_FILE]
+
+
+def _recorded_screen(site, genes: list[str] | None = None):
     """The screen on file, but only if it was run against *this* box.
 
     A docking record is only about the site it was docked into. Serving one
     keyed to different residues would put poses on screen that were computed
     somewhere else on the protein, which is the same class of error as
     borrowing another candidate's coordinates — so the residues are compared
-    and a mismatch returns nothing rather than the wrong screen.
+    and a mismatch is skipped rather than shown.
     """
-    if site is None or not site.defensible or not SCREEN_FILE.is_file():
+    if site is None or not site.defensible:
+        return None
+    for path in _screen_files(genes or []):
+        got = _read_screen(path, site)
+        if got:
+            return got
+    return None
+
+
+def _read_screen(path: Path, site):
+    if not path.is_file():
         return None
     try:
-        rec = json.loads(SCREEN_FILE.read_text(encoding="utf-8"))
+        rec = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     if set(rec.get("site", {}).get("resolved_residues", [])) != set(site.residues):
@@ -79,6 +102,8 @@ def _recorded_screen(site) -> tuple[dict, list[dict]] | None:
     if summary.get("best") is None:
         return None
     summary["seed"] = rec.get("config", {}).get("seed")
+    summary["file"] = str(path.relative_to(ROOT))
+    summary["basis"] = rec.get("site", {}).get("basis", "")
 
     # Only poses that landed in the pocket. A good score with no contact and a
     # large offset from the box centre is Vina docking somewhere else, and
@@ -122,6 +147,79 @@ def _recorded_interface(gene: str):
         return None
 
 
+PREDICT_SAMPLES = 3          # the consensus floor; five is the batch convention
+
+
+def _predict_interface(gene: str, emit) -> tuple[tuple | None, str]:
+    """Run the real predictor for `gene`, live, and return what it wrote.
+
+    This is a bridge, not a second implementation: `scripts/predict_med23_interface`
+    owns fetching both sequences, verifying the accessions, building per-chain
+    MSAs, dispatching independent Boltz-2 seeds to Modal and scoring the
+    ensemble. Calling it from here means the interface triggers exactly what the
+    command line runs — the one thing the interface could not do before was
+    cause the file it was already reading to exist.
+
+    Three seeds rather than five: `ConsensusConfig.min_ensemble_samples` is 3,
+    so that is the fewest that can demonstrate agreement at all, and every
+    additional seed is another GPU dispatch a person is waiting on.
+
+    Failure is reported, never smoothed over. A refused accession, a dead
+    dispatch and an ensemble that ran and disagreed are three different
+    outcomes, and each keeps the structure stage abstaining rather than
+    producing residues nobody can defend. The reason is returned as well as
+    emitted, because the stage this returns into emits its own verdict
+    afterwards and would otherwise overwrite the only explanation on screen.
+    """
+    import sys
+    scripts = str(ROOT / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    try:
+        from predict_med23_interface import accession_for, dispatch
+    except Exception as e:                                   # noqa: BLE001
+        note = f"the predictor could not be loaded: {type(e).__name__}: {str(e)[:160]}"
+        emit("stage", {"id": "structure", "state": "blocked",
+                       "detail": f"the predictor could not be loaded: {type(e).__name__}",
+                       "note": note})
+        return None, note
+
+    accession, why = accession_for(gene)
+    if not accession:
+        note = (why + ". A gene symbol does not identify a protein, and the wrong "
+                "accession folds the wrong one.")
+        emit("stage", {"id": "structure", "state": "abstained",
+                       "detail": f"no accession for {gene}", "note": note})
+        return None, note
+
+    emit("stage", {
+        "id": "structure", "state": "running",
+        "detail": f"co-folding {gene} with MED23, {PREDICT_SAMPLES} seeds on Modal",
+        "note": f"{gene} is {accession} (UniProt, reviewed, human). Fetching "
+                "sequences, building per-chain MSAs, then one GPU dispatch per "
+                "seed. This is minutes, not seconds."})
+
+    def log(msg: str) -> None:
+        emit("stage", {"id": "structure", "state": "running",
+                       "detail": f"co-folding {gene} with MED23 "
+                                 f"({PREDICT_SAMPLES} seeds on Modal)",
+                       "note": str(msg)[:300]})
+
+    try:
+        dispatch(gene, accession, PREDICT_SAMPLES, log=log)
+    except Exception as e:                                   # noqa: BLE001
+        note = (f"{type(e).__name__}: {str(e)[:200]} — the dispatch for {gene} "
+                "failed, nothing was written, and the site below falls back to "
+                "the curated cavity.")
+        emit("stage", {"id": "structure", "state": "blocked",
+                       "detail": f"prediction failed: {type(e).__name__}",
+                       "note": note})
+        return None, note
+    got = _recorded_interface(gene)
+    return got, ("" if got is not None else
+                 f"the {gene} dispatch returned but wrote no consensus file")
+
+
 def _model_table(model_path) -> pd.DataFrame:
     return pd.read_csv(model_path, usecols=["ModelID", "OncotreeLineage",
                                             "OncotreeSubtype"])
@@ -152,7 +250,8 @@ def _named_genes(question: str, tf_path, partner: str) -> list[str]:
 
 
 def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
-                   decided_by: str, interface_evidence: dict, free_receptor) -> None:
+                   decided_by: str, interface_evidence: dict, free_receptor,
+                   predict: str | None = None) -> None:
     """Answer a gene question that names no disease.
 
     Everything that needs a cohort abstains and says why; everything that needs
@@ -215,7 +314,8 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
                     "No abstract here documents a physical contact."))
                + (f" {len(errors)} axis search(es) failed." if errors else "")})
 
-    _structure_site_and_screen(emit, cfg, named, interface_evidence, free_receptor)
+    _structure_site_and_screen(emit, cfg, named, interface_evidence, free_receptor,
+                               predict)
 
     emit("stage", {
         "id": "experiment", "state": "done",
@@ -229,7 +329,8 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
 
 
 def _structure_site_and_screen(emit, cfg, genes: list[str],
-                               interface_evidence: dict, free_receptor) -> None:
+                               interface_evidence: dict, free_receptor,
+                               predict: str | None = None) -> None:
     """Everything downstream of the shortlist that depends only on the partner.
 
     Split out of `run_live` because it is the half of the pipeline that does
@@ -249,6 +350,16 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # the shortlisted candidates, and report honestly when there is none.
     predicted = {g: _recorded_interface(g) for g in genes}
     predicted = {g: p for g, p in predicted.items() if p is not None}
+    # An explicit request to fold one of these candidates now. Only when the
+    # caller named it and only when nothing is already on disk: a page load must
+    # never start a GPU job, and a job that already ran must never be repeated
+    # because someone asked the same question twice.
+    predict_note = ""
+    if predict and predict.upper() in {g.upper() for g in genes} \
+            and predict.upper() not in predicted:
+        got, predict_note = _predict_interface(predict.upper(), emit)
+        if got is not None:
+            predicted[predict.upper()] = got
     converged = {g: (c, r) for g, (c, r) in predicted.items() if c.converged}
     # One site is boxed per run, so the consensus that can define it is the
     # first candidate's — and only if that ensemble converged.
@@ -271,12 +382,13 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
             "id": "structure", "state": "abstained",
             "detail": ("; ".join(rejected) if rejected
                        else "no ensemble on file for any candidate in this run"),
-            "note": ("Ensembles that ran but did not converge highlight nothing."
-                     if rejected else
-                     "Structural discovery is a separate costed GPU step, not run "
-                     "inline. Dispatch one with `python "
-                     "scripts/predict_med23_interface.py <GENE> --accession <ACC> "
-                     "--dispatch`.")})
+            "note": (predict_note or
+                     ("Ensembles that ran but did not converge highlight nothing."
+                      if rejected else
+                      "Structural discovery is a separate costed GPU step, not run "
+                      "inline. Ask for one with the button on the structure panel, "
+                      "or `python scripts/predict_med23_interface.py <GENE> "
+                      "--dispatch`."))})
 
     # ── druggable site ─────────────────────────────────────────────────────
     #
@@ -316,10 +428,16 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
             "detail": (f"{site.size[0]:.1f} x {site.size[1]:.1f} x {site.size[2]:.1f} A "
                        f"box on {cfg.partner_gene} around {len(site.residues)} residues"),
             "note": (f"From {basis}. Screened against the free receptor, not a "
-                     "TF-occupied one. This is the cavity that binds ELK1 — "
-                     "calibration, not a site established for "
-                     + (", ".join(genes) if genes else "any candidate here")
-                     + "."),
+                     "TF-occupied one. "
+                     + ("This is where the ensemble puts the transcription factor, "
+                        "so a compound in this box is the blocking hypothesis: it "
+                        "occupies the surface the TF would have used. Predicted, "
+                        "not observed."
+                        if consensus is not None else
+                        "This is the cavity that binds ELK1 — calibration, not a "
+                        "site established for "
+                        + (", ".join(genes) if genes else "any candidate here")
+                        + ".")),
             "center": site.center, "size": site.size, "residues": site.residues})
     else:
         why = blockers or (site.blockers if site else
@@ -344,7 +462,7 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # as recorded, exactly as `data.json` labels the cold-start landscape. A
     # screen that never ran and a screen that ran earlier are different
     # results and the interface says which one it is showing.
-    screen = _recorded_screen(site)
+    screen = _recorded_screen(site, genes)
     if site is None or not site.defensible:
         emit("stage", {
             "id": "screening", "state": "abstained",
@@ -364,7 +482,7 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
                        f"{s['clean_poses']} without geometry flags, best "
                        f"{s['best']:.2f} kcal/mol"),
             "note": (f"Recorded screen, seed {s['seed']}, from "
-                     f"{SCREEN_FILE.relative_to(ROOT)} — not re-run for this question; "
+                     f"{s['file']} — not re-run for this question; "
                      "the box depends on the receptor, not the context. Approved-drug "
                      "control library: a machinery check, not a designed screen. Vina "
                      "scores rank poses — they are not affinities and not evidence of "
@@ -398,7 +516,8 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
 
 def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
              interface_evidence: dict[str, MediatorLink] | None = None,
-             top_n: int = 3, free_receptor: Path | None = None) -> None:
+             top_n: int = 3, free_receptor: Path | None = None,
+             predict: str | None = None) -> None:
     """Stream the real pipeline for one question. `emit(event, payload)` per step."""
     ge_path, model_path, tf_path = data_paths
     interface_evidence = interface_evidence or {}
@@ -449,7 +568,7 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         named = _named_genes(question, tf_path, cfg.partner_gene)
         if named:
             _partner_first(question, named, cfg, emit, trace, why, decided_by,
-                           interface_evidence, free_receptor)
+                           interface_evidence, free_receptor, predict)
             return
         emit("stage", {"id": "question", "state": "blocked",
                        "detail": question or "no question given",
@@ -653,7 +772,7 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         "note": "Cancer-cell selectivity is not normal-tissue safety."})
 
     _structure_site_and_screen(emit, cfg, [v.gene for v in top],
-                               interface_evidence, free_receptor)
+                               interface_evidence, free_receptor, predict)
 
     # ── next experiment ────────────────────────────────────────────────────
     emit("stage", {

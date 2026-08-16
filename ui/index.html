@@ -221,6 +221,14 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
   display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .paper .id{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:6px}
 .srcs .empty{padding:0 18px;font-size:12.5px;color:var(--ink-3);line-height:1.5}
+/* The only control here that costs GPU time. Styled as a deliberate action,
+   not as a link you brush past. */
+.predict-btn{display:block;width:100%;margin:0 0 6px;padding:8px 10px;
+  background:var(--card);border:1px solid var(--line-2);border-radius:var(--r);
+  color:var(--ink);font:inherit;font-size:11.5px;cursor:pointer;
+  transition:border-color .15s,color .15s}
+.predict-btn:hover:not(:disabled){border-color:var(--ink-3)}
+.predict-btn:disabled{opacity:.6;cursor:progress}
 
 /* ── main views ── */
 main{position:relative;overflow:hidden}
@@ -873,13 +881,25 @@ function addSummary(s){
     btn.title = open ? 'Hide reasoning' : 'Show reasoning'; };
 }
 
+/* The one action in this interface that spends money. It re-runs the current
+   question with an explicit request to fold one candidate, so the dispatch is
+   always something a person asked for by name and never something a page load
+   or a re-render can start. */
+document.addEventListener('click', e => {
+  const b = e.target.closest('.predict-btn');
+  if(!b) return;
+  b.disabled = true; b.textContent = `co-folding ${b.dataset.gene}…`;
+  run($('#q1').value, b.dataset.gene);
+});
+
 let es=null;
-function run(q){
+function run(q, predict){
   es?.close();
   STAGES.forEach(([id])=>setStage({id,state:'pending',detail:'',note:''}));
   $('#papers').innerHTML=''; $('#srcCount').textContent=''; resetReady();
   resetThinking();
-  const live = new EventSource('/api/run?q='+encodeURIComponent(q||''));
+  const live = new EventSource('/api/run?q='+encodeURIComponent(q||'')
+                               + (predict ? '&predict='+encodeURIComponent(predict) : ''));
   es = live;
   let got=false;
   live.addEventListener('stage', e => { got=true; setStage(JSON.parse(e.data)); });
@@ -1297,6 +1317,12 @@ function receptorPanel(M, c, hl){
              &middot; contacts ${l.residues?.length ? l.residues.join(', ')
                                 : '<span class="muted">none in the cavity</span>'}</div>`).join('')
         : '<span class="muted">no screen run</span>'}</dd></dl></div>
+  ${hl?.residues?.length || !c?.gene ? '' : `<p class="note">
+    <button class="predict-btn" data-gene="${c.gene}">Predict ${c.gene}–${M.gene}
+      interface on GPU</button>
+    <span class="muted">Three Boltz-2 seeds on Modal, co-folding both full-length
+      chains. Minutes, and it spends GPU time. The residues it agrees on become
+      the site a compound would have to occupy to keep ${c.gene} off it.</span></p>`}
   <p class="note">The cavity shown is where <b>ELK1</b> binds, from the deposited
     complex. It is not a site established for ${gene}.
     ${hl?.residues?.length

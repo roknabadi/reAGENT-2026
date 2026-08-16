@@ -93,7 +93,13 @@ class Handler(SimpleHTTPRequestHandler):
         if url.path != "/api/run":
             return super().do_GET()
 
-        q = (parse_qs(url.query).get("q") or [""])[0].strip()
+        params = parse_qs(url.query)
+        q = (params.get("q") or [""])[0].strip()
+        # An explicit request to fold one candidate on GPU during this run. It
+        # is a query parameter rather than a setting because it is a decision
+        # someone makes per run and pays for per run; nothing here starts a
+        # dispatch on its own.
+        predict = (params.get("predict") or [""])[0].strip().upper() or None
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -101,11 +107,11 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
 
         try:
-            self._run(q)
+            self._run(q, predict)
         except (BrokenPipeError, ConnectionResetError):
             pass   # the reader navigated away
 
-    def _run(self, q: str) -> None:
+    def _run(self, q: str, predict: str | None = None) -> None:
         """Delegate to the real pipeline. Nothing here is precomputed: the
         landscape, the gates and the candidate table are all computed for the
         context resolved from this question."""
@@ -139,6 +145,7 @@ class Handler(SimpleHTTPRequestHandler):
                 self._sse,
                 interface_evidence=evidence,
                 free_receptor=D / "9F76.cif",
+                predict=predict,
             )
         except (BrokenPipeError, ConnectionResetError):
             raise

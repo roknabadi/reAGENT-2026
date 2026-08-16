@@ -141,7 +141,8 @@ def _read_a3m(path: pathlib.Path) -> list[tuple[str, str]]:
     return out
 
 
-def build_msas(pou2f3: str, pou2af2: str, workdir: pathlib.Path):
+def build_msas(pou2f3: str, pou2af2: str, workdir: pathlib.Path,
+               names: tuple[str, str] = ("pou2f3", "pou2af2")):
     """Homology alignments for both chains, from the public ColabFold server.
 
     This is not an optimisation. `run_boltz2` only ever consumes MSAs the caller
@@ -153,6 +154,12 @@ def build_msas(pou2f3: str, pou2af2: str, workdir: pathlib.Path):
 
     The server returns both chains' alignments concatenated in one a3m; rows are
     assigned to a chain by their alignment length, which is the query length.
+
+    `names` only labels the per-chain working directories, but it is a
+    parameter rather than a constant because a cache directory named for one
+    protein while it holds another's alignments is the same failure as an
+    accession that names the wrong protein -- silent, plausible, and invisible
+    downstream. Callers reusing this for another pair pass their own names.
     """
     from proto_tools.entities.msa import MSA
     from proto_tools.tools.sequence_alignment.mmseqs2.msa_server import \
@@ -170,7 +177,7 @@ def build_msas(pou2f3: str, pou2af2: str, workdir: pathlib.Path):
     # some other protein, which it correctly refuses. A per-chain search puts
     # the query at row 0 by construction, which is what Boltz checks.
     per_chain, counts, sources = {}, {}, []
-    for idx, (query, name) in enumerate(((pou2f3, "pou2f3"), (pou2af2, "pou2af2"))):
+    for idx, (query, name) in enumerate(zip((pou2f3, pou2af2), names, strict=True)):
         res = run_remote_msa_search([query], workdir / name, timeout=1800)
         a3m = next(pathlib.Path(res).glob("*.a3m"))
         sources.append(str(a3m))
