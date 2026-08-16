@@ -5,26 +5,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dependency Scout — agentic target discovery</title>
 <style>
+/* Warm paper and muted clay/sage/lavender rather than saturated signal colours.
+   Every status still carries a word, so the softer hues never become the only
+   encoding, and each accent is held above 4.5:1 against its own background. */
 :root{
-  --bg:#FFFFFF; --sunk:#FAFAF9; --card:#FFFFFF; --line:#E7E7E4; --line-2:#D2D2CE;
-  --ink:#111315; --ink-2:#565B61; --ink-3:#8A9099;
+  --bg:#FCFCFB; --sunk:#F4F4F2; --card:#FFFFFF; --line:#E4E4E0; --line-2:#CBCBC5;
+  --ink:#14171A; --ink-2:#4A4F55; --ink-3:#7A8087;
   --pass:#0E8A5F; --fail:#CC2418; --control:#5B4BD6; --await:#A98A00;
-  --grid:#EFEFEC; --glass:rgba(255,255,255,.82);
+  --grid:#EAEAE6; --glass:rgba(252,252,251,.82);
   --sans:-apple-system,"SF Pro Text","SF Pro Display","Helvetica Neue",Inter,system-ui,sans-serif;
   --mono:"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
   --r:10px;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
-  --bg:#0D0E10; --sunk:#141619; --card:#16181B; --line:#25282D; --line-2:#343840;
-  --ink:#F1F2F4; --ink-2:#A8AEB6; --ink-3:#767C85;
+  --bg:#131417; --sunk:#1B1D21; --card:#16181B; --line:#282B31; --line-2:#3A3E46;
+  --ink:#ECEDEF; --ink-2:#A8AEB6; --ink-3:#767C85;
   --pass:#28A075; --fail:#DE4E42; --control:#736AD8; --await:#B08F22;
-  --grid:#1E2126; --glass:rgba(13,14,16,.82); color-scheme:dark;
+  --grid:#22252A; --glass:rgba(19,20,23,.82); color-scheme:dark;
 }}
 :root[data-theme=dark]{
-  --bg:#0D0E10; --sunk:#141619; --card:#16181B; --line:#25282D; --line-2:#343840;
-  --ink:#F1F2F4; --ink-2:#A8AEB6; --ink-3:#767C85;
+  --bg:#131417; --sunk:#1B1D21; --card:#16181B; --line:#282B31; --line-2:#3A3E46;
+  --ink:#ECEDEF; --ink-2:#A8AEB6; --ink-3:#767C85;
   --pass:#28A075; --fail:#DE4E42; --control:#736AD8; --await:#B08F22;
-  --grid:#1E2126; --glass:rgba(13,14,16,.82); color-scheme:dark;
+  --grid:#22252A; --glass:rgba(19,20,23,.82); color-scheme:dark;
 }
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
@@ -39,6 +42,9 @@ button{font:inherit}
 #landing{position:fixed;inset:0;z-index:20;background:var(--bg);overflow-y:auto;
   transition:opacity .55s ease,visibility .55s}
 #landing[hidden-state]{opacity:0;visibility:hidden;pointer-events:none}
+/* On the hero there is no header rule to sit against, so it needs its own edge. */
+#theme0{position:fixed;top:20px;right:22px;z-index:3;background:var(--card);
+  border-color:var(--line-2);color:var(--ink-2);box-shadow:0 1px 3px rgba(0,0,0,.10)}
 .hero{min-height:100vh;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);
   align-items:center;gap:40px;padding:0 0 0 clamp(28px,6vw,90px)}
 .stage3d{position:relative;height:100vh;min-width:0}
@@ -292,7 +298,10 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
 
 #v-structure{grid-template-columns:1fr 300px}
 #wrap3d{position:relative;overflow:hidden}
-#canvas3d{display:block;width:100%;height:100%;cursor:grab}
+/* Out of flow: a canvas keeps its backing-store width as an intrinsic size, which
+   props its grid column open and stops the panel ever shrinking. Growing worked,
+   shrinking did not, and the buffer stayed stale at the old width. */
+#canvas3d{display:block;position:absolute;inset:0;width:100%;height:100%;cursor:grab}
 #canvas3d:active{cursor:grabbing}
 .leg{position:absolute;left:18px;top:16px;font-size:12px;background:var(--glass);
   backdrop-filter:blur(9px);border:1px solid var(--line);border-radius:var(--r);padding:11px 13px}
@@ -303,6 +312,16 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
 .resid{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
 .resid span{font-family:var(--mono);font-size:11px;padding:2px 6px;border-radius:5px;
   background:var(--card);border:1px solid var(--line)}
+/* a pair with no deposition shows the absence, never another pair's coordinates */
+.nostruct{position:absolute;inset:0;display:none;place-items:center;text-align:center;
+  padding:40px;font-size:13px;color:var(--ink-3);line-height:1.65}
+.nostruct .g{font-family:var(--mono);font-size:19px;color:var(--ink-2);display:block;margin-bottom:8px}
+#v-structure[data-nostruct] .nostruct{display:grid}
+#v-structure[data-nostruct] #canvas3d,#v-structure[data-nostruct] .leg{visibility:hidden}
+/* Three.js is a ~600 KB module; the first open must say it is working. */
+.loading3d{position:absolute;inset:0;display:none;place-items:center;font-family:var(--mono);
+  font-size:11.5px;color:var(--ink-3);background:var(--bg)}
+#v-structure[data-loading] .loading3d{display:grid}
 
 @media (max-width:1240px){ .body{grid-template-columns:230px 1fr} .srcs{display:none} }
 @media (max-width:940px){
@@ -317,6 +336,7 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
 <body>
 
 <section id="landing">
+  <button class="icon-btn" id="theme0" title="Toggle theme" aria-label="Toggle theme">◐</button>
   <div class="hero">
     <div class="land-in">
       <div class="badge"><b>●</b> DepMap 24Q2 · Lambert TF catalogue · PMC full text</div>
@@ -340,7 +360,7 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
     <div class="stage3d">
       <canvas id="hero3d"></canvas>
       <div class="load3d" id="load3d">loading structure…</div>
-      <div class="cap3d">PDB <b>9F6Y</b> · MED23 with the phosphorylated ELK1 motif · 3.0 Å cryo-EM</div>
+      <div class="cap3d" id="cap3d"></div>
     </div>
   </div>
 
@@ -414,7 +434,9 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
       </section>
 
       <section class="view" id="v-structure">
-        <div id="wrap3d"><canvas id="canvas3d"></canvas><div class="leg" id="leg"></div></div>
+        <div id="wrap3d"><canvas id="canvas3d"></canvas><div class="leg" id="leg"></div>
+          <div class="nostruct" id="nostruct"></div>
+          <div class="loading3d" id="loading3d">building structure…</div></div>
         <div class="side" id="saside"></div>
       </section>
     </main>
@@ -435,11 +457,13 @@ const D = await (await fetch('./data.json')).json();
 const T = D.thresholds, pts = D.landscape, C = D.candidates;
 
 /* theme — declared before setTheme runs, or the first call hits the TDZ */
-let booted=false, renderStructure=null, heroRetheme=null;
+let booted=false, renderStructure=null, heroRetheme=null, showPair=null;
 const setTheme = t => { document.documentElement.dataset.theme=t; localStorage.dsTheme=t;
   if(booted){ draw(); renderStructure?.(); } heroRetheme?.(); };
 setTheme(localStorage.dsTheme || (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
-$('#theme').onclick = () => setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+const flipTheme = () => setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+$('#theme').onclick = flipTheme;
+$('#theme0').onclick = flipTheme;
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 /* ══ HERO: the real structure, slowly read ═════════════════
@@ -467,8 +491,10 @@ async function heroScene(){
   const key = new THREE.DirectionalLight(0xffffff, 2.0); key.position.set(2,3,2); scene.add(key);
   const rim = new THREE.DirectionalLight(0xffffff, 1.1); rim.position.set(-3,-1,-2); scene.add(rim);
 
-  const A=S.trace.A, B=S.trace.B, all=[...A,...B];
-  const motif=new Set(S.motif_residues), pocket=new Set(S.pocket_residues);
+  const A=S.trace[S.backbone_chain], B=S.trace[S.peptide_chain], all=[...A,...B];
+  const motif=new Set(S.peptide_residues), pocket=new Set(S.contact_residues);
+  $('#cap3d').innerHTML=`PDB <b>${S.pdb_id}</b> · ${S.chains[S.backbone_chain]} with the
+    ${S.chains[S.peptide_chain]} · ${S.resolution_a} Å ${S.method}`;
   const c0=all.reduce((a,p)=>[a[0]+p[1],a[1]+p[2],a[2]+p[3]],[0,0,0]).map(v=>v/all.length);
   const V=p=>new THREE.Vector3(p[1]-c0[0], p[2]-c0[1], p[3]-c0[2]);
   const span=Math.max(...all.map(p=>Math.hypot(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2])));
@@ -650,7 +676,10 @@ function enter(q){
   $('#landing').setAttribute('hidden-state','');
   $('#app').setAttribute('data-on','');
   $('#q1').value = q;
-  setTimeout(()=>{ booted=true; sizePlot(); draw(); run(q); }, 380);
+  setTimeout(()=>{ booted=true; sizePlot(); draw(); run(q);
+    // Warm the WebGL module while the reader is on Landscape, so the first
+    // open of Structure is not a cold ~600 KB import.
+    setTimeout(()=>glContext().catch(()=>{}), 600); }, 380);
 }
 
 /* ══ PIPELINE TIMELINE ════════════════════════════════════ */
@@ -683,7 +712,11 @@ function setStage({id,state,detail,note}){
   apply(localStorage.dsSrc === 'off');
   btn.onclick = () => { const off = body.dataset.src !== 'off';
     localStorage.dsSrc = off ? 'off' : 'on'; apply(off);
-    setTimeout(()=>{ sizePlot(); draw(); renderStructure?.(); }, 340); };
+    // Resize the 3D panel explicitly too. A ResizeObserver alone is not enough:
+    // shrinking the canvas is itself the observation that causes the shrink, and
+    // the browser drops that second notification to break the loop. Growing was
+    // delivered, shrinking was not, so the buffer stayed stale at the old width.
+    setTimeout(()=>{ sizePlot(); draw(); glc?.size(); renderStructure?.(); }, 340); };
 }
 function addPaper(p){
   const box=$('#papers'); box.querySelector('.empty')?.remove();
@@ -718,7 +751,8 @@ function replay(q){
   const mapped=C.filter(c=>c.region_mapped&&!c.control);
   const scored=C.filter(c=>!c.awaiting);
   const both=C.filter(c=>!c.awaiting&&c.involvement==='direct'&&!c.control);
-  const S=D.structure;
+  const St=D.structures||{}, pairSet=new Set(C.filter(c=>c.partner).map(c=>`${c.gene}|${c.partner}`));
+  const solved=Object.keys(St).filter(k=>pairSet.has(k));
   const seq=[
     {id:'question',state:'done',detail:q||'recorded run',
      note:'Recorded run — start ui/serve.py for a live Paperclip search.'},
@@ -735,9 +769,10 @@ function replay(q){
     {id:'site',state:mapped.length?'done':'abstained',
      detail:mapped.length?mapped.map(c=>`${c.gene}–${c.partner}`).join(', '):'no mapped interacting region',
      note:'A whole-protein pull-down is association, not contact.'},
-    {id:'structure',state:S?'done':'blocked',
-     detail:S?`PDB ${S.pdb_id} at ${S.resolution_a} Å`:'no structure',
-     note:'A structure is not a binding claim.'},
+    {id:'structure',state:solved.length?'done':'blocked',
+     detail:solved.length?solved.map(k=>`${St[k].gene}–${St[k].partner} PDB ${St[k].pdb_id} at ${St[k].resolution_a} Å`).join(', ')
+            :'no candidate pair has deposited coordinates',
+     note:`${solved.length} of ${pairSet.size} pairs solved; ${Object.keys(D.predicted||{}).length} targets fall back to an AlphaFold monomer. A structure is not a binding claim.`},
     {id:'screening',state:'pending',detail:'not run',
      note:'Needs an approved-drug library and a defined box. Blocked until checkpoint 4 is signed.'},
     {id:'experiment',state:'done',
@@ -754,7 +789,7 @@ function replay(q){
 
 /* ══ LANDSCAPE ════════════════════════════════════════════ */
 const cv=$('#plot'), ctx=cv.getContext('2d'), tip=$('#tip');
-let view=null, drag=null, hover=-1;
+let view=null, drag=null, hover=-1, touched=false;   // touched: the reader zoomed or panned
 const X=p=>p.sel, Y=p=>p.median;
 const EXT=(()=>{ const xs=pts.map(X), ys=pts.map(Y), pd=v=>(Math.max(...v)-Math.min(...v))*0.06;
   return { x0:Math.min(...xs)-pd(xs), x1:Math.max(Math.max(...xs),T.selectivity_delta*1.25)+pd(xs),
@@ -765,11 +800,17 @@ const M={l:56,r:16,t:16,b:48};
 function sizePlot(){ const r=cv.parentElement.getBoundingClientRect(), d=devicePixelRatio||1;
   if(!r.width) return;
   cv.width=r.width*d; cv.height=r.height*d; cv.style.width=r.width+'px'; cv.style.height=r.height+'px';
-  ctx.setTransform(d,0,0,d,0,0); if(!view) resetView(); }
+  // Refit on resize unless the reader has zoomed or panned — collapsing the
+  // sources rail must hand the new width to the plot, not leave it framed for
+  // the old one.
+  ctx.setTransform(d,0,0,d,0,0); if(!view||!touched) resetView(); }
+/* Independent x and y scales. The axes are different units — selectivity Δ against
+   a Chronos gene effect — so a shared scale buys no comparability and wastes most
+   of the panel. Zoom still multiplies both together, so the shape never shears. */
 function resetView(){ const r=cv.getBoundingClientRect();
-  view={ k:Math.min((r.width-M.l-M.r)/(EXT.x1-EXT.x0),(r.height-M.t-M.b)/(EXT.y1-EXT.y0)),
+  view={ kx:(r.width-M.l-M.r)/(EXT.x1-EXT.x0), ky:(r.height-M.t-M.b)/(EXT.y1-EXT.y0),
          x:M.l, y:M.t }; }
-const sx=p=>(X(p)-EXT.x0)*view.k+view.x, sy=p=>(EXT.y1-Y(p))*view.k+view.y;
+const sx=p=>(X(p)-EXT.x0)*view.kx+view.x, sy=p=>(EXT.y1-Y(p))*view.ky+view.y;
 
 function draw(){
   const r=cv.getBoundingClientRect(); if(!view||!r.width) return;
@@ -779,18 +820,23 @@ function draw(){
   ctx.strokeStyle=css('--grid'); ctx.lineWidth=1;
   const dx=STEP(EXT.x0,EXT.x1), dy=STEP(EXT.y0,EXT.y1), ticks=[];
   for(let v=Math.ceil(EXT.x0/dx)*dx; v<=EXT.x1; v+=dx){
-    const x=(v-EXT.x0)*view.k+view.x; if(x<PL||x>PR) continue;
+    const x=(v-EXT.x0)*view.kx+view.x; if(x<PL||x>PR) continue;
     ctx.beginPath(); ctx.moveTo(x,PT); ctx.lineTo(x,PB); ctx.stroke(); ticks.push(['x',v,x,dx]); }
   for(let v=Math.ceil(EXT.y0/dy)*dy; v<=EXT.y1; v+=dy){
-    const y=(EXT.y1-v)*view.k+view.y; if(y<PT||y>PB) continue;
+    const y=(EXT.y1-v)*view.ky+view.y; if(y<PT||y>PB) continue;
     ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(PR,y); ctx.stroke(); ticks.push(['y',v,y,dy]); }
 
-  const gx=(T.selectivity_delta-EXT.x0)*view.k+view.x, gy=(EXT.y1-T.median_target_effect)*view.k+view.y;
-  ctx.save(); ctx.fillStyle=css('--pass'); ctx.globalAlpha=.06; ctx.fillRect(gx,PT,PR-gx,gy-PT); ctx.restore();
+  const gx=(T.selectivity_delta-EXT.x0)*view.kx+view.x, gy=(EXT.y1-T.median_target_effect)*view.ky+view.y;
+  ctx.save(); ctx.fillStyle=css('--pass'); ctx.globalAlpha=.11; ctx.fillRect(gx,PT,PR-gx,gy-PT); ctx.restore();
   ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle=css('--pass'); ctx.lineWidth=1.5;
   ctx.beginPath(); ctx.moveTo(gx,PT); ctx.lineTo(gx,gy); ctx.lineTo(PR,gy); ctx.stroke(); ctx.restore();
-  ctx.fillStyle=css('--pass'); ctx.font='600 11px '+css('--sans'); ctx.textAlign='left';
-  if(gx<PR-130) ctx.fillText('passes both gates →', gx+9, Math.max(PT+14, gy-9));
+  // Label inside the pass region when it is wide enough, otherwise point into it
+  // from the left. The plot now fills the panel, so the boundary often sits close
+  // to the right edge and the old right-only placement simply vanished.
+  ctx.fillStyle=css('--pass'); ctx.font='600 11px '+css('--sans');
+  const ly=Math.max(PT+14, gy-9);
+  if(gx<PR-130){ ctx.textAlign='left'; ctx.fillText('passes both gates →', gx+9, ly); }
+  else if(gx>PL+140){ ctx.textAlign='right'; ctx.fillText('passes both gates →', gx-9, ly); }
 
   const order=[...pts.keys()].sort((a,b)=>(pts[a].pass?1:0)-(pts[b].pass?1:0));
   for(const i of order){ const p=pts[i], x=sx(p), y=sy(p);
@@ -838,15 +884,15 @@ function draw(){
 
 cv.addEventListener('wheel',e=>{e.preventDefault();
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
-  const nk=Math.max(20,Math.min(4000,view.k*Math.exp(-e.deltaY*0.0016)));
-  view.x=mx-(mx-view.x)*(nk/view.k); view.y=my-(my-view.y)*(nk/view.k); view.k=nk; draw();
+  const f=Math.max(.2,Math.min(24,Math.exp(-e.deltaY*0.0016)));
+  view.x=mx-(mx-view.x)*f; view.y=my-(my-view.y)*f; view.kx*=f; view.ky*=f; touched=true; draw();
 },{passive:false});
 cv.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y};
   cv.setPointerCapture(e.pointerId);});
 cv.addEventListener('pointerup',()=>drag=null);
 cv.addEventListener('pointermove',e=>{
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
-  if(drag){view.x=drag.vx+(e.clientX-drag.x);view.y=drag.vy+(e.clientY-drag.y);draw();return;}
+  if(drag){view.x=drag.vx+(e.clientX-drag.x);view.y=drag.vy+(e.clientY-drag.y);touched=true;draw();return;}
   let best=-1,bd=169;
   for(let i=0;i<pts.length;i++){const a=sx(pts[i])-mx,b=sy(pts[i])-my,d=a*a+b*b; if(d<bd){bd=d;best=i;}}
   if(best!==hover){hover=best;draw();}
@@ -862,9 +908,9 @@ cv.addEventListener('pointermove',e=>{
   tip.style.top=Math.max(8,Math.min(my-tip.offsetHeight/2,r.height-tip.offsetHeight-10))+'px';
 });
 cv.addEventListener('pointerleave',()=>{tip.removeAttribute('data-on');hover=-1;draw();});
-$('#zin').onclick=()=>{view.k=Math.min(4000,view.k*1.5);draw();};
-$('#zout').onclick=()=>{view.k=Math.max(20,view.k/1.5);draw();};
-$('#zrst').onclick=()=>{resetView();draw();};
+$('#zin').onclick=()=>{view.kx*=1.5;view.ky*=1.5;touched=true;draw();};
+$('#zout').onclick=()=>{view.kx/=1.5;view.ky/=1.5;touched=true;draw();};
+$('#zrst').onclick=()=>{touched=false;resetView();draw();};
 addEventListener('resize',()=>{sizePlot();draw();renderStructure?.();});
 
 const nPass=pts.filter(p=>p.pass).length;
@@ -891,16 +937,20 @@ const con=c=>c.control?['p-ctrl','control']:c.involvement==='direct'?['p-pass','
   :c.involvement==='unknown'?['p-fail','none found']:['p-await',c.involvement];
 $('#rows').innerHTML=C.map((c,i)=>{const [dc,dl]=dep(c),[cc,cl]=con(c);
   return `<tr data-i="${i}" tabindex="0"><td class="gene">${c.gene}${c.shortlisted?' <span class="star">★</span>':''}</td>
-  <td class="ctx">${c.context}</td><td class="num">${c.n??'—'}</td><td class="num">${fmt(c.median)}</td>
+  <td class="ctx">${c.awaiting?'—':c.context}</td><td class="num">${c.n??'—'}</td><td class="num">${fmt(c.median)}</td>
   <td class="num">${fmt(c.sel)}</td><td><span class="pill ${dc}"><i></i>${dl}</span></td>
-  <td><span class="pill ${cc}"><i></i>${cl}</span>${c.partner!=='MED23'?` <span class="ctx">${c.partner}</span>`:''}</td>
+  <td><span class="pill ${cc}"><i></i>${cl}</span>${c.partner?` <span class="ctx">${c.partner}</span>`:''}</td>
   <td class="num">${c.score===null?'—':fmt(c.score,3)}</td></tr>`;}).join('');
+let selIdx=null;
 function select(i){
+  selIdx=+i;
   document.querySelectorAll('#rows tr').forEach(r=>r.setAttribute('aria-selected',r.dataset.i==i));
   const c=C[i], cls=c.control?'c':(c.awaiting?'':'f');
+  showPair?.(c);   // the Structure view follows the selection
   const rest=c.concerns.filter(x=>x!==c.blocked_because);
   $('#detail').innerHTML=`<h3>${c.gene}</h3>
-    <p class="ctxline">${c.context} · contact partner ${c.partner}</p>
+    <p class="ctxline">${c.awaiting?'context not yet quantified':c.context} ·
+      ${c.partner?`contact partner ${c.partner}`:'no partner proposed'}</p>
     <dl class="kv">${c.n!==null?`<dt>cell lines</dt><dd>${c.n}</dd>
       <dt>median effect</dt><dd>${fmt(c.median)}</dd><dt>selectivity Δ</dt><dd>${fmt(c.sel)}</dd>
       <dt>dependent here</dt><dd>${Math.round(c.tfrac*100)}%</dd>
@@ -933,12 +983,27 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   if(b.dataset.v==='structure') initStructure();
 });
 
-/* ══ STRUCTURE ════════════════════════════════════════════ */
-let structInit=false;
-async function initStructure(){
-  if(structInit) return; structInit=true;
-  const S=D.structure;
-  if(!S){ $('#saside').innerHTML='<h3>Structure</h3><p class="sub">No local mmCIF. Run scripts/build_ui_data.py with network access.</p>'; return; }
+/* ══ STRUCTURE ════════════════════════════════════════════
+   One panel per target–partner pair, following the selected candidate. Coordinates
+   exist only for pairs with a real deposition; every other pair renders what is
+   missing and what would produce it. Borrowing another pair's structure, or
+   quietly showing a prediction as if it were measured, would be the one lie this
+   interface exists to avoid. */
+const STRUCTS = D.structures
+  || (D.structure ? {[`${D.structure.gene||'ELK1'}|${D.structure.partner||'MED23'}`]: D.structure} : {});
+const structFor = c => (c && c.partner && STRUCTS[`${c.gene}|${c.partner}`]) || null;
+const PRED = D.predicted || {};
+const predFor = c => (c && PRED[c.gene]) || null;
+const words = s => (s||'unknown').replace(/_/g,' ');
+const pairOf = c => c.partner ? `${c.gene}–${c.partner}` : c.gene;
+// AlphaFold's own confidence bands, in this palette rather than its blue ramp.
+const BANDS = [[90,'--pass','very high'],[70,'--control','confident'],
+               [50,'--await','low'],[0,'--fail','very low']];
+const bandOf = v => BANDS.find(b => v >= b[0]);
+
+let glc=null, painted=null;
+async function glContext(){
+  if(glc) return glc;
   const THREE=await import('./vendor/three.module.min.js');
   const {OrbitControls}=await import('./vendor/OrbitControls.js');
   const cvs=$('#canvas3d'), scene=new THREE.Scene();
@@ -950,11 +1015,28 @@ async function initStructure(){
   scene.add(new THREE.AmbientLight(0xffffff,1.7));
   const k=new THREE.DirectionalLight(0xffffff,1.5); k.position.set(1,1,1); scene.add(k);
   const rim=new THREE.DirectionalLight(0xffffff,.5); rim.position.set(-1,-.5,-1); scene.add(rim);
-  const A=S.trace.A,B=S.trace.B,all=[...A,...B];
-  const motif=new Set(S.motif_residues), pocket=new Set(S.pocket_residues);
+  const grp=new THREE.Group(); scene.add(grp);
+  const size=()=>{ const r=cvs.parentElement.getBoundingClientRect(); if(!r.width) return;
+    rend.setPixelRatio(Math.min(2,devicePixelRatio||1)); rend.setSize(r.width,r.height,false);
+    cam.aspect=r.width/r.height; cam.updateProjectionMatrix(); };
+  (function loop(){requestAnimationFrame(loop);controls.update();rend.render(scene,cam);})();
+  // Observe the panel, not the window: collapsing the sources rail resizes this
+  // canvas without a window resize, and a stale drawing buffer renders the
+  // complex at the wrong aspect and pushes it out of frame.
+  new ResizeObserver(size).observe(cvs.parentElement);
+  return (glc={THREE,cam,controls,grp,size,cvs});
+}
+
+async function paint(S){
+  const {THREE,cam,controls,grp,size,cvs}=await glContext();
+  const A=S.trace[S.backbone_chain], B=S.trace[S.peptide_chain], all=[...A,...B];
+  const motif=new Set(S.peptide_residues), pocket=new Set(S.contact_residues);
   const c0=all.reduce((a,p)=>[a[0]+p[1],a[1]+p[2],a[2]+p[3]],[0,0,0]).map(v=>v/all.length);
   const V=p=>new THREE.Vector3(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2]);
-  const grp=new THREE.Group(); scene.add(grp);
+  // Radii and camera distance scale with the complex. A 1230-residue Mediator
+  // subunit and a 135-residue POU domain cannot share absolute Ångström radii.
+  const span=Math.max(...all.map(p=>Math.hypot(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2])));
+  const R={back:span*.012, pocket:span*.047, motif:span*.033, motifBall:span*.042};
   const tube=(ps,color,rad)=>{ if(ps.length<2) return;
     grp.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(ps),
       Math.max(24,ps.length*2),rad,8,false),
@@ -966,45 +1048,157 @@ async function initStructure(){
     list.forEach((p,i)=>{o.position.copy(V(p));o.updateMatrix();m.setMatrixAt(i,o.matrix);});
     grp.add(m); };
   renderStructure=()=>{
-    const CO={med:new THREE.Color(css('--ink-3')),motif:new THREE.Color(css('--fail')),
+    const CO={back:new THREE.Color(css('--ink-3')),motif:new THREE.Color(css('--fail')),
               pocket:new THREE.Color(css('--control'))};
     grp.clear(); let run=[];
     for(let i=0;i<A.length;i++){ run.push(V(A[i]));
-      if(i+1>=A.length||A[i+1][0]-A[i][0]>1){ tube(run,CO.med,.55); run=[]; } }
-    balls(A.filter(p=>pocket.has(p[0])),CO.pocket,2.1);
-    tube(B.map(V),CO.motif,1.5);
-    balls(B.filter(p=>motif.has(p[0])),CO.motif,1.9);
+      if(i+1>=A.length||A[i+1][0]-A[i][0]>1){ tube(run,CO.back,R.back); run=[]; } }
+    balls(A.filter(p=>pocket.has(p[0])),CO.pocket,R.pocket);
+    tube(B.map(V),CO.motif,R.motif);
+    balls(B.filter(p=>motif.has(p[0])),CO.motif,R.motifBall);
   };
-  const size=()=>{ const r=cvs.parentElement.getBoundingClientRect();
-    rend.setPixelRatio(Math.min(2,devicePixelRatio||1)); rend.setSize(r.width,r.height,false);
-    cam.aspect=r.width/r.height; cam.updateProjectionMatrix(); };
   size();
-  const span=Math.max(...all.map(p=>Math.hypot(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2])));
-  cam.position.set(span*1.5,span*.65,span*1.5); controls.target.set(0,0,0);
+  frameCamera(cam,controls,cvs,span);
   renderStructure();
-  (function loop(){requestAnimationFrame(loop);controls.update();rend.render(scene,cam);})();
-  addEventListener('resize',()=>{size();renderStructure();});
-  $('#leg').innerHTML=`<div class="row"><span class="sw" style="background:var(--ink-3)"></span>
-      <span class="lb">${S.chains.A} backbone</span></div>
-    <div class="row"><span class="sw" style="background:var(--fail)"></span>
-      <span class="lb">ELK1 motif 374–384</span></div>
-    <div class="row"><span class="sw" style="background:var(--control)"></span>
-      <span class="lb">MED23 pocket residues</span></div>`;
-  $('#saside').innerHTML=`<h3>The contact, at ${S.resolution_a} Å</h3>
-    <p class="sub">PDB ${S.pdb_id} · ${S.method} · drag to rotate</p>
+}
+
+/* Frame the whole thing whatever the panel aspect is, rather than a fixed
+   multiple of span that crops a wide panel or a small structure. */
+function frameCamera(cam,controls,cvs,span){
+  const r=cvs.parentElement.getBoundingClientRect();
+  const vFov=cam.fov*Math.PI/180;
+  const hFov=2*Math.atan(Math.tan(vFov/2)*(Math.max(r.width,1)/Math.max(r.height,1)));
+  const dist=span*1.3/Math.tan(Math.min(vFov,hFov)/2);
+  cam.position.set(dist*.45,dist*.28,dist*.85); controls.target.set(0,0,0);
+}
+
+/* An AlphaFold monomer, coloured by per-residue confidence. The ribbon is the
+   argument: the ordered core is where a pocket could exist, and everything
+   amber or clay is disordered chain that cannot hold one. */
+async function paintPredicted(P){
+  const {THREE,cam,controls,grp,size,cvs}=await glContext();
+  const T=P.trace;
+  const c0=T.reduce((a,p)=>[a[0]+p[1],a[1]+p[2],a[2]+p[3]],[0,0,0]).map(v=>v/T.length);
+  const V=p=>new THREE.Vector3(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2]);
+  const span=Math.max(...T.map(p=>Math.hypot(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2])));
+  const rad=span*.011;
+  renderStructure=()=>{
+    grp.clear();
+    let run=[], cur=null;
+    const flush=()=>{ if(run.length<2||!cur) return;
+      grp.add(new THREE.Mesh(
+        new THREE.TubeGeometry(new THREE.CatmullRomCurve3(run),
+          Math.max(12,run.length*2),rad,7,false),
+        new THREE.MeshStandardMaterial({color:new THREE.Color(css(cur)),
+          roughness:.58,metalness:.05}))); };
+    for(const p of T){
+      const b=bandOf(p[4])[1];
+      // seed the next run with the previous point so bands meet without a gap
+      if(b!==cur){ flush(); run=run.length?[run[run.length-1]]:[]; cur=b; }
+      run.push(V(p));
+    }
+    flush();
+  };
+  size();
+  frameCamera(cam,controls,cvs,span);
+  renderStructure();
+}
+
+const legendFor = S => `
+  <div class="row"><span class="sw" style="background:var(--ink-3)"></span>
+    <span class="lb">${S.chains[S.backbone_chain]} backbone</span></div>
+  <div class="row"><span class="sw" style="background:var(--fail)"></span>
+    <span class="lb">${S.peptide_label}</span></div>
+  <div class="row"><span class="sw" style="background:var(--control)"></span>
+    <span class="lb">${S.contact_label}</span></div>`;
+
+const solvedPanel = S => { const bc=S.backbone_chain, pc=S.peptide_chain;
+  return `<h3>The contact, at ${S.resolution_a} Å</h3>
+    <p class="sub">${S.gene}–${S.partner} · PDB ${S.pdb_id} · ${S.method} · drag to rotate</p>
     <div class="panel"><dl><dt>resolution</dt><dd>${S.resolution_a} Å</dd>
-      <dt>${S.chains.A} residues</dt><dd>${A.length}</dd>
-      <dt>motif residues</dt><dd>${B.length}</dd></dl></div>
-    <div class="cap">ELK1 MED23-binding motif</div>
-    <div class="panel" style="font-family:var(--mono);font-size:12px;line-height:1.5">
-      PSIHFWSTLS(p)P — residues 374–384 of the transactivation domain. F378 buries deepest.</div>
-    <div class="cap">MED23 residues lining the pocket</div>
-    <div class="resid">${S.pocket_residues.map(x=>`<span>${x}</span>`).join('')}</div>
-    <p class="note">The concave face at the HR2/HR3 interface. An eleven-residue motif in a defined
-      groove is the tractable case — a folded-domain interface presents no comparable site.
-      <b>A structure is not a binding claim.</b></p>
+      <dt>${S.chains[bc]}</dt><dd>${S.trace[bc].length} res</dd>
+      <dt>${S.chains[pc]}</dt><dd>${S.trace[pc].length} res</dd></dl></div>
+    ${S.sequence?`<div class="cap">Mapped motif</div>
+      <div class="panel" style="font-family:var(--mono);font-size:12px;line-height:1.5">
+        ${S.sequence} — ${S.sequence_note}</div>`:''}
+    <div class="cap">${S.contact_label}</div>
+    <div class="resid">${S.contact_residues.map(x=>`<span>${x}</span>`).join('')}</div>
+    <p class="note">${S.site_note} <b>A structure is not a binding claim.</b></p>
     <p class="note"><a href="${S.citation}" target="_blank" rel="noopener"
-      style="color:var(--control);font-family:var(--mono);font-size:11px">${S.citation}</a></p>`;
+      style="color:var(--control);font-family:var(--mono);font-size:11px">${S.citation}</a></p>`; };
+
+const legendPredicted = () => BANDS.map(([,v,lab])=>
+  `<div class="row"><span class="sw" style="background:var(${v})"></span>
+     <span class="lb">${lab}</span></div>`).join('');
+
+const predictedPanel = (P,c) => { const pct=Math.round(P.ordered_fraction*100);
+  return `<h3>Predicted monomer</h3>
+  <p class="sub">${c.gene} · AlphaFold DB ${P.uniprot} · v${P.model_version} · drag to rotate</p>
+  <div class="callout f"><b>Not a complex</b>${pairOf(c)} has no deposited structure. This is
+    ${c.gene} on its own, predicted. The interface with
+    ${c.partner||'any partner'} is not modelled here.</div>
+  <div class="panel"><dl>
+    <dt>residues</dt><dd>${P.length}</dd>
+    <dt>mean pLDDT</dt><dd>${P.mean_plddt}</dd>
+    <dt>ordered (pLDDT ≥ 70)</dt><dd>${pct}%</dd></dl></div>
+  ${c.region?`<div class="cap">Mapped interacting region</div>
+    <div class="panel" style="font-family:var(--mono);font-size:12px;line-height:1.5">
+      ${c.region}</div>`:''}
+  <p class="note">Only <b>${pct}%</b> of ${c.gene} is predicted at confidence ≥ 70. Transactivation
+    domains are largely disordered, which is why so few of these contacts have a solved complex and
+    why a folded pocket is rare. <b>A predicted model is a hypothesis, not a contact.</b></p>
+  <p class="note"><a href="${P.source_url}" target="_blank" rel="noopener"
+    style="color:var(--control);font-family:var(--mono);font-size:11px">${P.source_url}</a></p>`; };
+
+const missingPanel = c => `<h3>No experimental structure</h3>
+  <p class="sub">${pairOf(c)} · ${c.partner?'nothing deposited that resolves this pair'
+    :'no partner proposed, so there is no pair to resolve'}</p>
+  ${c.region_mapped
+    ? `<div class="callout" style="border-left-color:var(--pass)"><b>Mapped interacting region</b>
+       <span style="font-family:var(--mono);font-size:12px">${c.region}</span></div>`
+    : `<div class="callout f"><b>${c.partner?'No mapped interacting region':'No contact partner'}</b>
+       ${c.partner?`Contact is ${words(c.involvement)}; interface is ${words(c.tractability)}.`
+        :'No coactivator contact was retrieved for this TF at all.'}
+       Without a mapped region there is nothing to model.</div>`}
+  <div class="cap">What would produce one</div>
+  <div class="panel"><dl>
+    <dt>complex</dt><dd>boltz2-prediction</dd>
+    <dt>monomers</dt><dd>esmfold2-prediction</dd>
+    <dt>route</dt><dd>Proto on Modal</dd>
+    <dt>state</dt><dd>not run</dd></dl></div>
+  <p class="note">Not dispatched. A paid structural job needs a signed checkpoint and both
+    sequences on file. <b>A predicted complex is a hypothesis, not a contact.</b></p>`;
+
+showPair = async c => {
+  const view=$('#v-structure');
+  const S=structFor(c), P=S?null:predFor(c);   // a solved complex always wins
+  view.toggleAttribute('data-nostruct', !S && !P);
+  if(!S && !P){
+    painted=null; renderStructure=null; $('#leg').innerHTML='';
+    view.removeAttribute('data-loading');
+    $('#nostruct').innerHTML=`<div><span class="g">${pairOf(c)}</span>
+      ${c.partner?'no coordinates for this pair':'no contact partner to model'}</div>`;
+    $('#saside').innerHTML=missingPanel(c);
+    return;
+  }
+  $('#leg').innerHTML = S ? legendFor(S) : legendPredicted();
+  $('#saside').innerHTML = S ? solvedPanel(S) : predictedPanel(P,c);
+  // Selecting a row while another view is up must not build a WebGL context for a
+  // canvas nobody is looking at. Opening the tab calls back in.
+  if(!view.hasAttribute('data-on')){ painted=null; return; }
+  const key = S || P;
+  if(painted===key){ glc?.size(); return; }
+  painted=key;
+  view.setAttribute('data-loading','');
+  try { await (S ? paint(S) : paintPredicted(P)); }
+  finally { view.removeAttribute('data-loading'); }
+};
+
+function initStructure(){
+  if(!C.length){ $('#saside').innerHTML='<h3>Structure</h3><p class="sub">No candidates.</p>'; return; }
+  // Default to a solved pair that is not the calibration control: ELK1–MED23 is
+  // already published, so it is the least interesting thing to open on.
+  showPair(C[selIdx] ?? C.find(c=>structFor(c)&&!c.control) ?? C.find(structFor) ?? C[0]);
 }
 </script>
 </body>
