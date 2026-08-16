@@ -286,23 +286,17 @@ After activation, these commands are available:
 - Proto authoring skills: `.claude/skills` and `.agents/skills`
 - Claude project MCP configuration: `.mcp.json`
 
-## Authentication requiring a human
+## Authenticate
 
-These steps open a browser or require a personal/event credential and therefore
-cannot be completed unattended. Done on Amir's machine as of 2026-08-15:
+Each of these opens a browser or needs a personal credential, so each person
+does them once on their own machine:
 
-1. ~~`paperclip login`~~ — done
-2. ~~`modal setup`~~ — done (`amir-roknabadi`; `proto-tools deploy --apps boltz2
-   --test` passes 2/2 smoke tests on an H100)
-3. ~~Visit <https://biohub.ai>, create a personal API key, and put it in
-   `.env`~~ — done
+1. `paperclip login`
+2. `modal setup` — then `proto-tools deploy --apps boltz2 --test` to confirm GPU
+   access
+3. Create an API key at <https://biohub.ai> and put it in `.env`
+4. Sign in at <https://hackathon.bnchdev.org>
+5. Start `claude` here, run `/mcp`, and authenticate the Paperclip server
 
-Still open:
-
-4. Visit <https://hackathon.bnchdev.org> and sign in with Google
-5. Start `claude` in this directory, run `/mcp`, and authenticate the Paperclip
-   server
-
-Each collaborator does 1–3 on their own machine with their own credentials.
-
-Never paste keys into source files or commit `.env`.
+Never paste keys into source files or commit `.env`. Who has done what is in
+[`team/status/`](team/README.md), not here.
