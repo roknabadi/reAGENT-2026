@@ -13,9 +13,10 @@ covered by the end-to-end run.
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from reagent_workflow.literature import (AXES, CandidateEvidence, Paper, _parse,
-                                         gather, search)
+                                         gather, mentions, search)
 
 CURRENT = (
     "Found 2 papers  [s_abc]\n\n"
@@ -165,3 +166,65 @@ class OnTargetRelevanceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeneSymbolsAsPapersWriteThem(unittest.TestCase):
+    """Retrieval is worthless if the filter throws away the right paper.
+
+    The cryo-EM structure that maps the ELK1 region on MED23 is titled with
+    "Elk-1". Matching the HGNC symbol exactly discarded it, so the pipeline
+    retrieved the one paper it most needed and then dropped it before reading.
+    """
+
+    @staticmethod
+    def paper(title, abstract=""):
+        return SimpleNamespace(title=title, abstract=abstract)
+
+    def test_a_hyphenated_symbol_still_names_the_gene(self):
+        self.assertTrue(mentions(self.paper(
+            "Structural basis of human Mediator recruitment by the "
+            "phosphorylated transcription factor Elk-1"), "ELK1"))
+
+    def test_a_spaced_symbol_still_names_the_gene(self):
+        self.assertTrue(mentions(self.paper("Elk 1 phosphorylation at Ser383"),
+                                 "ELK1"))
+
+    def test_a_longer_symbol_is_still_a_different_gene(self):
+        # The reason the match was strict in the first place, kept intact.
+        self.assertFalse(mentions(self.paper("ELK1L is a different protein"), "ELK1"))
+        self.assertFalse(mentions(self.paper("TP53BP1 binds chromatin"), "TP53"))
+
+    def test_a_paper_about_the_partner_alone_is_not_on_target(self):
+        self.assertFalse(mentions(self.paper("Crystal structure of MED23"), "ELK1"))
+
+
+class TheModelReadsTheAbstractNotTheGist(unittest.TestCase):
+    """`paperclip search` summarises; the residues do not survive summarising."""
+
+    def test_a_record_abstract_replaces_the_search_summary(self):
+        from unittest import mock
+
+        from reagent_workflow import literature as L
+        real = ("Elk-1 binds to MED23 via a hydrophobic sequence PSIHFWSTLS "
+                "containing one phosphorylated residue (S383).")
+        with mock.patch.object(L, "search",
+                               return_value=([Paper(title="Elk-1 and MED23",
+                                                    accession="PMC1",
+                                                    abstract="A structure reveals binding.")], "")), \
+             mock.patch.object(L, "full_abstract", return_value=real):
+            _, papers, _ = L.gather("ELK1", "", "MED23",
+                                    axes={"structure": "{gene} {partner}"})
+        self.assertEqual(papers[0].abstract, real)
+
+    def test_an_unavailable_record_leaves_the_summary_alone(self):
+        from unittest import mock
+
+        from reagent_workflow import literature as L
+        with mock.patch.object(L, "search",
+                               return_value=([Paper(title="Elk-1 and MED23",
+                                                    accession="PMC1",
+                                                    abstract="A structure reveals binding.")], "")), \
+             mock.patch.object(L, "full_abstract", return_value=""):
+            _, papers, _ = L.gather("ELK1", "", "MED23",
+                                    axes={"structure": "{gene} {partner}"})
+        self.assertEqual(papers[0].abstract, "A structure reveals binding.")

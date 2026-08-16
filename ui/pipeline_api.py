@@ -528,7 +528,11 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
                    "detail": f"{len(axes)} interface axes for {', '.join(named)}"})
     total_on, hits, errors, read = 0, 0, [], {}
     for gene in named[:2]:          # two is enough to keep a demo interactive
-        ev, papers, errs = gather(gene, "", cfg.partner_gene, axes=axes, per_axis=4)
+        # Eight per axis, not four. One subprocess runs per axis either way, so
+        # the extra results are nearly free — and the abstract that names the
+        # residues is routinely not in the top four. Retrieval was the binding
+        # constraint on whether anything could be mapped at all.
+        ev, papers, errs = gather(gene, "", cfg.partner_gene, axes=axes, per_axis=8)
         errors.extend(errs)
         for p in papers:
             emit("paper", {"title": p.title, "id": p.accession, "url": p.url,
@@ -1139,7 +1143,7 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         total_on, total_axes, hits, leads, errors = 0, 0, 0, [], []
         read: dict[str, dict] = {}
         for v in top:
-            ev, papers, errs = gather(v.gene, m.context, cfg.partner_gene, per_axis=4)
+            ev, papers, errs = gather(v.gene, m.context, cfg.partner_gene, per_axis=8)
             errors.extend(errs)
             for p in papers:
                 emit("paper", {"title": p.title, "id": p.accession, "url": p.url,

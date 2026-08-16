@@ -246,9 +246,13 @@ def read_evidence(trace: AgentTrace, gene: str, papers: list) -> tuple[dict, obj
     if not papers:
         return {"contact_documented": False, "support": "none",
                 "note": "no on-target papers were retrieved for this gene"}, None
+    # Twelve abstracts, not eight, and more of each. The region this is being
+    # asked for is usually a clause deep in an abstract -- "residues 374-384 of
+    # the transactivation domain" -- and truncating at 700 characters cut the
+    # sentence that carries it about as often as it kept it.
     body = "\n\n".join(
-        f"[{i + 1}] {p.title}\n{(p.abstract or '')[:700]}"
-        for i, p in enumerate(papers[:8]))
+        f"[{i + 1}] {p.title}\n{(p.abstract or '')[:1400]}"
+        for i, p in enumerate(papers[:12]))
     prompt = (f"Transcription factor: {gene}\n\nAbstracts:\n{body}\n\n"
               f"Do these document a physical contact between {gene} and a "
               "coactivator or Mediator subunit? JSON only.")

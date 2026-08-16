@@ -20,6 +20,7 @@ be mistaken for something a human verified at source.
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -128,11 +129,20 @@ def mentions(paper: "Paper", gene: str) -> bool:
 
     Substring matching would let TP53 match TP53BP1 and ELK1 match ELK1L, so the
     match is bounded by non-alphanumerics on both sides.
+
+    Papers do not write gene symbols the way HGNC does. The cryo-EM structure of
+    the ELK1–MED23 interface — the one paper that maps the region this whole
+    pipeline is built around — is titled "...the phosphorylated transcription
+    factor Elk-1", and an exact match for ELK1 threw it away, along with C/EBPβ
+    for CEBPB and NF-κB for NFKB1. So a single separator inside the symbol is
+    allowed: ELK1 matches Elk-1 and Elk 1, and still does not match ELK1L.
     """
     g = (gene or "").strip()
     if len(g) < 2:
         return False
-    return re.search(rf"(?<![A-Za-z0-9]){re.escape(g)}(?![A-Za-z0-9])",
+    # A letter/digit boundary is allowed to carry one hyphen, en dash or space.
+    loose = "[-\u2010-\u2015 ]?".join(re.escape(c) for c in g)
+    return re.search(rf"(?<![A-Za-z0-9]){loose}(?![A-Za-z0-9])",
                      f"{paper.title} {paper.abstract}", re.I) is not None
 
 
@@ -160,6 +170,35 @@ def _parse(stdout: str, axis: str, query: str) -> list[Paper]:
     if cur:
         papers.append(cur)
     return [p for p in papers if p.title]
+
+
+def full_abstract(accession: str, timeout: int = 20,
+                  exe: str | None = None) -> str:
+    """The paper's own abstract, from its record, or "" if unavailable.
+
+    `paperclip search` returns a written summary of each paper rather than the
+    abstract itself — two sentences of gist, from which the residues are always
+    the first thing gone. The Elk-1/MED23 structure reads "a cryo-EM structure
+    reveals how phosphorylated Elk-1 binds MED23" in the search output and
+    "Elk-1 binds to MED23 via a hydrophobic sequence PSIHFWSTLS P P containing
+    one phosphorylated residue (S383 p)" in its record. Everything downstream
+    that asks where two proteins touch was reading the first one.
+
+    Cheap: a local record read, tens of milliseconds, no network round trip.
+    """
+    if not accession:
+        return ""
+    exe = exe or shutil.which("paperclip")
+    if not exe:
+        return ""
+    try:
+        out = subprocess.run([exe, "cat", f"/papers/{accession}/meta.json"],
+                             capture_output=True, text=True, timeout=timeout)
+        if out.returncode != 0:
+            return ""
+        return (json.loads(out.stdout).get("abstract") or "").strip()
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        return ""
 
 
 def search(query: str, axis: str = "", n: int = 4, timeout: int = 120,
@@ -208,6 +247,12 @@ def gather(gene: str, context: str, partner: str = "MED23", *,
                 on_axis(axis, 0, err)
             continue
         on_target = [p for p in papers if mentions(p, gene)]
+        # Only for the ones that survive the gene filter: this is what the
+        # model reads, and a summary is not what it was asked to read.
+        for p in on_target:
+            better = full_abstract(p.accession)
+            if len(better) > len(p.abstract):
+                p.abstract = better
         tally: dict[str, int] = {}
         for p in on_target:
             tally[p.suggested_support] = tally.get(p.suggested_support, 0) + 1

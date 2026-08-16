@@ -1260,6 +1260,10 @@ function run(q, predict){
   });
   live.addEventListener('candidates', e => {         // the table is this run's too
     C = JSON.parse(e.data).rows; clearSeededStructures(); renderCandidates();
+    // A run can legitimately shortlist nobody. The receptor is still there, and
+    // leaving the last run's protein on screen — or an empty frame — is worse
+    // than drawing the thing every question here is asked against.
+    if(!C.length) initStructure();
     setReady('candidates', C.length > 0,
              C.length ? '' : 'no candidate cleared the gates in this context');
   });
@@ -2398,7 +2402,16 @@ showPair = async c => {
 };
 
 function initStructure(){
-  if(!C.length){ $('#saside').innerHTML='<h3>Structure</h3><p class="sub">No candidates.</p>'; return; }
+  // MED23 is the platform, not a result: it is the receptor every question in
+  // this project is asked against, and it exists whether or not a run produced
+  // a candidate. A run that abstains at the gate used to leave this view empty,
+  // which reads as a broken page rather than as an honest refusal — the
+  // refusal is in the pipeline stages, and the receptor is still the receptor.
+  if(!C.length){
+    if(MED23){ showPair({gene:'', partner:'MED23', concerns:[], control:false}); return; }
+    $('#saside').innerHTML='<h3>Structure</h3><p class="sub">No candidates.</p>';
+    return;
+  }
   // Default to a solved pair that is not the calibration control: ELK1–MED23 is
   // already published, so it is the least interesting thing to open on.
   showPair(C[selIdx] ?? C.find(c=>structFor(c)&&!c.control) ?? C.find(structFor) ?? C[0]);
