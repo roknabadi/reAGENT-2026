@@ -86,12 +86,15 @@ def main() -> int:
         print("\n--dry-run: nothing dispatched")
         return 0
 
-    from proto_tools.tools.structure_prediction.boltz2.boltz2 import run_boltz2
+    # dispatch_to_modal, not run_boltz2: the local path builds a CUDA env that
+    # has no macOS-ARM wheels, and this is GPU work regardless. The app is
+    # deployed by `proto-tools deploy --apps boltz2`.
+    from proto_tools.modal import dispatch_to_modal
     OUT.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     print("\ndispatching to Modal ...")
     try:
-        result = run_boltz2(inp, cfg)
+        result = dispatch_to_modal("boltz2-prediction", inp, cfg)
     except Exception as e:
         print(f"\nFAILED after {time.time()-t0:.0f}s: {type(e).__name__}: {e}")
         return 1
@@ -99,8 +102,25 @@ def main() -> int:
     print(f"returned in {dt:.0f}s ({dt/max(a.samples,1):.0f}s per sample)")
 
     payload = result.model_dump(mode="json")
-    (OUT / f"boltz_{a.samples}x.json").write_text(json.dumps(payload, indent=2)[:20_000_000])
-    print(f"wrote {OUT / f'boltz_{a.samples}x.json'}")
+
+    # Write structures separately. Truncating one giant JSON corrupts it, and a
+    # corrupt artifact is worse than a large one.
+    structs = payload.get("structures") or []
+    for i, st in enumerate(structs):
+        for field in ("structure", "cif", "pdb", "content"):
+            blob = st.get(field)
+            if isinstance(blob, str) and len(blob) > 2000:
+                path = OUT / f"sample_{i}.cif"
+                path.write_text(blob)
+                st[field] = f"<written to {path.name}>"
+                break
+        pae = st.get("pae")
+        if pae is not None:
+            (OUT / f"sample_{i}_pae.json").write_text(json.dumps(pae))
+            st["pae"] = f"<written to sample_{i}_pae.json>"
+    out_path = OUT / f"boltz_{a.samples}x.json"
+    out_path.write_text(json.dumps(payload, indent=2))
+    print(f"wrote {out_path} plus {len(structs)} structure file(s)")
 
     # Surface the interface-specific numbers, not the global ones (spec section 8).
     for key in ("iptm", "pair_chains_iptm", "protein_iptm", "complex_plddt",
