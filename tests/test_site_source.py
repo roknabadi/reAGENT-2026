@@ -91,6 +91,16 @@ class SourceTests(unittest.TestCase):
             self.assertTrue(entry.get("source"), f"{gene} has no citation")
             self.assertTrue(entry.get("partner"), f"{gene} names no partner")
             self.assertTrue(entry.get("residues"), f"{gene} has no residues")
+            self.assertTrue(entry.get("uniprot"), f"{gene} has no accession")
+
+    def test_the_med23_accession_is_med23_and_not_its_neighbour(self):
+        """O75448 is MED24 -- same Mediator tail module, adjacent subunit,
+        plausible length -- and it sat in a calibration constant labelled MED23
+        long enough to send a GPU control run at the wrong protein. A gene
+        symbol does not identify a protein; the accession does."""
+        entry = CURATED_POCKETS["MED23"]
+        self.assertEqual(entry["uniprot"], "Q9ULK4")
+        self.assertNotEqual(entry["uniprot"], "O75448")
 
 
 @unittest.skipUnless(RECEPTOR.exists(), "9F76.cif not present")

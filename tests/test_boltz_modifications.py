@@ -8,6 +8,12 @@ residue from the experimental coordinates. So the failure has two candidate
 explanations that a single number cannot separate — Boltz cannot model this
 interface, or Boltz was never told about the phosphate.
 
+That run has since been withdrawn for an unrelated reason: the partner
+accession was O75448, which is MED24 rather than MED23, so it modelled the
+wrong protein and scored the result against MED23 numbering. The finding below
+survives that withdrawal and applies to any corrected re-run, because it is
+about what the input format can express rather than what was put in it.
+
 The answer turns out to be that the phosphate cannot be supplied at all, and
 the way it cannot is the dangerous kind:
 

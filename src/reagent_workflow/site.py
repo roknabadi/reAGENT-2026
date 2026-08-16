@@ -37,11 +37,18 @@ from .interface import Atom
 # A curated entry is the ONLY alternative to a computed consensus, and it
 # carries its citation so a site can always be traced to either an ensemble
 # this run produced or a structure someone deposited.
+# The accession is pinned alongside the gene symbol deliberately. A calibration
+# constant in this project read O75448 for MED23 for a week; O75448 is MED24, an
+# adjacent subunit of the same Mediator tail module of plausible length, and an
+# entire GPU control run modelled the wrong protein while scoring against MED23
+# residue numbering. A symbol on its own does not identify a protein.
 CURATED_POCKETS: dict[str, dict] = {
     "MED23": {
         "residues": [339, 343, 379, 382, 383, 533, 537],
         "partner": "ELK1",
+        "uniprot": "Q9ULK4",          # MED23, 1368 aa. NOT O75448, which is MED24.
         "source": "Monté et al. 2025, PDB 9F6Y (cryo-EM, 3.0 A)",
+        "free_receptor_pdb": "9F76",  # MED23 without the TF bound
         "note": ("MED23 cavity contacting the phosphorylated ELK1 "
                  "transactivation domain. Calibration only: it is where ELK1 "
                  "binds, not a site established for any other TF."),

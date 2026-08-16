@@ -5,12 +5,14 @@
     python scripts/pou2f3_control.py --dispatch       # + 5 Boltz samples on H100
 
 Why a second control, when ELK1-MED23 already exists: that one cannot currently
-be scored. Its interaction is phosphorylation-dependent, and pSer383 cannot be
-supplied through Proto — `Chain.modifications` is accepted, validated, and then
-dropped by `complex_to_yaml` before the request leaves for Modal (see
-tests/test_boltz_modifications.py). So ELK1's ipTM 0.31 is confounded: it is
-not evidence about Boltz, and tuning anything on the strength of it would be
-fitting to an artefact.
+be scored, for two independent reasons. Its partner accession was O75448, which
+is MED24 rather than MED23, so the run modelled an adjacent Mediator subunit and
+scored it against MED23 numbering; that result is withdrawn. And even corrected,
+the interaction is phosphorylation-dependent and pSer383 cannot be supplied
+through Proto — `Chain.modifications` is accepted, validated, and then dropped
+by `complex_to_yaml` before the request leaves for Modal (see
+tests/test_boltz_modifications.py). Tuning anything on the strength of that
+number would be fitting to an artefact.
 
 This complex has none of that problem, and differs from ELK1-MED23 on every
 axis that matters:
@@ -146,22 +148,29 @@ def build_msas(pou2f3: str, pou2af2: str, workdir: pathlib.Path):
     from proto_tools.tools.structure_prediction.shared_data_models import ComplexMSAs
 
     workdir.mkdir(parents=True, exist_ok=True)
-    res = run_remote_msa_search([pou2f3, pou2af2], workdir / "pou2f3",
-                                use_pairing=True, timeout=1800)
-    a3m = next(pathlib.Path(res).glob("*.a3m"))
-    rows = _read_a3m(a3m)
 
-    per_chain, counts = {}, {}
-    for idx, query in ((0, pou2f3), (1, pou2af2)):
-        hits = [(i, s) for i, s in rows if len(s) == len(query)]
-        if not hits:
-            raise RuntimeError(f"no alignment rows of length {len(query)} in {a3m}")
-        # Query first: `extract_msa_sequences` and Boltz both treat row 0 as the
-        # sequence being predicted.
-        ordered = sorted(hits, key=lambda kv: kv[1] != query)
-        per_chain[idx] = MSA(aligned_sequences=[s for _, s in ordered],
-                             sequence_ids=[i for i, _ in ordered])
-        counts[idx] = len(ordered)
+    # One search per chain, rather than one paired search for both.
+    #
+    # `use_pairing=True` returns a single a3m containing only rows that found a
+    # partner in the other chain, and the query rows themselves are not among
+    # them -- POU2AF2's nearest row differs from the query at two positions.
+    # Splitting that file by alignment length then hands Boltz an MSA headed by
+    # some other protein, which it correctly refuses. A per-chain search puts
+    # the query at row 0 by construction, which is what Boltz checks.
+    per_chain, counts, sources = {}, {}, []
+    for idx, (query, name) in enumerate(((pou2f3, "pou2f3"), (pou2af2, "pou2af2"))):
+        res = run_remote_msa_search([query], workdir / name, timeout=1800)
+        a3m = next(pathlib.Path(res).glob("*.a3m"))
+        sources.append(str(a3m))
+        rows = _read_a3m(a3m)
+        width = len(rows[0][1])
+        block = [(i, s) for i, s in rows if len(s) == width]
+        if block[0][1].replace("-", "") != query:
+            raise RuntimeError(f"{a3m} does not start with the {name} query row")
+        per_chain[idx] = MSA(aligned_sequences=[s for _, s in block],
+                             sequence_ids=[i for i, _ in block])
+        counts[idx] = len(block)
+    a3m = "; ".join(sources)
 
     # `paired=False`. A paired MSA asserts that row i of chain A and row i of
     # chain B come from the same organism, which is a real signal about whether
