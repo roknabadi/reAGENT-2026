@@ -19,6 +19,34 @@ from computational results.
 
 ---
 
+## 2026-08-16 — Committing straight to `main`, per explicit per-request ask, recorded so the rule and the practice stop silently disagreeing
+Decided by: Vraj
+Why: `CLAUDE.md` says "Work on a branch. Never commit or push to `main` unless
+explicitly asked in that request." The eight most recent commits on `main`
+(`1f6cf7a` through `a20ddf5`, 2026-08-15 to 2026-08-16, all authored by vraj
+<vrajpatel00222@gmail.com>, no merge commits interleaved — confirmed via
+`git log --format`) went straight to `main`. That is the rule's own stated
+exception, invoked eight times running, not a violation of it — but nothing
+recorded that the exception had fired repeatedly, so reading `git log` against
+`CLAUDE.md` alone looks like a broken rule rather than a rule correctly
+applied. Three pressures made per-request direct commits the right call
+instead of branch-and-PR discipline for this stretch of work: a demo
+deadline, one operator working solo on this half of the pipeline (no second
+reviewer a branch would protect against), and the user re-confirming the
+exception per request rather than it being a standing grant.
+Alternatives rejected: (a) branch-and-PR for every commit regardless of who
+asked — the team's own workflow already uses PRs for shared/reviewed work
+(see `Merge pull request #16/#17/#18` immediately before this run in
+`git log`); adding that ceremony to one operator's own request-by-request
+work in the demo's final stretch would not have caught anything a review
+would, since there was no second reviewer in the loop, and would have slowed
+the one thing the deadline was pressuring; (b) leaving the rule as stated and
+the practice unrecorded — that is exactly the silent disagreement this entry
+exists to close.
+Reversible: yes — go back to branch + PR for solo work too, or stop asking
+per-commit and grant a standing exception instead. Either only changes
+practice going forward; it does not change what already happened on `main`.
+
 ## 2026-08-15 — An accession must be verified to name the right protein, not just to resolve
 Decided by: Amir
 Scope: every place the pipeline turns a gene name into a sequence. Supersedes
