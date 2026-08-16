@@ -535,15 +535,22 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
 /* Cursor inspector. Fixed in the corner rather than following the pointer: a
    tooltip that moves is a tooltip you read while chasing it, and on a 1,258
    residue protein the cursor is somewhere different every few pixels. */
-.inspect{position:absolute;right:16px;top:16px;z-index:4;width:262px;
-  background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line);
-  border-radius:12px;padding:12px 13px;font-size:11.5px;line-height:1.5;
-  pointer-events:none}
-.inspect .who{font-family:var(--mono);font-size:13px;color:var(--ink);
-  letter-spacing:-.01em}
+.inspect{position:absolute;right:16px;top:16px;z-index:4;width:340px;
+  background:color-mix(in srgb,var(--card) 55%,transparent);
+  backdrop-filter:blur(22px) saturate(1.5);
+  -webkit-backdrop-filter:blur(22px) saturate(1.5);
+  border:1px solid color-mix(in srgb,var(--line-2) 70%,transparent);
+  border-radius:14px;padding:14px 15px;font-size:11.5px;line-height:1.5;
+  box-shadow:0 12px 40px rgba(0,0,0,.32);pointer-events:none}
+.inspect .who{font-family:var(--mono);font-size:14px;color:var(--ink);
+  letter-spacing:-.01em;text-transform:none}
 .inspect .sub{color:var(--ink-3);margin-top:2px;font-size:11px}
-.inspect dl{margin:9px 0 0;display:grid;grid-template-columns:66px minmax(0,1fr);
-  gap:4px 10px;font-size:11px}
+.inspect dl{margin:10px 0 0;display:grid;grid-template-columns:80px minmax(0,1fr);
+  gap:5px 10px;font-size:11px}
+.inspect .smi{font-family:var(--mono);font-size:9.5px;color:var(--ink-3);
+  margin-top:8px;overflow-wrap:anywhere;line-height:1.35}
+.inspect .props{display:flex;flex-wrap:wrap;gap:2px 9px;margin-top:7px}
+.inspect .novel{color:var(--pass);font-weight:500}
 .inspect dt{color:var(--ink-3);font-family:var(--mono);font-size:10.5px}
 .inspect dd{margin:0;color:var(--ink-2);overflow-wrap:anywhere}
 .inspect .tag{display:inline-flex;align-items:center;gap:6px;margin-top:9px;
@@ -1981,7 +1988,10 @@ function predictBlock(M, c, hl){
    it touches, and the SMILES the screen was actually run on. Selecting a chip
    is what puts that compound in the pocket, so the strip and the viewer never
    disagree about which one is being looked at. */
-let dockFolded = localStorage.dsDock === 'fold';
+// Folded by default: the strip is a selector, and the detail belongs to the
+// compound you are pointing at rather than to the panel. Unfolding is one click
+// and the choice is remembered.
+let dockFolded = localStorage.dsDock !== 'open';
 
 function ligandDock(hl){
   const el = $('#ligdock'), ligs = ligandsOf(hl);
@@ -2381,34 +2391,75 @@ function inspectAtom(atom, M, layers, SS, shown){
   const box=$('#inspect'); if(!box || !atom) return;
   const isLigand = atom.resn === 'UNL' || atom.resn === 'LIG' || !atom.resi;
   if(isLigand && shown){
+    const d = shown.descriptors || {};
+    const designed = shown.provenance === 'designed';
     box.innerHTML = `<div class="who">${shown.name}</div>
-      <div class="sub">docked pose · computed</div>
+      <div class="sub">${designed ? 'designed for this site' : 'docked pose'} ·
+        computed this run</div>
       <dl>
         <dt>atom</dt><dd>${atom.elem || atom.atom || '—'}</dd>
-        <dt>score</dt><dd>${shown.score.toFixed(2)} kcal/mol</dd>
+        <dt>vina score</dt><dd>${shown.score.toFixed(2)} kcal/mol</dd>
         <dt>contacts</dt><dd>${shown.residues?.length
             ? shown.residues.join(', ') : 'none in the cavity'}</dd>
-        ${shown.identity?.status ? `<dt>identity</dt><dd>${shown.identity.status
-            .replace(/_/g,' ')}</dd>` : ''}
+        ${shown.closest!=null ? `<dt>closest</dt><dd>${shown.closest} Å from the
+            site${shown.offset!=null ? ` · ${shown.offset} Å off box centre` : ''}</dd>` : ''}
+        ${shown.inside_box!=null ? `<dt>in the box</dt><dd>${
+            shown.inside_box ? 'yes' : 'no — pose sits outside the search volume'}</dd>` : ''}
+        ${shown.identity?.status ? `<dt>${designed ? 'novelty' : 'identity'}</dt><dd${
+            designed && shown.identity.status==='not_in_pubchem' ? ' class="novel"' : ''}>${
+            designed
+              ? (shown.identity.status==='not_in_pubchem'
+                   ? 'novel — PubChem has no record of this structure'
+                   : shown.identity.status==='verified'
+                     ? `already known · PubChem CID ${shown.identity.cid}`
+                     : shown.identity.status.replace(/_/g,' '))
+              : shown.identity.status.replace(/_/g,' ')}</dd>` : ''}
+        ${shown.rationale ? `<dt>drawn for</dt><dd>${shown.rationale}</dd>` : ''}
       </dl>
+      ${d.mw ? `<div class="props">${[['MW',d.mw],['cLogP',d.clogp],
+          ['TPSA',d.tpsa+' Å²'],['HBD',d.hbd],['HBA',d.hba],['rot',d.rotatable_bonds],
+          ['heavy',d.heavy_atoms]].map(([k,v])=>`<span><i>${k}</i>${v}</span>`).join('')}</div>` : ''}
+      ${shown.smiles ? `<div class="smi">${shown.smiles}</div>` : ''}
       <div class="tag"><i style="background:var(--pass)"></i>Vina ranks poses,
         it does not measure binding</div>`;
     return;
   }
   const hits = layers.filter(l => l.set.has(atom.resi));
   const label = (M.pocket?.labels || []).find(l => l.slice(1) === String(atom.resi));
+  // Most of this protein is grey backbone, and pointing at it used to return
+  // three fields and "not in any highlighted set". A residue is still a residue:
+  // what it is, where it sits in the chain and the resolved range, what the
+  // structure says about its local order, and how far it is from the site the
+  // run is about. That last one is what makes the grey informative — it answers
+  // "am I anywhere near the thing you are claiming?".
+  const near = (M.pocket?.residues || []).length
+    ? Math.min(...M.pocket.residues.map(r => Math.abs(r - (atom.resi ?? 0))))
+    : null;
+  const region = (M.regions || []).find(r => atom.resi >= r.start && atom.resi <= r.end);
+  const rng = M.residue_range || [];
   box.innerHTML = `<div class="who">${atom.resn || '—'} ${atom.resi ?? ''}</div>
     <div class="sub">chain ${atom.chain || '—'}${
-      SS[atom.ss] ? ` · ${SS[atom.ss]} (assigned)` : ''}</div>
+      SS[atom.ss] ? ` · ${SS[atom.ss]} (assigned)` : ''} · ${M.gene} ${M.pdb_id}</div>
     <dl>
       <dt>atom</dt><dd>${atom.atom || '—'} · ${atom.elem || '—'}</dd>
-      ${label ? `<dt>one-letter</dt><dd>${label}</dd>` : ''}
-      <dt>b-factor</dt><dd>${atom.b != null ? atom.b.toFixed(1) : '—'}</dd>
+      ${label ? `<dt>residue</dt><dd>${label}${atom.resi ?? ''}</dd>` : ''}
+      ${rng.length ? `<dt>position</dt><dd>${atom.resi} of ${rng[0]}–${rng[1]}
+          resolved <span class="muted">(${M.residues_total} in the full chain)</span></dd>` : ''}
+      ${region ? `<dt>region</dt><dd>${region.label} ${region.start}–${region.end}</dd>` : ''}
+      <dt>b-factor</dt><dd>${atom.b != null ? atom.b.toFixed(1) : '—'}
+        <span class="muted">${atom.b != null
+          ? (atom.b > 80 ? '· poorly ordered here' : atom.b > 40 ? '· moderately ordered'
+             : '· well ordered') : ''}</span></dd>
+      ${near != null ? `<dt>site</dt><dd>${near === 0
+          ? 'lines the cavity this run screened'
+          : `${near} residue${near===1?'':'s'} from the nearest cavity residue`}</dd>` : ''}
     </dl>
     ${hits.length
       ? hits.map(h => `<div class="tag"><i style="background:var(${h.colour})"></i>${
           h.label} · ${h.state}</div>`).join('')
-      : '<div class="rest">Not in any highlighted set.</div>'}`;
+      : `<div class="rest">Backbone. Nothing is claimed about this residue — it is
+         not in the cavity, not a predicted contact, and not touched by the
+         compound on screen.</div>`}`;
 }
 
 function hideMol(){
