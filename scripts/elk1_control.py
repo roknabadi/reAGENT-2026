@@ -108,8 +108,36 @@ def main() -> int:
     print(f"returned in {dt:.0f}s ({dt/max(a.samples,1):.0f}s per sample)")
 
     payload = result.model_dump(mode="json")
-    (OUT / f"boltz_{a.samples}x.json").write_text(json.dumps(payload, indent=2)[:20_000_000])
-    print(f"wrote {OUT / f'boltz_{a.samples}x.json'}")
+
+    # Each predicted structure goes out as its own .cif, and the metrics as a
+    # small JSON beside them. Writing one combined blob and slicing it to 20MB
+    # produced a file truncated mid-token: unparseable, and the metrics — which
+    # sit after the mmCIF text — were the part that got cut. `parse_mmcif` in
+    # interface.py wants paths anyway, so this is also the shape the consensus
+    # module consumes.
+    structures = payload.get("structures") or []
+    cif_paths = []
+    for i, s in enumerate(structures):
+        text = s.get("structure") if isinstance(s, dict) else None
+        if not text:
+            continue
+        p = OUT / f"sample_{i}.cif"
+        p.write_text(text)
+        cif_paths.append(p)
+        print(f"wrote {p}  ({len(text):,} chars)")
+
+    def strip_structures(obj):
+        """Metrics only — the coordinates already went to the .cif files."""
+        if isinstance(obj, dict):
+            return {k: strip_structures(v) for k, v in obj.items()
+                    if k != "structure"}
+        if isinstance(obj, list):
+            return [strip_structures(v) for v in obj]
+        return obj
+
+    metrics_path = OUT / f"metrics_{a.samples}x.json"
+    metrics_path.write_text(json.dumps(strip_structures(payload), indent=2))
+    print(f"wrote {metrics_path}")
 
     # Surface the interface-specific numbers, not the global ones (spec section 8).
     for key in ("iptm", "pair_chains_iptm", "protein_iptm", "complex_plddt",
