@@ -1103,6 +1103,18 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
     top = V.shortlist(verdicts, top_n)
     flagged = [v for v in verdicts if v.dependency_flag]
     routes: dict[str, int] = {}
+    # A question can name a disease and a gene at once, and this path used to
+    # answer only the first: "in osteosarcoma, does RUNX2 touch MED23" ranked
+    # 1538 TFs, shortlisted nobody, and never looked at RUNX2 — the one gene the
+    # reader asked about by name. Named genes now ride along, marked as exactly
+    # what they are. Nothing about the dependency gate moves: they are not
+    # shortlisted, they do not pass, and the screen's own evidence gate is
+    # untouched, so a named gene still cannot be docked into without a mapped
+    # region or a converged ensemble.
+    asked = [g for g in _named_genes(question, tf_path, cfg.partner_gene)
+             if g not in {v.gene for v in top}]
+    by_gene = {v.gene: v for v in verdicts}
+    downstream = [v.gene for v in top] + asked
     for v in flagged:
         routes[v.route] = routes.get(v.route, 0) + 1
     near = [v for v in flagged if not v.significant]
@@ -1115,7 +1127,12 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         "note": ("; ".join(f"{n} via {r}" for r, n in sorted(routes.items()))
                  + (f". {len(near)} more pass the gate but miss FDR: "
                     + ", ".join(f"{v.gene} q={v.qvalue:.2f}" for v in near[:4])
-                    if near else ""))})
+                    if near else "")
+                 + (f". Also following {', '.join(asked)}, named in the question "
+                    f"and not shortlisted: the gate in {m.context} does not pass "
+                    f"{'them' if len(asked) > 1 else 'it'}, and the evidence "
+                    "gates below decide what may be done with "
+                    f"{'them' if len(asked) > 1 else 'it'}." if asked else ""))})
 
     emit("candidates", {"rows": [
         {"gene": v.gene, "context": v.context, "level": v.context_level,
@@ -1134,10 +1151,34 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
          "involvement": "unknown", "region": None, "region_mapped": False,
          "tractability": "unknown", "control": False, "concerns": [],
          "ready": False, "blocked_because": None, "claims": []}
-        for v in top]})
+        for v in top] + [
+        # The same numbers, from the same scan — this gene was measured like
+        # every other one, it simply did not pass. Showing the measurement next
+        # to the refusal is the honest form of "you asked about this one".
+        {"gene": g, "context": (vv.context if (vv := by_gene.get(g)) else m.context),
+         "level": vv.context_level if vv else m.level,
+         "n": vv.n_target if vv else None,
+         "median": round(vv.median_target, 3) if vv else None,
+         "sel": round(vv.median_other - vv.median_target, 3) if vv else None,
+         "tfrac": round(vv.target_dependent_fraction, 3) if vv else None,
+         "ofrac": round(vv.other_dependent_fraction, 3) if vv else None,
+         "q": vv.qvalue if vv else None,
+         "route": vv.route if vv else "none",
+         "gate_pass": False, "gate_why": [], "awaiting": vv is None,
+         "shortlisted": False,
+         "partner": cfg.partner_gene, "partner_is_query": True,
+         "involvement": "unknown", "region": None, "region_mapped": False,
+         "tractability": "unknown", "control": False, "concerns": [],
+         "ready": False,
+         "blocked_because": (f"named in the question, not shortlisted: it does "
+                             f"not clear the dependency gate in {m.context}"
+                             if vv else
+                             "named in the question; not measured in this context"),
+         "claims": []}
+        for g in asked]})
 
     # ── literature: six axes per candidate, on-target only ─────────────────
-    if not top:
+    if not downstream:
         emit("stage", {"id": "literature", "state": "abstained",
                        "detail": "no candidate survived the gate to search evidence for",
                        "note": "Retrieval follows the gate; searching all "
@@ -1145,16 +1186,17 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
                                "every one of them."})
     else:
         emit("stage", {"id": "literature", "state": "running",
-                       "detail": f"six evidence axes for {len(top)} candidate(s)"})
+                       "detail": (f"six evidence axes for {len(downstream)} "
+                                  "candidate(s)")})
         total_on, total_axes, hits, leads, errors = 0, 0, 0, [], []
         read: dict[str, dict] = {}
-        for v in top:
-            ev, papers, errs = gather(v.gene, m.context, cfg.partner_gene, per_axis=8)
+        for gene in downstream:
+            ev, papers, errs = gather(gene, m.context, cfg.partner_gene, per_axis=8)
             errors.extend(errs)
             for p in papers:
                 emit("paper", {"title": p.title, "id": p.accession, "url": p.url,
                                "abstract": p.abstract, "axis": p.axis,
-                               "gene": v.gene, "support": p.suggested_support})
+                               "gene": gene, "support": p.suggested_support})
             total_on += len(papers)
             total_axes += len(ev.axes)
             hits += len(ev.axes_with_hits)
@@ -1166,15 +1208,15 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
             verdict_ev = {"contact_documented": False, "support": "none",
                           "note": "not assessed"}
             if A.available():
-                verdict_ev, _ = A.read_evidence(trace, v.gene, papers)
+                verdict_ev, _ = A.read_evidence(trace, gene, papers)
                 emit("thinking", {"trace": trace.as_dict()})
-                _promote_reading(v.gene, verdict_ev, papers, cfg,
+                _promote_reading(gene, verdict_ev, papers, cfg,
                                  interface_evidence, emit)
-            read[v.gene] = verdict_ev
+            read[gene] = verdict_ev
             if verdict_ev.get("contact_documented") is True:
-                leads.append(v.gene)
+                leads.append(gene)
 
-            emit("evidence", {"gene": v.gene, "axes": {
+            emit("evidence", {"gene": gene, "axes": {
                 a: {"on_target": r.n_on_target, "returned": r.n_papers,
                     "note": r.note, "query": r.query}
                 for a, r in ev.axes.items()},
@@ -1217,7 +1259,7 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         "detail": f"{len(top)} candidate(s) with a selective dependency in {m.context}",
         "note": "Cancer-cell selectivity is not normal-tissue safety."})
 
-    _structure_site_and_screen(emit, cfg, [v.gene for v in top],
+    _structure_site_and_screen(emit, cfg, downstream,
                                interface_evidence, free_receptor, predict,
                                policy["require_interface_site"], trace)
 
