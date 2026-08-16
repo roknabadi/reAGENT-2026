@@ -107,3 +107,75 @@ class PersistenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModelRoutingTests(unittest.TestCase):
+    """The patterns recognise the phrasings someone thought of.
+
+    A revision — "focus on the ones with a mapped region", "drop the ones
+    without a contact" — matches none of them and fell through to a full run, so
+    the interface re-pulled the literature to answer a question about literature
+    it had already pulled. That is the common phrasing, not the exotic one, and
+    it read as a follow-up feature that did not work.
+
+    The model picks which retained path runs. It never produces an answer, and
+    anything it cannot place still re-runs. Stubbed here: what is under test is
+    the wiring and the refusals, not the model.
+    """
+
+    RECORD = {"events": [{"x": 1}], "measured": {"ASCL1": 1, "INSM1": 1},
+              "genes": ["INSM1"], "partner": "MED23",
+              "context": "Small Cell Lung Cancer"}
+
+    def _ask(self, reply):
+        return lambda system, prompt: reply
+
+    def test_a_revision_the_patterns_miss_is_routed_by_the_model(self):
+        q = "focus on the ones with a mapped region"
+        self.assertEqual(S.classify(q, self.RECORD).kind, "rerun")
+        got = S.classify(q, self.RECORD, ask=self._ask("recall"))
+        self.assertEqual(got.kind, "recall")
+        self.assertTrue(got.cheap)
+
+    def test_the_model_may_name_a_gene_the_scan_measured(self):
+        got = S.classify("why that one", self.RECORD, ask=self._ask("verdict ASCL1"))
+        self.assertEqual((got.kind, got.gene), ("verdict", "ASCL1"))
+
+    def test_a_gene_the_scan_never_measured_is_refused(self):
+        """Whatever the model thought the sentence meant, there is no number."""
+        got = S.classify("why that one", self.RECORD, ask=self._ask("verdict SOX2"))
+        self.assertEqual(got.kind, "rerun")
+
+    def test_an_unrecognised_reply_falls_back_to_a_full_run(self):
+        for reply in ("", "I think this is a recall question", "banana", "answer: 42"):
+            with self.subTest(reply=reply):
+                self.assertEqual(
+                    S.classify("something odd", self.RECORD,
+                               ask=self._ask(reply)).kind, "rerun")
+
+    def test_a_failing_model_never_takes_the_question_down(self):
+        def boom(system, prompt):
+            raise RuntimeError("no network")
+        self.assertEqual(S.classify("something odd", self.RECORD, ask=boom).kind,
+                         "rerun")
+
+    def test_the_model_cannot_override_a_deterministic_refusal(self):
+        """A different receptor is decided before the model is ever consulted."""
+        got = S.classify("what about KMT2A", self.RECORD, ask=self._ask("recall"))
+        self.assertEqual(got.kind, "rerun")
+        self.assertIn("KMT2A", got.reason)
+
+    def test_verdict_and_gene_need_a_gene_to_be_about(self):
+        for reply in ("verdict", "gene"):
+            with self.subTest(reply=reply):
+                self.assertEqual(
+                    S.classify("that one", self.RECORD,
+                               ask=self._ask(reply)).kind, "rerun")
+
+    def test_the_model_is_not_consulted_when_the_patterns_already_matched(self):
+        called = []
+        def ask(system, prompt):
+            called.append(1); return "rerun"
+        got = S.classify("why was ASCL1 rejected?", self.RECORD, ask=ask)
+        self.assertEqual(got.kind, "verdict")
+        self.assertEqual(called, [], "a matched pattern must not spend a call")

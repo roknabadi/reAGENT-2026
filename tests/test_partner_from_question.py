@@ -141,3 +141,50 @@ class TheRecordSaysWhichReceptorTheRunWasAbout(unittest.TestCase):
         self.assertEqual(seen["event"], "KMT2A")
         self.assertEqual(rec.state()["partner"], "KMT2A",
                          "the record must name the receptor the run was about")
+
+
+class PredictInstructionTests(unittest.TestCase):
+    """"Run boltz2" is an instruction, and it survives being phrased as a sequel.
+
+    "Which TFs have a mapped interacting region on MLL, and for the ones that
+    do run boltz2" placed no condition the parser knew, so nothing folded. Then
+    the literature found no mapped region on KMT2A, the set of "ones that do"
+    was empty, and the pipeline abstained from the one step that exists to
+    establish what the literature had not — with the reason "no confirmed cases
+    were found", which is true and is also the reason to run the prediction.
+    """
+
+    def _run(self, predict_asked: bool, genes=("E2F1",), predicted=None):
+        """Whether the structure stage folds, given the request's flags."""
+        events = []
+        emit = lambda k, d: events.append((k, d))  # noqa: E731
+        emit.runtime = {}
+        emit.genes = list(genes)
+        P._structure_site_and_screen(
+            emit, DummyCfg(), list(genes), {}, None,
+            None, False, None, predict_asked=predict_asked)
+        return events
+
+    def test_the_flag_reaches_the_gate(self):
+        """The condition that decides whether a fold is dispatched."""
+        import inspect
+        src = inspect.getsource(P._structure_site_and_screen)
+        self.assertIn("require_site or predict_asked", src,
+                      "an explicit instruction to predict must reach the gate")
+
+    def test_the_parser_returns_the_flag(self):
+        """`read_request` has to offer it, or nothing downstream can obey it."""
+        from reagent_workflow import agent as A
+        pol, _ = A.read_request(A.AgentTrace(), "")
+        self.assertIn("predict_interface", pol)
+        self.assertFalse(pol["predict_interface"], "empty request asks for nothing")
+
+
+class DummyCfg:
+    partner_gene = "KMT2A"
+
+    class structure:
+        top_candidates = 3
+        contact_cutoff_angstrom = 4.5
+        min_dominant_cluster_fraction = 0.6
+        min_contact_occupancy = 0.6

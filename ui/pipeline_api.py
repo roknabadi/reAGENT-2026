@@ -105,6 +105,7 @@ class _Recorder:
         # the rest of the run because it is still in force for the session: a
         # follow-up that forgot it would run a screen the request forbade.
         self.require_site = False
+        self.predict_asked = False
         # Live objects a follow-up reuses in this process only: the docking box
         # the site stage built, whether the evidence gate supported it, and the
         # evidence dict the literature stage may have promoted a reading into.
@@ -127,6 +128,7 @@ class _Recorder:
             self.evidence[payload.get("gene")] = payload
         elif event == "policy":
             self.require_site = bool(payload.get("require_interface_site"))
+            self.predict_asked = bool(payload.get("predict_interface"))
         elif event == "candidates":
             self.rows = list(payload.get("rows", []))
             self.candidates = [{k: r.get(k) for k in
@@ -749,7 +751,8 @@ def _named_genes(question: str, tf_path, partner: str) -> list[str]:
 
 def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
                    decided_by: str, interface_evidence: dict, free_receptor,
-                   predict: str | None = None, require_site: bool = False) -> None:
+                   predict: str | None = None, require_site: bool = False,
+                   predict_asked: bool = False) -> None:
     """Answer a gene question that names no disease.
 
     Everything that needs a cohort abstains and says why; everything that needs
@@ -855,7 +858,8 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
         emit.runtime.setdefault("trace", trace)
         emit.runtime.setdefault("interface_evidence", interface_evidence)
     _structure_site_and_screen(emit, cfg, named, interface_evidence, free_receptor,
-                               predict, require_site, trace)
+                               predict, require_site, trace,
+                               predict_asked=predict_asked)
 
     emit("stage", {
         "id": "experiment", "state": "done",
@@ -879,7 +883,8 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
 def _structure_site_and_screen(emit, cfg, genes: list[str],
                                interface_evidence: dict, free_receptor,
                                predict: str | None = None,
-                               require_site: bool = False, trace=None) -> None:
+                               require_site: bool = False, trace=None,
+                               predict_asked: bool = False) -> None:
     """Everything downstream of the shortlist that depends only on the partner.
 
     Split out of `run_live` because it is the half of the pipeline that does
@@ -911,7 +916,14 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # already minutes and credits, and a sentence typed into a box should not be
     # able to spend that per candidate. The rest stay available through the
     # button, one at a time, chosen by a person.
-    if (predict is None and require_site and not predicted
+    # Either the request gated the screen on a site (so one has to exist), or it
+    # asked outright for a prediction. The second was unreachable: a request
+    # saying "for the ones that do, run boltz2" placed no condition, so nothing
+    # folded — and when the literature had found no mapped region the set of
+    # "ones that do" was empty, so the pipeline abstained from the very step
+    # that exists to establish what the literature did not. A prediction is how
+    # the interaction gets found; asking for it is asking for it to run.
+    if (predict is None and (require_site or predict_asked) and not predicted
             and cfg.partner_gene.upper() not in CURATED_POCKETS and genes):
         predict = genes[0]
         emit("stage", {
@@ -1324,8 +1336,17 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         # honoured.
         policy, _ = A.read_request(trace, question)
         emit("thinking", {"trace": trace.as_dict()})
+        if policy.get("predict_interface") and not policy["require_interface_site"]:
+            # An instruction, not a condition: it has to reach the structure
+            # stage even when no gate was placed on the screen.
+            emit("policy", {"require_interface_site": False,
+                            "predict_interface": True,
+                            "quote": policy.get("quote"),
+                            "note": "The request asks for a structural prediction, "
+                                    "so one is run rather than waiting for a button."})
         if policy["require_interface_site"]:
             emit("policy", {"require_interface_site": True,
+                            "predict_interface": policy.get("predict_interface", False),
                             "quote": policy.get("quote"),
                             "note": "The screen will run only where a partner-side "
                                     "site is supported. Otherwise it abstains and "
@@ -1354,7 +1375,8 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         if named:
             _partner_first(question, named, cfg, emit, trace, why, decided_by,
                            interface_evidence, free_receptor, predict,
-                           policy["require_interface_site"])
+                           policy["require_interface_site"],
+                           predict_asked=bool(policy.get("predict_interface")))
             return emit.state()
         emit("stage", {"id": "question", "state": "blocked",
                        "detail": question or "no question given",
@@ -1648,7 +1670,8 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
 
     _structure_site_and_screen(emit, cfg, downstream,
                                interface_evidence, free_receptor, predict,
-                               policy["require_interface_site"], trace)
+                               policy["require_interface_site"], trace,
+                               predict_asked=bool(policy.get("predict_interface")))
 
     # ── next experiment ────────────────────────────────────────────────────
     emit("stage", {
