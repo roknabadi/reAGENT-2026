@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import statistics
 from enum import StrEnum
 
@@ -413,7 +414,43 @@ def inchikey(smiles: str) -> str | None:
         return None
 
 
-def verify_identity(smiles: str, timeout: float = 15.0) -> dict:
+def _normalize_name(name: str) -> str:
+    """Case- and punctuation-insensitive form for comparing compound names.
+
+    PubChem's Title is one chosen display name, not the only correct one --
+    "Tolfenamic acid" and its Title "2-(4-Chloro-2-methylanilino)benzoic acid"
+    are the same molecule spelled two different ways, so a bare `==` on the
+    raw strings would flag every compound whose Title happens to be its IUPAC
+    name rather than its common one.
+    """
+    return re.sub(r"[^a-z0-9]+", "", name.lower())
+
+
+def _name_confirmed_by_synonym(key: str, name: str, timeout: float) -> bool:
+    """Does PubChem file `name` as a synonym for the compound behind `key`?
+
+    Only called after the Title comparison has already failed. A Title
+    mismatch alone is not proof of a different molecule: PubChem shows one
+    name and records the rest -- including the name a model or a paper
+    actually used -- as synonyms. This is the check that lets "Tolfenamic
+    acid" pass despite its IUPAC Title, and the check a real substitution
+    like "Fisetin" resolving to "Kaempferol" still fails.
+    """
+    import urllib.error
+    import urllib.request
+    url = ("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/"
+           f"{key}/synonyms/JSON")
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            info = (json.loads(r.read()).get("InformationList", {})
+                   .get("Information") or [{}])[0]
+    except Exception:                                        # noqa: BLE001
+        return False
+    target = _normalize_name(name)
+    return any(_normalize_name(s) == target for s in (info.get("Synonym") or []))
+
+
+def verify_identity(smiles: str, name: str | None = None, timeout: float = 15.0) -> dict:
     """Is this structure a compound the outside world already knows?
 
     A SMILES string that parses is a valid molecule, not a correct one. A model
@@ -423,6 +460,16 @@ def verify_identity(smiles: str, timeout: float = 15.0) -> dict:
     InChIKey and looked up in PubChem: a hit returns the CID and the name
     PubChem itself uses, and a miss says plainly that this structure is not a
     known compound rather than implying it failed.
+
+    An InChIKey hit is a match on the *structure*, not on the name the model
+    or source claimed for it -- "Fisetin" hashing to the InChIKey PubChem
+    files under "Kaempferol" passes the InChIKey check and is still a
+    different molecule wearing the requested name. So when `name` is given,
+    it is compared (case/punctuation-normalised) against PubChem's Title, and
+    only if that fails, against PubChem's recorded synonyms for the same
+    InChIKey — a compound named by its common name rather than its IUPAC
+    Title (e.g. "Tolfenamic acid") must not be flagged. Only when neither
+    matches does this return "name_mismatch".
 
     Never raises and never blocks a screen. A network problem is reported as a
     network problem, because "unverified because PubChem was unreachable" and
@@ -453,7 +500,17 @@ def verify_identity(smiles: str, timeout: float = 15.0) -> dict:
         return {"status": "lookup_failed", "inchikey": key, "cid": None,
                 "name": None, "note": f"PubChem unreachable: {type(e).__name__}"}
 
+    pubchem_name = props.get("Title") or props.get("IUPACName")
+    if (name and pubchem_name
+            and _normalize_name(name) != _normalize_name(pubchem_name)
+            and not _name_confirmed_by_synonym(key, name, timeout)):
+        return {"status": "name_mismatch", "inchikey": key,
+                "cid": props.get("CID"), "name": pubchem_name,
+                "proposed_name": name,
+                "note": (f"proposed name '{name}' matches neither PubChem's "
+                        f"Title '{pubchem_name}' nor a recorded synonym")}
+
     return {"status": "verified", "inchikey": key,
             "cid": props.get("CID"),
-            "name": props.get("Title") or props.get("IUPACName"),
+            "name": pubchem_name,
             "note": "structure matches a PubChem record by InChIKey"}

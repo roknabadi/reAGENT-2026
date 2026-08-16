@@ -17,6 +17,12 @@ docking box:
                    not imatinib, and no amount of local validation notices.
                    A structure PubChem does not know is docked and labelled
                    unverified, never silently passed off as the named compound.
+                   A lookup that never completed (PubChem unreachable) is not
+                   a verdict either way, so that one is abstained rather than
+                   docked. And the InChIKey matching is not the whole check:
+                   the proposed name is compared against PubChem's own name
+                   for the structure, so a hash match under the wrong name is
+                   still caught rather than passed off as "verified".
 
 Docking then proceeds exactly as the smoke screen always did, including the
 geometry checks -- a score with no pose geometry is the most convincing wrong
@@ -31,8 +37,10 @@ import math
 import time
 
 from .chemistry import standardize, verify_identity
+from .discovery_config import ChemistryConfig, StructureConfig
 
-def pose_geometry(sdf: str, site, receptor_atoms, pocket: set[int]):
+def pose_geometry(sdf: str, site, receptor_atoms, pocket: set[int],
+                  cfg: StructureConfig | None = None):
     """Where the pose actually landed, relative to the box we asked for.
 
     Vina is told to search a box; it is not prevented from placing a ligand at
@@ -41,13 +49,19 @@ def pose_geometry(sdf: str, site, receptor_atoms, pocket: set[int]):
 
       offset       distance from the pose centroid to the box centre
       inside       centroid within the box at all
-      contacts     pocket residues with a heavy atom within 4.5 A
+      contacts     pocket residues with a heavy atom within cfg.contact_cutoff_angstrom
       min_contact  closest approach to any pocket residue
       clash        any heavy-atom pair closer than 2.0 A
 
     A pose with a good score, no contacts and a large offset is docking into
     the wrong place, and that combination is exactly what a bare score hides.
+
+    A pose whose geometry cannot be parsed returns only {"parsed": False} —
+    callers must check "parsed" before trusting any other key. An unparsed
+    pose is not "0 contacts" or "outside the box", it is unknown, and treating
+    unknown as clean is how a pose nobody actually looked at becomes `best`.
     """
+    cfg = cfg or StructureConfig()
     coords = []
     for line in sdf.splitlines():
         parts = line.split()
@@ -72,11 +86,15 @@ def pose_geometry(sdf: str, site, receptor_atoms, pocket: set[int]):
             continue
         for c in coords:
             d = math.dist(c, (a.x, a.y, a.z))
+            # 2.0 A stays a literal here: it belongs on StructureConfig next
+            # to contact_cutoff_angstrom (audited finding, screen.py:75), but
+            # discovery_config.py is owned by another workstream and out of
+            # scope for this fix.
             if d < 2.0:
                 clash = True
             if a.resi in pocket:
                 closest = min(closest, d)
-                if d <= 4.5:
+                if d <= cfg.contact_cutoff_angstrom:
                     near.add(a.resi)
     return {"parsed": True, "heavy_atoms": len(coords),
             "centroid": [round(cx, 2), round(cy, 2), round(cz, 2)],
@@ -100,7 +118,21 @@ def prepare_compounds(proposed: list[dict], log=print) -> tuple[list[dict], list
                              "reason": why or "unusable structure"})
             log(f"  {name:22s} rejected — {why}")
             continue
-        ident = verify_identity(parent)
+        # Only pass a real proposed name into the identity check, not the
+        # "unnamed" placeholder used for logging — comparing a placeholder
+        # against PubChem's Title would manufacture a false name_mismatch.
+        proposed_name = str(c["name"]).strip() if c.get("name") else None
+        ident = verify_identity(parent, name=proposed_name)
+        if ident["status"] == "lookup_failed":
+            # PubChem was never actually consulted, so "docked and labelled
+            # unverified" would misrepresent a check that could not run.
+            # "unverified because PubChem said no" and "unverified because
+            # PubChem was never asked" are different facts; only the first
+            # one is safe to dock and label.
+            rejected.append({"compound": name, "smiles": parent,
+                             "reason": ident.get("note") or "identity lookup failed"})
+            log(f"  {name:22s} rejected — {ident.get('note')}")
+            continue
         usable.append({"compound": name, "smiles": parent,
                        "proposed_smiles": c.get("smiles"),
                        "provenance": c.get("kind") or "proposed",
@@ -111,8 +143,10 @@ def prepare_compounds(proposed: list[dict], log=print) -> tuple[list[dict], list
     return usable, rejected
 
 
-def dock(site, receptor_atoms, compounds: list[dict], cfg, *, seed: int,
-         exhaustiveness: int = 8, num_poses: int = 9, log=print) -> dict:
+def dock(site, receptor_atoms, compounds: list[dict],
+         cfg: ChemistryConfig | None = None, *, seed: int,
+         exhaustiveness: int | None = None, num_poses: int | None = None,
+         log=print) -> dict:
     """Dock a prepared library into a defensible site, with the geometry checks.
 
     Refuses rather than docks when the site is not defensible: a box that was
@@ -122,6 +156,17 @@ def dock(site, receptor_atoms, compounds: list[dict], cfg, *, seed: int,
     if site is None or not site.defensible:
         raise ValueError("no defensible site: " + "; ".join(
             getattr(site, "blockers", ["site was not built"])))
+
+    # `cfg` used to be accepted and never read — the only live caller passed
+    # None, so ChemistryConfig could never actually reach Vina. Falling back
+    # to the default here, and only overriding exhaustiveness/num_poses from
+    # cfg when the caller did not explicitly pin them, is what makes cfg
+    # load-bearing instead of decorative.
+    cfg = cfg or ChemistryConfig()
+    if exhaustiveness is None:
+        exhaustiveness = cfg.fast_vina_exhaustiveness
+    if num_poses is None:
+        num_poses = cfg.fast_vina_poses
 
     from proto_tools.entities.ligands.ligands import Fragment
     from proto_tools.entities.structures.structure import Structure
@@ -178,16 +223,34 @@ def dock(site, receptor_atoms, compounds: list[dict], cfg, *, seed: int,
             "wrong_site": bool(geom.get("parsed") and geom.get("n_pocket_contacts") == 0),
             "clash": bool(geom.get("clash")),
             "outside_box": bool(geom.get("parsed") and not geom.get("inside_box")),
+            # wrong_site and outside_box both require geom["parsed"] to be
+            # true, so an unparsed pose evaluates False for both and looks
+            # clean. This flag is what actually excludes it.
+            "geometry_unparsed": not geom.get("parsed"),
         })
-        flags = [f for f in ("wrong_site", "clash", "outside_box") if row[f]]
-        log(f"  {c['compound']:22s} {score:6.2f} kcal/mol · "
+        flags = [f for f in ("wrong_site", "clash", "outside_box", "geometry_unparsed")
+                if row[f]]
+        log(f"  {c['compound']:22s} "
+            f"{' n/a ' if score is None else f'{score:6.2f}'} kcal/mol · "
             f"{geom.get('n_pocket_contacts', 0)} contacts"
             + (f" · {', '.join(flags)}" if flags else ""))
         results.append(row)
 
     scored = [r for r in results if r.get("vina_score") is not None]
     clean = [r for r in scored
-             if not (r["wrong_site"] or r["clash"] or r["outside_box"])]
+             if not (r["wrong_site"] or r["clash"] or r["outside_box"]
+                    or r["geometry_unparsed"])]
+    # Best among identity-verified compounds only. `best` below can be led by
+    # a not_in_pubchem or name_mismatch structure — a starting point, not a
+    # claim about a named drug — so a caller that wants a defensible number
+    # needs the verified-only one instead.
+    verified_clean = [r for r in clean
+                      if (r.get("identity") or {}).get("status") == "verified"]
+    status_counts = {"verified": 0, "not_in_pubchem": 0, "lookup_failed": 0}
+    for r in results:
+        s = (r.get("identity") or {}).get("status")
+        if s in status_counts:
+            status_counts[s] += 1
     return {
         "receptor": {"path": str(site.receptor_path), "gene": "MED23",
                      "form": "free (no TF bound)"},
@@ -204,6 +267,9 @@ def dock(site, receptor_atoms, compounds: list[dict], cfg, *, seed: int,
         "summary": {"docked": len(results), "scored": len(scored),
                     "clean_poses": len(clean),
                     "best": min((r["vina_score"] for r in clean), default=None),
+                    "best_verified": min((r["vina_score"] for r in verified_clean),
+                                         default=None),
+                    **status_counts,
                     "wall_seconds": round(time.time() - t0, 1)},
         "limitations": [
             "Vina scores rank poses. They are not free energies, not "
