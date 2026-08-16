@@ -144,7 +144,11 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 
 /* No transition on grid-template-columns: it interpolates unreliably here and
    leaves the track stuck at its old width. The rail fades instead. */
-.body{display:grid;grid-template-columns:264px 1fr 300px;min-height:0;overflow:hidden}
+/* Two panes. The run's own account on the left, the thing it is talking about
+   on the right, and nothing competing with either — sources slide over when
+   asked for rather than holding a third of the width permanently. */
+.body{position:relative;display:grid;grid-template-columns:320px 1fr;
+  min-height:0;overflow:hidden}
 .body[data-src=off]{grid-template-columns:264px 1fr 42px}
 .srcs #papers{transition:opacity .2s}
 .body[data-src=off] .srcs #papers{opacity:0}
@@ -226,7 +230,10 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 @keyframes slideIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 
 /* ── sources rail ── */
-.srcs{border-left:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:26px 0 40px;
+.srcs{position:absolute;right:0;top:0;bottom:0;width:340px;z-index:6;
+  transform:translateX(101%);transition:transform .28s cubic-bezier(.4,0,.2,1);
+  box-shadow:-18px 0 40px rgba(0,0,0,.28);
+  border-left:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:26px 0 40px;
   position:relative}
 .srcs h2{display:flex;align-items:center;gap:8px;padding-right:12px}
 .srcs h2 .cnt{font-family:var(--mono);color:var(--ink-2);letter-spacing:0}
@@ -271,6 +278,16 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
   display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .paper .id{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:6px}
 .srcs .empty{padding:0 18px;font-size:12.5px;color:var(--ink-3);line-height:1.5}
+.body[data-src=on] .srcs{transform:none}
+@media (prefers-reduced-motion:reduce){.srcs{transition:none}}
+/* The drawer's handle lives in the header, where the count is readable without
+   giving up a column to show it. */
+.src-open{display:flex;align-items:center;gap:7px;padding:6px 11px;background:none;
+  border:1px solid var(--line);border-radius:999px;color:var(--ink-3);font:inherit;
+  font-size:11.5px;cursor:pointer;transition:color .15s,border-color .15s}
+.src-open:hover{color:var(--ink);border-color:var(--line-2)}
+.src-open .n{font-family:var(--mono);color:var(--ink-2)}
+.body[data-src=on] .src-open{color:var(--ink);border-color:var(--line-2)}
 /* The only control here that costs GPU time. Styled as a deliberate action,
    not as a link you brush past. */
 .predict-btn{display:block;width:100%;margin:0 0 6px;padding:8px 10px;
@@ -334,7 +351,17 @@ main{position:relative;overflow:hidden}
 #tip .why{margin-top:7px;padding-top:6px;border-top:1px solid var(--line);
   font-size:11px;color:var(--fail);line-height:1.35}
 
-.side{border-left:1px solid var(--line);overflow-y:auto;padding:20px}
+.side{position:absolute;right:16px;top:60px;bottom:16px;width:332px;z-index:3;
+  background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line);
+  border-radius:12px;overflow-y:auto;padding:18px;
+  transition:transform .25s cubic-bezier(.4,0,.2,1),opacity .2s}
+.view[data-side=off] .side{transform:translateX(calc(100% + 20px));opacity:0;
+  pointer-events:none}
+.side-toggle{position:absolute;right:16px;top:16px;z-index:4;padding:6px 11px;
+  background:var(--glass);backdrop-filter:blur(8px);border:1px solid var(--line);
+  border-radius:999px;color:var(--ink-3);font:inherit;font-size:11.5px;cursor:pointer}
+.side-toggle:hover{color:var(--ink);border-color:var(--line-2)}
+@media (prefers-reduced-motion:reduce){.side{transition:none}}
 .side h3{font-size:15px;font-weight:600;margin:0 0 3px;letter-spacing:-.015em}
 .side .sub{color:var(--ink-3);font-size:12.5px;margin:0 0 18px}
 .metric{margin-bottom:16px}
@@ -352,10 +379,14 @@ main{position:relative;overflow:hidden}
   animation:grow .6s ease both}
 @keyframes grow{from{width:0!important}}
 .panel{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:13px}
-.panel dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:5px 10px;
-  font-size:12px;font-family:var(--mono)}
-.panel dt{color:var(--ink-2)}
-.panel dd{margin:0;text-align:right}
+/* Label column left, value column left. Right-aligning a value that wraps
+   turns a sentence into a ragged staircase, which is what this did to every
+   line of prose in the structure panel. */
+.panel dl{margin:0;display:grid;grid-template-columns:88px minmax(0,1fr);
+  gap:7px 12px;font-size:12px;font-family:var(--mono)}
+.panel dt{color:var(--ink-3);font-size:11px;line-height:1.45}
+.panel dd{margin:0;text-align:left;color:var(--ink-2);line-height:1.45;
+  overflow-wrap:anywhere}
 .note{margin-top:14px;font-size:12px;color:var(--ink-2);line-height:1.55}
 .note b{color:var(--ink);font-weight:600}
 
@@ -408,7 +439,9 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
   word-break:break-all;text-decoration:none}
 .claim a:hover{text-decoration:underline}
 
-#v-structure{grid-template-columns:1fr 300px}
+/* One column: the structure gets the room. Its metadata floats over the top
+   right, collapsible, so the canvas is never permanently boxed in by text. */
+#v-structure{grid-template-columns:1fr}
 #wrap3d{position:relative;overflow:hidden}
 /* Out of flow: a canvas keeps its backing-store width as an intrinsic size, which
    props its grid column open and stops the panel ever shrinking. Growing worked,
@@ -428,7 +461,10 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
 .reps button:hover{color:var(--ink-2)}
 .reps button[aria-current=true]{background:var(--card);color:var(--ink)}
 .leg{position:absolute;left:18px;top:16px;font-size:11.5px;background:var(--glass);
-  backdrop-filter:blur(9px);border:1px solid var(--line);border-radius:var(--r);padding:11px 13px}
+  backdrop-filter:blur(9px);border:1px solid var(--line);border-radius:12px;
+  padding:10px 13px;display:flex;flex-direction:column;gap:6px}
+.leg > span{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.leg > span > i{width:9px;height:9px;border-radius:3px;flex:none;display:inline-block}
 .leg .row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .leg .row:last-child{margin:0}
 .leg .sw{width:14px;height:3px;border-radius:2px;flex:none}
@@ -537,6 +573,9 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
       <button data-v="candidates">Candidates</button>
       <button data-v="structure">Structure</button>
     </nav>
+    <button class="src-open" id="srcOpen" aria-expanded="false" aria-controls="papers"
+            title="Papers retrieved during this run">Sources <span class="n"
+            id="srcOpenCount">0</span></button>
     <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
   </header>
 
@@ -634,6 +673,8 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
           <div class="leg" id="leg"></div>
           <div class="nostruct" id="nostruct"></div>
           <div class="loading3d" id="loading3d">building structure…</div></div>
+        <button class="side-toggle" id="sideToggle" aria-expanded="true"
+                aria-controls="saside" title="Hide the detail panel">Details</button>
         <div class="side" id="saside"></div>
       </section>
     </main>
@@ -948,28 +989,38 @@ function setStage({id,state,detail,note}){
   el.querySelector('.dt').textContent = detail||'';
   el.querySelector('.nt').textContent = note||'';
 }
-/* sources rail: collapses to a spine so the plot can have the width.
-   Collapsed by default — most of what a run found is already in Reasoning and
-   Pipeline, and opening this rail on every first visit cost width whether or
-   not the reader ever looked at it. A stored preference from an earlier visit
-   still wins, in either direction. */
+/* Sources are a drawer now, not a column. They are the run's inputs rather than
+   its output, and a third of the width held open for them permanently was the
+   largest single source of clutter on this page. Closed by default; the header
+   handle carries the count, so nothing is hidden — only put away. A stored
+   preference from an earlier visit still wins, in either direction. */
 {
-  const body=document.querySelector('.body'), btn=$('#srcToggle');
-  const apply=off=>{
-    body.dataset.src = off ? 'off' : 'on';
-    btn.textContent = off ? '‹' : '›';
-    btn.setAttribute('aria-expanded', String(!off));
-    btn.title = off ? 'Show sources' : 'Hide sources';
+  const body=document.querySelector('.body'), open=$('#srcOpen'), inner=$('#srcToggle');
+  const apply=on=>{
+    body.dataset.src = on ? 'on' : 'off';
+    open.setAttribute('aria-expanded', String(on));
     if(booted){ sizePlot(); draw(); }
   };
-  apply(localStorage.dsSrc !== 'on');
-  btn.onclick = () => { const off = body.dataset.src !== 'off';
-    localStorage.dsSrc = off ? 'off' : 'on'; apply(off);
-    // Resize the 3D panel explicitly too. A ResizeObserver alone is not enough:
-    // shrinking the canvas is itself the observation that causes the shrink, and
-    // the browser drops that second notification to break the loop. Growing was
-    // delivered, shrinking was not, so the buffer stayed stale at the old width.
-    setTimeout(()=>{ sizePlot(); draw(); glc?.size(); renderStructure?.(); }, 340); };
+  if(inner){ inner.textContent='×'; inner.title='Close sources'; }
+  apply(localStorage.dsSrc === 'on');
+  const set = on => { localStorage.dsSrc = on ? 'on' : 'off'; apply(on);
+    // The plot and both 3D canvases measure themselves; a transform-driven
+    // drawer fires no resize event, so they are told once the slide has ended.
+    setTimeout(()=>{ sizePlot(); draw(); glc?.size(); molv?.resize();
+                     renderStructure?.(); }, 320); };
+  open.onclick = () => set(body.dataset.src !== 'on');
+  inner?.addEventListener('click', () => set(false));
+}
+/* The structure's detail panel floats over the canvas; this puts it away
+   entirely, so the thing being looked at can have the whole frame. */
+{
+  const btn=$('#sideToggle'), view=$('#v-structure');
+  btn.onclick = () => {
+    const off = view.getAttribute('data-side') !== 'off';
+    view.setAttribute('data-side', off ? 'off' : 'on');
+    btn.setAttribute('aria-expanded', String(!off));
+    btn.title = off ? 'Show the detail panel' : 'Hide the detail panel';
+    setTimeout(()=>{ glc?.size(); molv?.resize(); renderStructure?.(); }, 280); };
 }
 function addPaper(p){
   const box=$('#papers'); box.querySelector('.empty')?.remove();
@@ -980,6 +1031,7 @@ function addPaper(p){
   box.prepend(a);
   const n=box.querySelectorAll('.paper').length;
   document.querySelector('#srcCount').textContent = n ? n : '';
+  $('#srcOpenCount').textContent = n;
 }
 
 /* Reasoning rail: every exchange with the model, kept for the whole run.
@@ -1085,7 +1137,7 @@ let es=null;
 function run(q, predict){
   es?.close();
   STAGES.forEach(([id])=>setStage({id,state:'pending',detail:'',note:''}));
-  $('#papers').innerHTML=''; $('#srcCount').textContent=''; resetReady();
+  $('#papers').innerHTML=''; $('#srcCount').textContent=''; $('#srcOpenCount').textContent='0'; resetReady();
   resetThinking(); resetAnswer();
   SITE = null; SCREEN = null;   // this run's own box and pose counts, not the last run's
   document.querySelectorAll('.ask .caveat').forEach(n=>n.remove());
@@ -1812,17 +1864,28 @@ async function paintMol(M, hl){
     else if(molRep==='surface') molv.setStyle({}, {cartoon:{color:C.body, thickness:.2}});
     else molv.setStyle({}, {sphere:{color:C.body, scale:.85}});
 
-    // Highlights last so they sit over the body in every representation. The
-    // amber colour is reserved for the curated cavity; a box built from an
-    // ensemble instead draws in the same colour the predicted-interface layer
-    // uses, so a reader sees "predicted" rather than "observed" at a glance.
-    const mark=(resi,color)=>{ if(resi.length) molv.addStyle({resi},
-      molRep==='atoms' ? {sphere:{color, scale:.9}}
-                       : {stick:{color, radius:.34}, sphere:{color, scale:.32}}); };
+    // Residues of the receptor are drawn ON the receptor — the ribbon thickens
+    // and takes the colour, with a translucent patch over it. They used to be
+    // drawn as sticks and balls, which is the universal convention for a bound
+    // ligand, and they read as exactly that: a reader who knows this project
+    // saw a molecule sitting in MED23 on a run where nothing had been docked
+    // and the panel said "no screen run". Sticks now mean a compound and
+    // nothing else, which is the only way the picture can be read at a glance.
+    const patches=[];
+    const mark=(resi,color)=>{
+      if(!resi.length) return;
+      if(molRep==='atoms'){ molv.addStyle({resi},{sphere:{color, scale:.95}}); }
+      else { molv.addStyle({resi},{cartoon:{color, thickness:.9}});
+             patches.push({resi, color}); }
+    };
     mark(pocket, site.calibration ? C.pocket : C.pred); mark(lig, C.lig); mark(pred, C.pred);
 
     if(molRep==='surface')
       molv.addSurface($3.SurfaceType.VDW, {opacity:.62, color:C.body}, {});
+    // A patch over each highlighted set, so the residues read as a surface on
+    // the protein rather than as decoration threaded through it.
+    for(const {resi,color} of patches)
+      molv.addSurface($3.SurfaceType.VDW, {opacity:.55, color}, {resi});
 
     if(shown?.sdf){
       const m=molv.addModel(shown.sdf,'sdf');
