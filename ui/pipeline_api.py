@@ -33,20 +33,92 @@ on the strength of a different stage's success.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Callable
 
 import pandas as pd
+from pydantic import ValidationError
 
 from dependency_scout.models import MediatorLink
+from reagent_workflow import agent as A
 from reagent_workflow import verdict as V
-from reagent_workflow.interface import parse_mmcif
+from reagent_workflow.interface import InterfaceConsensus, parse_mmcif
 from reagent_workflow.literature import gather
-from reagent_workflow.resolve import resolve
+from reagent_workflow.resolve import resolve, vocabulary
 from reagent_workflow.site import build_search_site, receptor_residues
 
 DOWNSTREAM = ("literature", "discovery", "ranking", "specificity", "site",
               "structure", "screening", "experiment")
+
+ROOT = Path(__file__).resolve().parents[1]
+SCREEN_FILE = ROOT / "runs" / "vina_smoke.json"
+MAX_POSES_SHOWN = 3
+
+
+def _recorded_screen(site) -> tuple[dict, list[dict]] | None:
+    """The screen on file, but only if it was run against *this* box.
+
+    A docking record is only about the site it was docked into. Serving one
+    keyed to different residues would put poses on screen that were computed
+    somewhere else on the protein, which is the same class of error as
+    borrowing another candidate's coordinates — so the residues are compared
+    and a mismatch returns nothing rather than the wrong screen.
+    """
+    if site is None or not site.defensible or not SCREEN_FILE.is_file():
+        return None
+    try:
+        rec = json.loads(SCREEN_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if set(rec.get("site", {}).get("resolved_residues", [])) != set(site.residues):
+        return None
+
+    summary = dict(rec.get("summary") or {})
+    if summary.get("best") is None:
+        return None
+    summary["seed"] = rec.get("config", {}).get("seed")
+
+    # Only poses that landed in the pocket. A good score with no contact and a
+    # large offset from the box centre is Vina docking somewhere else, and
+    # drawing it on the cavity would show a hit that is not one.
+    clean = [r for r in rec.get("results", [])
+             if r.get("vina_score") is not None
+             and not (r.get("wrong_site") or r.get("clash") or r.get("outside_box"))
+             and r.get("geometry", {}).get("centroid")]
+    clean.sort(key=lambda r: r["vina_score"])
+    poses = [{"name": r["compound"], "score": r["vina_score"],
+              "centroid": r["geometry"]["centroid"],
+              # Which MED23 residues this compound actually touches, at 4.5 A.
+              # This is the answer to "what would we work on and where": a
+              # score alone says a pose exists somewhere, the residue list says
+              # what it sits against, and only the second is a starting point
+              # for a medicinal chemist.
+              "residues": r["geometry"].get("pocket_contacts", []),
+              "contacts": r["geometry"].get("n_pocket_contacts", 0),
+              "smiles": r.get("smiles", ""),
+              "provenance": r.get("provenance", "")}
+             for r in clean[:MAX_POSES_SHOWN]]
+    return (summary, poses) if poses else None
+
+
+def _recorded_interface(gene: str):
+    """The predicted TF–partner interface for `gene`, if an ensemble produced one.
+
+    Written by `scripts/predict_med23_interface.py`, which co-folds the pair on
+    GPU and keeps the consensus rather than any single sample. Returns
+    `(InterfaceConsensus, record)` or None. A consensus the module rejected is
+    returned as-is: `receptor_residues` refuses a blocked consensus, and the
+    interface reports the refusal instead of quietly falling back.
+    """
+    path = ROOT / "runs" / "interfaces" / f"{gene.upper()}_MED23" / "consensus.json"
+    if not path.is_file():
+        return None
+    try:
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        return InterfaceConsensus.model_validate(rec["consensus"]), rec
+    except (OSError, json.JSONDecodeError, KeyError, ValidationError):
+        return None
 
 
 def _model_table(model_path) -> pd.DataFrame:
@@ -71,27 +143,51 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         return
 
     # ── question -> context ────────────────────────────────────────────────
+    #
+    # The model reads the question; token matching is the fallback. Free text is
+    # ambiguous in ways overlap cannot resolve — "the childhood bone tumour
+    # driven by the EWSR1-FLI1 fusion" names Ewing sarcoma without containing
+    # the word. But the model chooses from the real Oncotree vocabulary and its
+    # answer is bounds-checked against that list, so it cannot name a context
+    # the scan is unable to answer about.
     model = _model_table(model_path)
-    res = resolve(question, model)
-    if not res.ok:
+    trace = A.AgentTrace()
+    options = vocabulary(model)
+    m, why, decided_by = None, "", "token match"
+
+    if A.available():
+        choice, reason, call = A.decide_context(trace, question, options)
+        emit("thinking", {"trace": trace.as_dict()})
+        if call is not None and not call.error:
+            decided_by = f"model ({A.MODEL})"
+            m, why = choice, reason
+        else:
+            why = (call.error if call else "") or ""
+
+    if m is None and decided_by == "token match":
+        res = resolve(question, model)
+        m = res.match
+        why = res.note
+
+    if m is None:
         emit("stage", {"id": "question", "state": "blocked",
                        "detail": question or "no question given",
-                       "note": res.note})
+                       "note": (why or "no disease context in this question "
+                                       "matched the DepMap vocabulary")
+                               + f" (decided by {decided_by})"})
         for sid in DOWNSTREAM:
             emit("stage", {"id": sid, "state": "pending", "detail": "not run",
                            "note": "waiting on a disease context"})
         emit("done", {"ok": False})
         return
 
-    m = res.match
-    alts = ", ".join(f"{a.context} ({a.score:.2f})" for a in res.alternatives[:3])
     emit("stage", {
         "id": "question", "state": "done", "detail": question,
         "note": (f"resolved to {m.context} — {m.level} level, {m.n_models} models"
                  + (f", within {m.parent_lineage}" if m.parent_lineage else "")
-                 + f". {res.note}."
-                 + (f" Also considered: {alts}." if alts else "")),
-        "context": m.context, "level": m.level})
+                 + f". {why} (decided by {decided_by}; chosen from "
+                 + f"{len(options)} contexts the data can answer about)"),
+        "context": m.context, "level": m.level, "decided_by": decided_by})
 
     # ── discovery: the canonical scan, for THIS context ────────────────────
     emit("stage", {"id": "discovery", "state": "running",
@@ -206,6 +302,7 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         emit("stage", {"id": "literature", "state": "running",
                        "detail": f"six evidence axes for {len(top)} candidate(s)"})
         total_on, total_axes, hits, leads, errors = 0, 0, 0, [], []
+        read: dict[str, dict] = {}
         for v in top:
             ev, papers, errs = gather(v.gene, m.context, cfg.partner_gene, per_axis=4)
             errors.extend(errs)
@@ -216,12 +313,25 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
             total_on += len(papers)
             total_axes += len(ev.axes)
             hits += len(ev.axes_with_hits)
-            if ev.has_coactivator_lead:
+
+            # Whether a contact is documented is a reading question, and the
+            # keyword triage it replaces called any abstract containing "crystal
+            # structure" direct experimental evidence -- including reviews and
+            # papers about a different complex entirely.
+            verdict_ev = {"contact_documented": False, "support": "none",
+                          "note": "not assessed"}
+            if A.available():
+                verdict_ev, _ = A.read_evidence(trace, v.gene, papers)
+                emit("thinking", {"trace": trace.as_dict()})
+            read[v.gene] = verdict_ev
+            if verdict_ev.get("contact_documented") is True:
                 leads.append(v.gene)
+
             emit("evidence", {"gene": v.gene, "axes": {
                 a: {"on_target": r.n_on_target, "returned": r.n_papers,
                     "note": r.note, "query": r.query}
-                for a, r in ev.axes.items()}})
+                for a, r in ev.axes.items()},
+                "read": verdict_ev})
         if errors:
             emit("stage", {"id": "literature", "state": "blocked",
                            "detail": f"{len(errors)} axis search(es) failed",
@@ -236,6 +346,24 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
                          + (f"Coactivator leads: {', '.join(leads)}." if leads
                             else "No coactivator lead on any candidate."))})
 
+        # Prose over the numbers already computed. The model is given them and
+        # told not to change or add any; it explains, it does not decide.
+        if A.available() and top:
+            summary, _ = A.explain(trace, m.context, [
+                {"gene": v.gene, "median": v.median_target,
+                 "median_other": v.median_other,
+                 "tfrac": v.target_dependent_fraction,
+                 "ofrac": v.other_dependent_fraction, "n": v.n_target,
+                 "q": v.qvalue, "route": v.route,
+                 "evidence_note": read.get(v.gene, {}).get("note", "not assessed")}
+                for v in top])
+            if summary:
+                emit("summary", {"text": summary, "model": A.MODEL,
+                                 "caveat": "Model-written prose over computed "
+                                           "numbers. It explains the result; it "
+                                           "did not produce it."})
+            emit("thinking", {"trace": trace.as_dict()})
+
     # ── specificity ────────────────────────────────────────────────────────
     emit("stage", {
         "id": "specificity", "state": "done" if top else "abstained",
@@ -243,14 +371,42 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         "note": "Cancer-cell selectivity is not normal-tissue safety."})
 
     # ── structure ──────────────────────────────────────────────────────────
-    # No ensemble is computed inline, so there is no consensus for this run.
-    consensus = None
-    emit("stage", {
-        "id": "structure", "state": "abstained",
-        "detail": "no ensemble for this context",
-        "note": "Structural discovery is a separate costed GPU step, not run inline. "
-                "The 3D view shows the ELK1-MED23 reference structure, which is "
-                "calibration, not this run."})
+    #
+    # Nothing is folded inline: a co-fold of a 1,368-residue subunit with a TF
+    # is GPU minutes per sample and five samples per candidate, which is a
+    # costed decision, not something a page load should trigger. What this
+    # stage does is look for an ensemble a previous dispatch left on disk for
+    # the shortlisted candidates, and report honestly when there is none.
+    predicted = {v.gene: _recorded_interface(v.gene) for v in top}
+    predicted = {g: p for g, p in predicted.items() if p is not None}
+    converged = {g: (c, r) for g, (c, r) in predicted.items() if c.converged}
+    # One site is boxed per run, so the consensus that can define it is the top
+    # candidate's — and only if that ensemble converged.
+    consensus = converged.get(top[0].gene, (None, None))[0] if top else None
+
+    if converged:
+        emit("stage", {
+            "id": "structure", "state": "done",
+            "detail": "; ".join(
+                f"{g}–{cfg.partner_gene}: {c.dominant_cluster_samples}/"
+                f"{c.total_samples} samples agree ({c.ensemble_support:.0%})"
+                for g, (c, _) in converged.items()),
+            "note": "Boltz-2 ensembles from a prior GPU dispatch "
+                    "(scripts/predict_med23_interface.py), not folded for this "
+                    "question. Convergence across seeds is model self-consistency. "
+                    "A predicted interface is a hypothesis, not a contact."})
+    else:
+        rejected = [f"{g}: {'; '.join(c.blockers)[:90]}" for g, (c, _) in predicted.items()]
+        emit("stage", {
+            "id": "structure", "state": "abstained",
+            "detail": ("; ".join(rejected) if rejected
+                       else "no ensemble on file for any shortlisted candidate"),
+            "note": ("Ensembles that ran but did not converge highlight nothing."
+                     if rejected else
+                     "Structural discovery is a separate costed GPU step, not run "
+                     "inline. Dispatch one with `python "
+                     "scripts/predict_med23_interface.py <GENE> --accession <ACC> "
+                     "--dispatch`.")})
 
     # ── druggable site ─────────────────────────────────────────────────────
     #
@@ -266,8 +422,18 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
     mapped = [v.gene for v in top
               if (link := interface_evidence.get(v.gene))
               and link.interacting_region_mapped and not link.calibration_only]
+    #
+    # The curated origin is enabled here and labelled as what it is. The MED23
+    # pocket from PDB 9F6Y is receptor-side coordinates someone deposited, so it
+    # is a legal docking box; it is *where ELK1 binds*, so it is calibration and
+    # not a site established for whatever this run shortlisted. Both halves of
+    # that go on screen. `curated_for` is deliberately not passed: it would
+    # refuse the pocket for every TF except ELK1, which is the right guard when
+    # a caller is about to assert the site belongs to their TF, and the wrong
+    # one when the interface is showing a labelled calibration surface.
     residues, basis, blockers = receptor_residues(cfg.partner_gene,
-                                                  consensus=consensus)
+                                                  consensus=consensus,
+                                                  allow_curated=True)
     site = None
     if not blockers and free_receptor and Path(free_receptor).exists():
         site = build_search_site(parse_mmcif(Path(free_receptor)), residues,
@@ -279,8 +445,11 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
             "id": "site", "state": "done",
             "detail": (f"{site.size[0]:.1f} x {site.size[1]:.1f} x {site.size[2]:.1f} A "
                        f"box on {cfg.partner_gene} around {len(site.residues)} residues"),
-            "note": f"From {basis}. Screened against the free receptor, not a "
-                    "TF-occupied one.",
+            "note": (f"From {basis}. Screened against the free receptor, not a "
+                     "TF-occupied one. This is the cavity that binds ELK1 — "
+                     "calibration, not a site established for "
+                     + (", ".join(v.gene for v in top) if top else "any candidate here")
+                     + "."),
             "center": site.center, "size": site.size, "residues": site.residues})
     else:
         why = blockers or (site.blockers if site else
@@ -297,12 +466,63 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
                         else "No candidate here has a documented contact either."))})
 
     # ── screening ──────────────────────────────────────────────────────────
-    emit("stage", {
-        "id": "screening",
-        "state": "pending" if (site and site.defensible) else "abstained",
-        "detail": ("ready to dock against the site above" if site and site.defensible
-                   else "no defensible site, so no screen"),
-        "note": "Docking without a site finds something everywhere and means nothing."})
+    #
+    # Vina is minutes of CPU per compound, so the screen is not re-run per
+    # question — and it does not need to be: the box is a property of the
+    # receptor and the library, not of the disease context that was asked
+    # about. The recorded run is served with its seed and its file, labelled
+    # as recorded, exactly as `data.json` labels the cold-start landscape. A
+    # screen that never ran and a screen that ran earlier are different
+    # results and the interface says which one it is showing.
+    screen = _recorded_screen(site)
+    if site is None or not site.defensible:
+        emit("stage", {
+            "id": "screening", "state": "abstained",
+            "detail": "no defensible site, so no screen",
+            "note": "Docking without a site finds something everywhere and means nothing."})
+    elif screen is None:
+        emit("stage", {
+            "id": "screening", "state": "pending",
+            "detail": "ready to dock against the site above",
+            "note": f"No screen on file for this box. Run `python scripts/vina_smoke.py "
+                    f"--dock --json {SCREEN_FILE.relative_to(ROOT)}` to produce one."})
+    else:
+        s, poses = screen
+        emit("stage", {
+            "id": "screening", "state": "done",
+            "detail": (f"{s['scored']}/{s['docked']} compounds scored, "
+                       f"{s['clean_poses']} without geometry flags, best "
+                       f"{s['best']:.2f} kcal/mol"),
+            "note": (f"Recorded screen, seed {s['seed']}, from "
+                     f"{SCREEN_FILE.relative_to(ROOT)} — not re-run for this question; "
+                     "the box depends on the receptor, not the context. Approved-drug "
+                     "control library: a machinery check, not a designed screen. Vina "
+                     "scores rank poses — they are not affinities and not evidence of "
+                     "binding.")})
+
+    # What the 3D view highlights on MED23 for each shortlisted candidate. The
+    # two layers are different kinds of claim and stay separate: `ligands` are
+    # docked poses this project computed, `residues` would be a predicted
+    # interface, and there is no ensemble inline, so that list is empty and the
+    # panel says "not predicted" rather than borrowing the pocket.
+    for v in top:
+        hit = converged.get(v.gene)
+        residues = sorted(set(hit[1].get("partner_contact_residues", []))) if hit else []
+        emit("highlight", {
+            "gene": v.gene, "residues": residues,
+            "ligands": poses if screen else [],
+            # The union of what the shown poses contact. Computed, not
+            # predicted and not observed: these are the residues a compound
+            # this project docked came within 4.5 A of.
+            "ligand_residues": sorted({r for p in (poses if screen else [])
+                                       for r in p["residues"]}),
+            "note": ((f"{len(residues)} {cfg.partner_gene} residues, from an ensemble "
+                      f"where {hit[0].dominant_cluster_samples}/{hit[0].total_samples} "
+                      "samples agree. A prediction, not a contact.") if hit else
+                     (f"No interface between {v.gene} and {cfg.partner_gene} has been "
+                      "predicted, so nothing is highlighted for this candidate."))
+                    + (" The poses shown are docked into the ELK1 cavity."
+                       if screen else "")})
 
     # ── next experiment ────────────────────────────────────────────────────
     emit("stage", {
@@ -314,4 +534,5 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
                  "that gap is what unblocks the rest." if top
                  else ("Either this context is not TF-addicted, or it needs finer "
                        "resolution than " + m.level + ". Both are results."))})
+    emit("thinking", {"trace": trace.as_dict()})
     emit("done", {"ok": True})

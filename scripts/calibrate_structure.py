@@ -95,7 +95,8 @@ CITATION = "doi:10.1038/s41467-025-59014-8 (PMC12015215) — verified at source 
 
 
 def verify_accession(accession: str, expected_gene: str,
-                     gene_names: list[str], pdb_crossrefs: list[str]) -> list[str]:
+                     gene_names: list[str], pdb_crossrefs: list[str],
+                     pdb_id: str | None = None) -> list[str]:
     """Check that an accession is the protein the calibration means.
 
     This is the check that was missing. `verify_motif` verified the ELK1 half
@@ -108,7 +109,12 @@ def verify_accession(accession: str, expected_gene: str,
     Two independent checks, because either alone can pass by accident: the gene
     symbol UniProt itself reports, and whether the reference structure lists
     this entry. MED24 fails both.
+
+    `pdb_id` defaults to this module's calibration structure. Other controls
+    reuse the guard against their own reference -- the failure it catches is
+    not specific to this complex.
     """
+    pdb_id = pdb_id or STRUCTURE_PDB
     problems: list[str] = []
     names = [g.upper() for g in (gene_names or [])]
     if expected_gene.upper() not in names:
@@ -117,9 +123,9 @@ def verify_accession(accession: str, expected_gene: str,
             f"include {expected_gene}: this is not the protein named in the "
             f"calibration constants."
         )
-    if STRUCTURE_PDB not in (pdb_crossrefs or []):
+    if pdb_id not in (pdb_crossrefs or []):
         problems.append(
-            f"PDB {STRUCTURE_PDB} is not among UniProt's cross-references for "
+            f"PDB {pdb_id} is not among UniProt's cross-references for "
             f"{accession} ({pdb_crossrefs or '[]'}): this entry is not a chain "
             f"of the reference structure."
         )

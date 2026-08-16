@@ -53,7 +53,10 @@ button{font:inherit}
   background:radial-gradient(70% 60% at 60% 45%,transparent 40%,var(--bg) 88%)}
 .load3d{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--mono);
   font-size:11.5px;color:var(--ink-3);transition:opacity .5s}
-.load3d[done]{opacity:0}
+/* A finished loader must stop taking clicks as well as stop being visible:
+   opacity:0 alone leaves a full-bleed div over the canvas that swallows every
+   drag meant for the structure, and every click meant for what is behind it. */
+.load3d[done]{opacity:0;pointer-events:none}
 .cap3d{position:absolute;left:0;right:0;bottom:38px;text-align:center;z-index:2;
   font-family:var(--mono);font-size:11px;color:var(--ink-3);pointer-events:none;
   opacity:0;animation:fadeUp .9s 1.1s ease forwards}
@@ -187,7 +190,28 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .body[data-src=off] .srcs h2 .cnt{order:3;writing-mode:vertical-rl}
 .body[data-src=off] .srcs-toggle{margin:0;order:1}
 .body[data-src=off] #papers{display:none}
+.body[data-src=off] .think-h,.body[data-src=off] #thinking{display:none}
 .srcs h2 .lbl{white-space:nowrap}
+/* Reasoning log. Collapsed by default: it is there to be checked, not read
+   every time, and it must not push the sources out of view. */
+.think-h{border-top:1px solid var(--line);margin-top:6px;padding-top:14px!important}
+#thinking{max-height:44vh;overflow-y:auto}
+.tcall{margin:0 14px 8px;background:var(--card);border:1px solid var(--line);
+  border-radius:var(--r);overflow:hidden}
+.tcall>summary{cursor:pointer;padding:9px 11px;font-size:11.5px;display:flex;
+  align-items:center;gap:8px;list-style:none}
+.tcall>summary::-webkit-details-marker{display:none}
+.tcall>summary:hover{background:var(--card-2,rgba(127,127,127,.06))}
+.tcall .step{font-family:var(--mono);color:var(--ink);font-size:11px}
+.tcall .meta{margin-left:auto;font-family:var(--mono);color:var(--ink-3);font-size:10.5px}
+.tcall .err{color:var(--fail)}
+.tcall .body{padding:0 11px 11px;font-size:11.5px;line-height:1.5}
+.tcall .lab{font-size:10px;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--ink-3);margin:8px 0 3px}
+.tcall pre{margin:0;padding:8px 9px;background:var(--bg);border:1px solid var(--line);
+  border-radius:6px;white-space:pre-wrap;word-break:break-word;
+  font-family:var(--mono);font-size:10.5px;color:var(--ink-2);max-height:190px;
+  overflow-y:auto}
 .paper{margin:0 14px 9px;background:var(--card);border:1px solid var(--line);
   border-radius:var(--r);padding:11px 12px;animation:slideIn .45s ease both;
   text-decoration:none;display:block;transition:border-color .15s}
@@ -488,6 +512,15 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
         <button class="srcs-toggle" id="srcToggle" aria-expanded="true"
                 aria-controls="papers" title="Hide sources">›</button></h2>
       <div id="papers"><p class="empty">Papers retrieved during the run appear here, newest first.</p></div>
+
+      <!-- What the model was asked and what it said, kept for the whole run.
+           A pipeline that shows only its conclusions asks to be trusted; this
+           one can be checked, so every exchange stays available afterwards. -->
+      <h2 class="think-h"><span class="lbl">Reasoning</span>
+        <span class="cnt" id="thinkCount"></span>
+        <button class="srcs-toggle" id="thinkToggle" aria-expanded="false"
+                aria-controls="thinking" title="Show reasoning">›</button></h2>
+      <div id="thinking" hidden><p class="empty">The model's calls appear here once a run starts.</p></div>
     </div>
   </div>
 </div>
@@ -718,8 +751,13 @@ $('#chips').innerHTML = SUGGESTIONS.map(s=>`<button>${s}</button>`).join('');
 $('#chips').onclick = e => { const b=e.target.closest('button'); if(b) enter(b.textContent); };
 $('#go0').onclick = () => enter($('#q0').value || $('#q0').placeholder);
 $('#q0').onkeydown = e => { if(e.key==='Enter') enter($('#q0').value || $('#q0').placeholder); };
-$('#go1').onclick = () => run($('#q1').value);
-$('#q1').onkeydown = e => { if(e.key==='Enter') run($('#q1').value); };
+// Both query boxes go through `enter`. The header one used to call `run`
+// directly, which started a real pipeline behind the landing page whenever the
+// reader had not scrolled past it first: the stages advanced, the plot filled
+// in, and none of it was reachable because #landing was still on top eating
+// every click. A query is a request to see the answer, so it opens the app.
+$('#go1').onclick = () => enter($('#q1').value);
+$('#q1').onkeydown = e => { if(e.key==='Enter') enter($('#q1').value); };
 $('#home').onclick = () => { $('#landing').removeAttribute('hidden-state');
   $('#app').removeAttribute('data-on'); };
 
@@ -727,6 +765,10 @@ function enter(q){
   $('#landing').setAttribute('hidden-state','');
   $('#app').setAttribute('data-on','');
   $('#q1').value = q;
+  // Already inside the app: run immediately. The delay below exists to let the
+  // landing fade out before the plot measures itself, and paying it again on
+  // every subsequent question just makes the interface feel slow.
+  if(booted){ run(q); return; }
   setTimeout(()=>{ booted=true; sizePlot(); draw(); run(q);
     // Warm the WebGL module while the reader is on Landscape, so the first
     // open of Structure is not a cold ~600 KB import.
@@ -780,11 +822,63 @@ function addPaper(p){
   document.querySelector('#srcCount').textContent = n ? n : '';
 }
 
+/* Reasoning rail: every exchange with the model, kept for the whole run.
+   The trace arrives cumulative on each `thinking` event, so only the calls not
+   yet on screen are appended — re-rendering the list would collapse whichever
+   call the reader had opened. Text goes in via textContent: abstracts and
+   prompts carry <, > and & that innerHTML would eat. */
+let thoughtsShown = 0;
+function resetThinking(){
+  $('#thinking').replaceChildren();
+  $('#thinkCount').textContent = ''; thoughtsShown = 0;
+}
+function thinkBlock(step, meta, isError, sections, open){
+  const d=document.createElement('details'); d.className='tcall'; d.open=!!open;
+  const s=document.createElement('summary');
+  const a=document.createElement('span'); a.className='step'; a.textContent=step;
+  const b=document.createElement('span');
+  b.className='meta'+(isError?' err':''); b.textContent=meta;
+  s.append(a,b); d.append(s);
+  const body=document.createElement('div'); body.className='body';
+  for(const [lab,text] of sections){
+    if(!text) continue;
+    const h=document.createElement('div'); h.className='lab'; h.textContent=lab;
+    const pre=document.createElement('pre'); pre.textContent=text;
+    body.append(h,pre);
+  }
+  d.append(body); $('#thinking').append(d);
+}
+function addThinking(trace){
+  for(const c of (trace.calls||[]).slice(thoughtsShown))
+    thinkBlock(c.step,
+               c.error ? 'failed' : `${c.input_tokens}→${c.output_tokens} tok · ${c.seconds}s`,
+               !!c.error,
+               [['prompt', c.prompt], [c.error?'error':'reply', c.error||c.reply]]);
+  thoughtsShown = (trace.calls||[]).length;
+  $('#thinkCount').textContent = thoughtsShown || '';
+}
+/* Model-written prose over numbers computed elsewhere. It lives in the same
+   rail as the calls that produced it, and carries the caveat, so it can never
+   be mistaken for a computed result. */
+function addSummary(s){
+  thinkBlock('summary', s.model||'', false,
+             [['prose', s.text], ['caveat', s.caveat]], true);
+}
+{
+  const btn=$('#thinkToggle'), box=$('#thinking');
+  btn.onclick = () => { const open = box.hidden;
+    box.hidden = !open;
+    btn.textContent = open ? '⌄' : '›';
+    btn.setAttribute('aria-expanded', String(open));
+    btn.title = open ? 'Hide reasoning' : 'Show reasoning'; };
+}
+
 let es=null;
 function run(q){
   es?.close();
   STAGES.forEach(([id])=>setStage({id,state:'pending',detail:'',note:''}));
   $('#papers').innerHTML=''; $('#srcCount').textContent=''; resetReady();
+  resetThinking();
   const live = new EventSource('/api/run?q='+encodeURIComponent(q||''));
   es = live;
   let got=false;
@@ -806,6 +900,16 @@ function run(q){
     setReady('candidates', C.length > 0,
              C.length ? '' : 'no candidate cleared the gates in this context');
   });
+  // What the run has to draw on MED23 for a candidate: docked poses it
+  // computed, and predicted interface residues when an ensemble produced any.
+  live.addEventListener('highlight', e => {
+    const h = JSON.parse(e.data);
+    HIGHLIGHT[h.gene] = h;
+    const sel = C[selIdx];
+    if(sel && sel.gene === h.gene) showPair?.(sel);
+  });
+  live.addEventListener('thinking', e => addThinking(JSON.parse(e.data)));
+  live.addEventListener('summary', e => addSummary(JSON.parse(e.data)));
   live.addEventListener('done', () => live.close());
   live.onerror = () => { live.close(); if(!got) replay(q); };
 }
@@ -1148,7 +1252,7 @@ let PRED = D.predicted || {};
 // must not survive into it. Otherwise neuroblastoma inherits ISL1 and MYCN
 // panels from the seeded Lung run while melanoma shows nothing - an artifact of
 // which genes happened to be in data.json, presented as biology.
-function clearSeededStructures(){ STRUCTS = {}; PRED = {}; }
+function clearSeededStructures(){ STRUCTS = {}; PRED = {}; HIGHLIGHT = {}; }
 const predFor = c => (c && PRED[c.gene]) || null;
 const words = s => (s||'unknown').replace(/_/g,' ');
 const pairOf = c => c.partner ? `${c.gene}–${c.partner}` : c.gene;
@@ -1158,6 +1262,48 @@ const BANDS = [[90,'--pass','very high'],[70,'--control','confident'],
 const bandOf = v => BANDS.find(b => v >= b[0]);
 
 let glc=null, painted=null;
+
+/* MED23 itself, loaded once and kept. Separate from data.json because it is not
+   a result: it is the receptor, true for every run, and it must not be cleared
+   when a new run replaces the seeded candidates. */
+let MED23=null;
+/* gene -> {residues, ligands, interpretation, note}. Populated by a run that
+   produces an interface or a docked pose. Empty means empty. */
+let HIGHLIGHT={};
+fetch('./med23.json').then(r=>r.ok?r.json():null).then(m=>{ MED23=m; }).catch(()=>{});
+
+const legendReceptor = hl => `
+  <span><i style="background:var(--ink-3)"></i>MED23 backbone · observed</span>
+  <span><i style="background:var(--control)"></i>ELK1-binding cavity · observed</span>`
+  + (hl?.residues?.length
+     ? `<span><i style="background:var(--fail)"></i>predicted interface · computed</span>` : '')
+  + (hl?.ligands?.length
+     ? `<span><i style="background:var(--pass)"></i>docked pose &amp; contacts · computed</span>` : '');
+
+function receptorPanel(M, c, hl){
+  const gene=c?.gene||'this candidate';
+  return `<h3>${M.gene} <span class="muted">${M.pdb_id}</span></h3>
+  <p class="sub">${M.method} · ${M.form} · ${M.residues_resolved}/${M.residues_total}
+     residues (${Math.round(M.coverage*100)}%) · drag to rotate</p>
+  <div class="panel"><dl>
+    <dt>receptor</dt><dd>${M.gene} (${M.uniprot})</dd>
+    <dt>coordinates</dt><dd><a href="${M.url}" target="_blank" rel="noopener">PDB ${M.pdb_id}</a> · ${M.licence}</dd>
+    <dt>range</dt><dd>${M.residue_range[0]}–${M.residue_range[1]}</dd>
+    <dt>cavity</dt><dd>${M.pocket.residues.join(', ')}</dd>
+    <dt>${gene} interface</dt><dd>${hl?.residues?.length
+        ? hl.residues.join(', ') : '<span class="muted">not predicted</span>'}</dd>
+    <dt>docked</dt><dd>${hl?.ligands?.length
+        ? hl.ligands.map(l=>`<div><b>${l.name}</b> ${l.score.toFixed(2)} kcal/mol
+             &middot; contacts ${l.residues?.length ? l.residues.join(', ')
+                                : '<span class="muted">none in the cavity</span>'}</div>`).join('')
+        : '<span class="muted">no screen run</span>'}</dd></dl></div>
+  <p class="note">The cavity shown is where <b>ELK1</b> binds, from the deposited
+    complex. It is not a site established for ${gene}.
+    ${hl?.residues?.length
+      ? 'The red residues are a computational prediction for this candidate — a hypothesis, not a contact.'
+      : 'No interface has been predicted for this candidate, so nothing is highlighted for it.'}</p>
+  <p class="note">${M.limitations.join(' ')}</p>`;
+}
 async function glContext(){
   if(glc) return glc;
   const THREE=await import('./vendor/three.module.min.js');
@@ -1216,6 +1362,75 @@ async function paint(S){
   size();
   frameCamera(cam,controls,cvs,span);
   renderStructure();
+}
+
+/* The receptor on its own, which is what there is to look at most of the time.
+   MED23 is the partner for every candidate this pipeline proposes and exists as
+   a deposited apo structure, so the tab no longer goes blank when a run has not
+   produced a complex — it shows the surface the whole hypothesis is about, and
+   highlights whatever the run does have.
+
+   Layers are coloured by what kind of claim they are, not for decoration:
+   grey backbone is observed coordinates, amber is the experimentally mapped
+   ELK1 cavity, red is a computational per-candidate prediction, green is a
+   docked pose. A reader should be able to tell measured from predicted without
+   reading the caption. */
+async function paintReceptor(M, highlight){
+  const {THREE,cam,controls,grp,size,cvs}=await glContext();
+  const A=M.trace;
+  const c0=A.reduce((a,p)=>[a[0]+p[1],a[1]+p[2],a[2]+p[3]],[0,0,0]).map(v=>v/A.length);
+  const V=p=>new THREE.Vector3(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2]);
+  const span=Math.max(...A.map(p=>Math.hypot(p[1]-c0[0],p[2]-c0[1],p[3]-c0[2])));
+  const R={body:span*.009, back:span*.010, pocket:span*.040, pred:span*.034, lig:span*.030};
+  const pocket=new Set(M.pocket?.residues||[]);
+  const pred=new Set(highlight?.residues||[]);
+  // Every resolved heavy atom, minus the residues that get their own colour —
+  // drawing a highlighted residue twice leaves the grey copy z-fighting with
+  // the coloured one and the highlight reads as dirty rather than picked out.
+  // Residues the docked compounds actually touch. Drawn separately from the
+  // cavity because they are a different claim: the cavity is where ELK1 was
+  // observed, these are where a compound this project docked came within
+  // 4.5 A. They overlap heavily, and that overlap is the point.
+  const lig=new Set(highlight?.ligand_residues||[]);
+  const body=(M.atoms||[]).filter(p=>!pocket.has(p[0])&&!pred.has(p[0])&&!lig.has(p[0]));
+  const tube=(ps,color,rad)=>{ if(ps.length<2) return;
+    grp.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(ps),
+      Math.max(24,ps.length*2),rad,8,false),
+      new THREE.MeshStandardMaterial({color,roughness:.55,metalness:.05}))); };
+  const balls=(list,color,rad,op=1)=>{ if(!list.length) return;
+    const m=new THREE.InstancedMesh(new THREE.SphereGeometry(rad,18,14),
+      new THREE.MeshStandardMaterial({color,roughness:.4,metalness:.1,
+        transparent:op<1,opacity:op}),list.length);
+    const o=new THREE.Object3D();
+    list.forEach((p,i)=>{o.position.copy(V(p));o.updateMatrix();m.setMatrixAt(i,o.matrix);});
+    grp.add(m); };
+  renderStructure=()=>{
+    const CO={body:new THREE.Color(css('--line-2')),
+              back:new THREE.Color(css('--ink-3')),
+              pocket:new THREE.Color(css('--control')),
+              pred:new THREE.Color(css('--fail')),
+              lig:new THREE.Color(css('--pass'))};
+    grp.clear(); let run=[];
+    // The body first, dim and slightly transparent: it is the surface the
+    // claims sit on, not a claim itself, and everything drawn after it has to
+    // read as sitting on top rather than inside.
+    balls(body,CO.body,R.body,.5);
+    // Break the tube at gaps: 9F76 has unresolved loops, and joining across one
+    // draws a straight bar through the middle of the protein that looks like a
+    // helix nobody observed.
+    for(let i=0;i<A.length;i++){ run.push(V(A[i]));
+      if(i+1>=A.length||A[i+1][0]-A[i][0]>1){ tube(run,CO.back,R.back); run=[]; } }
+    // Highlights are drawn from the atom list, not the Cα trace: a residue
+    // shown as one sphere at its Cα is a dot buried in the body, where the
+    // same residue drawn as its atoms is a patch on the surface.
+    const ofRes=set=>(M.atoms||A).filter(p=>set.has(p[0]));
+    balls(ofRes(pocket),CO.pocket,R.pocket*.5);
+    if(lig.size) balls(ofRes(lig),CO.lig,R.lig*.5,.9);
+    if(pred.size) balls(ofRes(pred),CO.pred,R.pred*.5);
+    for(const L of (highlight?.ligands||[]))
+      balls([[0,...L.centroid]],CO.lig,R.lig,.85);
+  };
+  size(); frameCamera(cam,controls,cvs,span); renderStructure();
 }
 
 /* Frame the whole thing whatever the panel aspect is, rather than a fixed
@@ -1327,14 +1542,35 @@ const missingPanel = c => `<h3>No experimental structure</h3>
 
 showPair = async c => {
   const view=$('#v-structure');
-  const S=structFor(c), P=S?null:predFor(c);   // a solved complex always wins
-  view.toggleAttribute('data-nostruct', !S && !P);
-  if(!S && !P){
+  const S=structFor(c), P=S?null:predFor(c);
+  // MED23 is the platform, not a fallback. Every candidate this pipeline
+  // proposes is proposed against it, the apo coordinates are deposited, and a
+  // view whose base layer changes shape per candidate makes two runs
+  // impossible to compare. So the receptor wins for anything partnered with
+  // MED23 — including ELK1, whose solved complex is the landing hero already —
+  // and a solved complex is shown only for a pair with a different partner,
+  // like the POU2F3–POU2AF2 control.
+  const useReceptor = MED23 && (!c?.partner || c.partner === MED23.gene || (!S && !P));
+  view.toggleAttribute('data-nostruct', !S && !P && !MED23);
+  if(!S && !P && !MED23){
     painted=null; renderStructure=null; $('#leg').innerHTML='';
     view.removeAttribute('data-loading');
     $('#nostruct').innerHTML=`<div><span class="g">${pairOf(c)}</span>
       ${c.partner?'no coordinates for this pair':'no contact partner to model'}</div>`;
     $('#saside').innerHTML=missingPanel(c);
+    return;
+  }
+  if(useReceptor){
+    const hl = HIGHLIGHT[c?.gene] || null;
+    $('#leg').innerHTML = legendReceptor(hl);
+    $('#saside').innerHTML = receptorPanel(MED23, c, hl);
+    if(!view.hasAttribute('data-on')){ painted=null; return; }
+    const key = `receptor|${c?.gene||''}|${hl?hl.residues.join(','):''}`
+              + `|${hl?.ligands?.map(l=>l.name).join(',')||''}`;
+    if(painted===key){ glc?.size(); return; }
+    painted=key; view.setAttribute('data-loading','');
+    try { await paintReceptor(MED23, hl); }
+    finally { view.removeAttribute('data-loading'); }
     return;
   }
   $('#leg').innerHTML = S ? legendFor(S) : legendPredicted();

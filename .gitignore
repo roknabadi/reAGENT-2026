@@ -40,3 +40,10 @@ __pycache__/
 *.pyc
 *.egg-info/
 .DS_Store
+
+# Local shell wiring and MCP scratch output, not project state.
+.envrc
+.playwright-mcp/
+
+# Boltz smoke output: a generated artifact, like everything under runs/.
+boltz-experiments/

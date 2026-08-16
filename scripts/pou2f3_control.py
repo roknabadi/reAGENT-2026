@@ -57,8 +57,20 @@ from reagent_workflow.interface import (ConsensusConfig, contacts_between,  # no
 STRUCTURE = ROOT / "downloads" / "9PFP.cif"
 OUT = ROOT / "runs" / "pou2f3_control"
 
-# UniProt accessions, resolved live rather than vendored.
-POU2F3_ACC, POU2AF2_ACC = "Q9UKI9", "A6NFH5"
+# UniProt accessions, resolved live rather than vendored, and verified against
+# both the gene symbol and the reference structure before every dispatch.
+#
+# POU2AF2 read A6NFH5 in the first version of this file. A6NFH5 is FABP12, a
+# fatty-acid-binding protein with no connection to POU2F3, and the first
+# ensemble was predicted against it -- the same failure that put MED24 in place
+# of MED23 elsewhere in this project, made independently, one commit after
+# reading the write-up of it. The guard below is why it did not reach a second
+# run: UniProt reports gene names ['fabp12'] for A6NFH5 and does not list 9PFP
+# among its cross-references, so `verify_accession` refused both checks.
+#
+# Q8IXP5 is OCA-T1 / POU2AF2, 288 aa. RCSB independently reports Q8IXP5 as the
+# reference for chain 2 of 9PFP.
+POU2F3_ACC, POU2AF2_ACC = "Q9UKI9", "Q8IXP5"
 
 # 9PFP asymmetric unit: two independent copies of the complex, plus DNA.
 #   A / E   POU2F3 POU domains (186-340)      the TF
@@ -222,16 +234,31 @@ def main() -> int:
         return 0
 
     # ── prediction: full-length, uninformed, one dispatch per seed ─────────
-    from calibrate_structure import fetch_sequence
+    from calibrate_structure import fetch_sequence, verify_accession
     from proto_tools.modal.client import dispatch_to_modal
     from proto_tools.tools.structure_prediction.boltz2.boltz2 import (Boltz2Config,
                                                                      Boltz2Input)
 
-    pou2f3, url1, _ = fetch_sequence(POU2F3_ACC, "POU2F3")
-    pou2af2, url2, _ = fetch_sequence(POU2AF2_ACC, "POU2AF2")
-    print(f"\nPOU2F3   {POU2F3_ACC}  {len(pou2f3)} aa (chain A)  {url1}")
-    print(f"POU2AF2  {POU2AF2_ACC}  {len(pou2af2)} aa (chain B)  {url2}")
-    print("full length, no constraints, no template: the model proposes the site")
+    # Both accessions are checked against the gene they are named for and
+    # against the PDB entry they are supposed to be a chain of. This is the
+    # check whose absence let O75448 (MED24) stand in for MED23 through an
+    # entire GPU run: a wrong accession is the cheapest way to model the wrong
+    # protein, and nothing downstream can detect it.
+    seqs, problems = {}, []
+    for acc, gene in ((POU2F3_ACC, "POU2F3"), (POU2AF2_ACC, "POU2AF2")):
+        seq, url, pdbs, genes = fetch_sequence(acc, gene)
+        seqs[gene] = seq
+        bad = verify_accession(acc, gene, genes, pdbs, pdb_id=STRUCTURE.stem)
+        problems.extend(bad)
+        print(f"\n{gene:8s} {acc}  {len(seq)} aa  {url}")
+        print(f"         gene names {genes} · {STRUCTURE.stem} in cross-refs: "
+              f"{STRUCTURE.stem in pdbs}")
+    if problems:
+        for p in problems:
+            print(f"REFUSED  {p}", file=sys.stderr)
+        return 2
+    pou2f3, pou2af2 = seqs["POU2F3"], seqs["POU2AF2"]
+    print("\nfull length, no constraints, no template: the model proposes the site")
 
     complexes = [{"chains": [
         {"id": "A", "sequence": pou2f3, "entity_type": "protein"},
