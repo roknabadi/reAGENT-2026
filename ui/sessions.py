@@ -33,11 +33,14 @@ session it needs before pandas is anywhere near the process.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 import secrets
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # A session retains a whole run's event stream: a ~1,500-point landscape, every
 # abstract retrieved, and — when a screen ran — a few kilobytes of pose SDF per
@@ -46,8 +49,20 @@ from dataclasses import dataclass, field
 # nobody is coming back to, and the cap stops one-session-per-reload from
 # growing the heap without limit. Eviction is by last use, so the conversation
 # someone is in the middle of is the last thing dropped.
-TTL_SECONDS = 45 * 60
-MAX_SESSIONS = 8
+# A session lasts until a new one is asked for. It was 45 minutes in memory,
+# which meant every restart of the server — three in one afternoon, for a config
+# fix and two dependency fixes — silently destroyed the reader's conversation:
+# the next follow-up found an id naming nothing, ran the whole Paperclip pull
+# again, and looked like statefulness that did not work.
+#
+# `None` disables time expiry. The cap remains, because a record holds a run's
+# whole event stream and unbounded growth on disk is its own failure; eviction
+# is by least-recently-used, so the conversation in front of someone is the last
+# thing to go.
+TTL_SECONDS = None
+MAX_SESSIONS = 50
+STORE_DIR = Path(os.environ.get("REAGENT_SESSION_DIR")
+                 or Path(__file__).resolve().parent.parent / "outputs" / "ui_sessions")
 
 
 def iso(at: float) -> str:
@@ -90,6 +105,9 @@ class Session:
     # another run's context is precisely the thing being guarded against here.
     # The second reader waits; a dropped connection releases it either way.
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    # True when this came back from disk after a restart: the record survived,
+    # the live objects did not.
+    restored: bool = False
 
     @property
     def computed_at(self) -> float:
@@ -123,13 +141,16 @@ class Store:
     nothing here needs memory freed at a particular moment — only bounded.
     """
 
-    def __init__(self, ttl: float = TTL_SECONDS, limit: int = MAX_SESSIONS,
-                 clock=time.time) -> None:
+    def __init__(self, ttl: float | None = TTL_SECONDS, limit: int = MAX_SESSIONS,
+                 clock=time.time, store_dir=STORE_DIR) -> None:
         self._ttl = ttl
         self._limit = limit
         self._clock = clock
         self._lock = threading.Lock()
         self._sessions: dict[str, Session] = {}
+        # None disables persistence, which is what the tests want: a store with
+        # a fake clock and a temp dir should not find yesterday's sessions.
+        self._dir = Path(store_dir) if store_dir else None
 
     def __len__(self) -> int:
         with self._lock:
@@ -160,11 +181,69 @@ class Store:
         with self._lock:
             self._purge()
             s = self._sessions.get(sid)
+            if s is None:
+                # Not in memory is not the same as gone. The process may simply
+                # be younger than the conversation.
+                s = self._load(sid)
+                if s is not None:
+                    self._sessions[sid] = s
+                    self._evict()
             if s is not None:
                 s.touched = self._clock()
             return s
 
+    def _path(self, sid: str) -> Path | None:
+        return (self._dir / f"{sid}.json") if self._dir else None
+
+    def save(self, s: Session) -> None:
+        """Write a session's record so a restart does not destroy it.
+
+        Only the JSON-able half. `runtime` holds live objects — the docking box,
+        the evidence dict the literature stage mutated, the agent trace — and a
+        restored session says so rather than pretending it has them.
+
+        Written to a temporary file and renamed, so a reader never sees half a
+        record: a crash mid-write would otherwise leave a session that parses as
+        far as the truncation and looks like a short run.
+        """
+        path = self._path(s.id)
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps({
+                "id": s.id, "created": s.created, "touched": s.touched,
+                "questions": s.questions, "record": s.record,
+            }), encoding="utf-8")
+            os.replace(tmp, path)
+        except (OSError, TypeError, ValueError):
+            # Persistence is a convenience; losing it must never take the run
+            # down with it. The session stays live in memory either way.
+            pass
+
+    def _load(self, sid: str) -> Session | None:
+        path = self._path(sid)
+        if path is None or not path.is_file():
+            return None
+        try:
+            d = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if d.get("id") != sid:
+            return None
+        s = Session(id=sid, created=float(d.get("created") or self._clock()),
+                    touched=self._clock(), questions=list(d.get("questions") or []),
+                    record=d.get("record") or {})
+        # The live objects did not survive the restart, and a follow-up that
+        # needs them has to know. Evidence promoted by reading in the original
+        # run is not in force here, which can only make a gate stricter.
+        s.restored = True
+        return s
+
     def _purge(self) -> None:
+        if self._ttl is None:          # a session lasts until a new one is asked for
+            return
         cut = self._clock() - self._ttl
         for sid in [k for k, s in self._sessions.items() if s.touched < cut]:
             del self._sessions[sid]
@@ -173,6 +252,9 @@ class Store:
         while len(self._sessions) > self._limit:
             oldest = min(self._sessions.values(), key=lambda s: s.touched)
             del self._sessions[oldest.id]
+            path = self._path(oldest.id)
+            if path is not None:
+                path.unlink(missing_ok=True)
 
 
 # ── routing ────────────────────────────────────────────────────────────────
