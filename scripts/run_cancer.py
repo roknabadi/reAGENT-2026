@@ -37,6 +37,7 @@ from reagent_workflow.chemistry import (Compound, assemble_library, describe,
                                         amphiphilicity_proxy, standardize)
 from reagent_workflow.discovery_config import DiscoveryConfig
 from reagent_workflow.interface import parse_mmcif
+from reagent_workflow.literature import gather
 from reagent_workflow.site import build_search_site
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -85,6 +86,8 @@ class Run:
         self.context, self.quiet = context, quiet
         self.stages: list[dict] = []
         self.papers: list[dict] = []
+        self.evidence: dict = {}
+        self.shortlist = None
 
     def stage(self, sid, name) -> Stage:
         return Stage(self, sid, name)
@@ -193,18 +196,41 @@ def run(context: str, column: str | None, cfg: DiscoveryConfig, quiet=False) -> 
     else:
         s.abstain(f"0 of {len(ranked)} clear every gate", top, eligible=0)
 
-    # 3 — literature
+    # 3 — literature, per candidate, per evidence axis (Andrey's stage-1 brief)
     s = r.stage("literature", "Literature")
-    genes = [c.dependency.gene for c in eligible[:3]]
-    q = (f"{' OR '.join(genes)} {context} transcription factor dependency coactivator"
-         if genes else f"{context} transcription factor dependency")
-    r.papers = paperclip_search(q, 5)
-    if r.papers:
-        s.done(f"{len(r.papers)} papers retrieved", "Retrieved, not read. A title is not evidence.",
-               query=q, papers=len(r.papers))
+    top = eligible[:cfg.structure.top_candidates]
+    if not top:
+        s.abstain("no gate-passing candidate to search evidence for",
+                  "Retrieval follows the gates; searching every TF would find "
+                  "something for all 1588 of them.")
     else:
-        s.blocked("Paperclip returned nothing",
-                  "CLI missing, not logged in, or no match for this query", query=q)
+        errors: list[str] = []
+        for c in top:
+            gene = c.dependency.gene
+            if not quiet:
+                print(f"{'':9s}{gene}:", end="", flush=True)
+            ev, papers, errs = gather(
+                gene, context, cfg.partner_gene, per_axis=4,
+                on_axis=None if quiet else
+                (lambda a, n, e: print(f" {a.split('_')[0]}={n}", end="", flush=True)))
+            if not quiet:
+                print()
+            r.evidence[gene] = ev
+            r.papers.extend(p.__dict__ for p in papers)
+            errors.extend(errs)
+        hits = sum(len(e.axes_with_hits) for e in r.evidence.values())
+        total_axes = sum(len(e.axes) for e in r.evidence.values())
+        leads = [g for g, e in r.evidence.items() if e.has_coactivator_lead]
+        detail = (f"{len(r.papers)} papers across {hits}/{total_axes} evidence axes "
+                  f"for {len(top)} candidate(s)")
+        note = ("Retrieved, not read. A title is not evidence. "
+                + (f"Coactivator leads to verify: {', '.join(leads)}." if leads
+                   else "No coactivator lead on any candidate."))
+        if errors:
+            s.blocked(f"{len(errors)} axis search(es) failed", "; ".join(errors[:2]))
+        else:
+            s.done(detail, note, papers=len(r.papers),
+                   axes_with_hits=hits, axes_total=total_axes, coactivator_leads=leads)
 
     # 4 — contact evidence
     s = r.stage("contact", "Mapped contact")

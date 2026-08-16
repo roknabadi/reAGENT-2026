@@ -108,6 +108,9 @@ class DiscoveryConfig(BaseModel):
     structure: StructureConfig = Field(default_factory=StructureConfig)
     chemistry: ChemistryConfig = Field(default_factory=ChemistryConfig)
     structure_mode: StructureMode = StructureMode.ESTABLISHED_INTERFACE
+    partner_gene: str = "MED23"
+    """The coactivator asked about. A default, not a restriction: the pipeline is
+    general across target classes and this is one worked test case."""
 
     @property
     def fractions_sum_to_one(self) -> bool:
