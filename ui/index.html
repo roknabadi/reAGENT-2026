@@ -460,7 +460,26 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
   color:var(--ink-3);font:inherit;font-size:11px;cursor:pointer}
 .reps button:hover{color:var(--ink-2)}
 .reps button[aria-current=true]{background:var(--card);color:var(--ink)}
-.leg{position:absolute;left:18px;top:16px;font-size:11.5px;background:var(--glass);
+/* Cursor inspector. Fixed in the corner rather than following the pointer: a
+   tooltip that moves is a tooltip you read while chasing it, and on a 1,258
+   residue protein the cursor is somewhere different every few pixels. */
+.inspect{position:absolute;left:18px;top:16px;z-index:4;width:246px;
+  background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line);
+  border-radius:12px;padding:12px 13px;font-size:11.5px;line-height:1.5;
+  pointer-events:none}
+.inspect .who{font-family:var(--mono);font-size:13px;color:var(--ink);
+  letter-spacing:-.01em}
+.inspect .sub{color:var(--ink-3);margin-top:2px;font-size:11px}
+.inspect dl{margin:9px 0 0;display:grid;grid-template-columns:66px minmax(0,1fr);
+  gap:4px 10px;font-size:11px}
+.inspect dt{color:var(--ink-3);font-family:var(--mono);font-size:10.5px}
+.inspect dd{margin:0;color:var(--ink-2);overflow-wrap:anywhere}
+.inspect .tag{display:inline-flex;align-items:center;gap:6px;margin-top:9px;
+  padding:3px 8px;border-radius:999px;font-size:10.5px;
+  border:1px solid var(--line-2)}
+.inspect .tag i{width:7px;height:7px;border-radius:2px;display:inline-block}
+.inspect .hint{color:var(--ink-3);font-size:10.5px;margin-top:9px}
+.leg{position:absolute;left:18px;bottom:16px;font-size:11.5px;background:var(--glass);
   backdrop-filter:blur(9px);border:1px solid var(--line);border-radius:12px;
   padding:10px 13px;display:flex;flex-direction:column;gap:6px}
 .leg > span{display:flex;align-items:center;gap:8px;white-space:nowrap}
@@ -670,6 +689,10 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
                is the view that needed a cartoon. -->
           <div id="mol3d" hidden></div>
           <div class="reps" id="reps" hidden></div>
+          <!-- What is under the cursor. Resting state describes the structure
+               as a whole, so the card is never empty and never has to be
+               chased across the canvas to be read. -->
+          <div class="inspect" id="inspect" hidden></div>
           <div class="leg" id="leg"></div>
           <div class="nostruct" id="nostruct"></div>
           <div class="loading3d" id="loading3d">building structure…</div></div>
@@ -1896,13 +1919,87 @@ async function paintMol(M, hl){
     // and the thing being claimed is seven of them.
     molv.zoomTo(pocket.length ? {resi:pocket} : {});
     molv.zoom(.55);
+
+    // Everything the cursor can land on, resolved once per paint so the hover
+    // handler stays a lookup rather than a search. A residue can belong to
+    // more than one layer — the ELK1 cavity and a compound's contacts overlap
+    // heavily, which is the point — so the first match in this order wins and
+    // the rest are listed after it.
+    const layers = [
+      {set: new Set(pred), label: 'predicted interface', state: 'computed',
+       colour: '--fail'},
+      {set: new Set(lig), label: shown ? `contacts ${shown.name}` : 'compound contact',
+       state: 'computed', colour: '--pass'},
+      {set: new Set(pocket), label: site.label, state: site.state,
+       colour: site.calibration ? '--control' : '--fail'},
+    ];
+    const SS = {h: 'helix', s: 'sheet', c: 'coil'};
+    inspectRest(M, site, shown);
+    molv.setHoverable({}, true,
+      atom => { inspectAtom(atom, M, layers, SS, shown); },
+      () => inspectRest(M, site, shown));
     molv.render();
   };
   molPaint();
 }
 
+/* The inspector at rest: what the whole structure is. A card that is blank
+   until the pointer is in exactly the right place teaches the reader that it
+   is usually broken. */
+function inspectRest(M, site, shown){
+  const box=$('#inspect'); if(!box) return;
+  box.hidden=false;
+  box.innerHTML = `<div class="who">${M.gene} ${M.pdb_id}</div>
+    <div class="sub">${M.method} · ${M.form}</div>
+    <dl>
+      <dt>resolved</dt><dd>${M.residue_range[0]}–${M.residue_range[1]} of
+        1–${M.residues_total}</dd>
+      <dt>atoms</dt><dd>${(M.n_atoms||0).toLocaleString()} heavy</dd>
+      <dt>site</dt><dd>${site.residues.length} residues · ${site.state}</dd>
+      ${shown ? `<dt>compound</dt><dd>${shown.name} ${shown.score.toFixed(2)} kcal/mol</dd>` : ''}
+    </dl>
+    <div class="hint">Point at the structure to inspect a residue.</div>`;
+}
+
+/* One atom, and what it belongs to. `resn`/`resi`/`chain` come from the
+   deposition; `ss` is 3Dmol's own secondary-structure assignment, which is why
+   it is reported as an assignment rather than as a fact from the file. */
+function inspectAtom(atom, M, layers, SS, shown){
+  const box=$('#inspect'); if(!box || !atom) return;
+  const isLigand = atom.resn === 'UNL' || atom.resn === 'LIG' || !atom.resi;
+  if(isLigand && shown){
+    box.innerHTML = `<div class="who">${shown.name}</div>
+      <div class="sub">docked pose · computed</div>
+      <dl>
+        <dt>atom</dt><dd>${atom.elem || atom.atom || '—'}</dd>
+        <dt>score</dt><dd>${shown.score.toFixed(2)} kcal/mol</dd>
+        <dt>contacts</dt><dd>${shown.residues?.length
+            ? shown.residues.join(', ') : 'none in the cavity'}</dd>
+        ${shown.identity?.status ? `<dt>identity</dt><dd>${shown.identity.status
+            .replace(/_/g,' ')}</dd>` : ''}
+      </dl>
+      <div class="tag"><i style="background:var(--pass)"></i>Vina ranks poses,
+        it does not measure binding</div>`;
+    return;
+  }
+  const hits = layers.filter(l => l.set.has(atom.resi));
+  const label = (M.pocket?.labels || []).find(l => l.slice(1) === String(atom.resi));
+  box.innerHTML = `<div class="who">${atom.resn || '—'} ${atom.resi ?? ''}</div>
+    <div class="sub">chain ${atom.chain || '—'}${
+      SS[atom.ss] ? ` · ${SS[atom.ss]} (assigned)` : ''}</div>
+    <dl>
+      <dt>atom</dt><dd>${atom.atom || '—'} · ${atom.elem || '—'}</dd>
+      ${label ? `<dt>one-letter</dt><dd>${label}</dd>` : ''}
+      <dt>b-factor</dt><dd>${atom.b != null ? atom.b.toFixed(1) : '—'}</dd>
+    </dl>
+    ${hits.length
+      ? hits.map(h => `<div class="tag"><i style="background:var(${h.colour})"></i>${
+          h.label} · ${h.state}</div>`).join('')
+      : '<div class="hint">Not in any highlighted set.</div>'}`;
+}
+
 function hideMol(){
-  $('#mol3d').hidden=true; $('#reps').hidden=true;
+  $('#mol3d').hidden=true; $('#reps').hidden=true; $('#inspect').hidden=true;
   $('#canvas3d').style.display='';
 }
 
