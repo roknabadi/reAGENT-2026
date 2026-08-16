@@ -65,13 +65,21 @@ def workdir(gene: str) -> pathlib.Path:
     return OUT / f"{gene.upper()}_MED23"
 
 
-def score(gene: str, cfg: ConsensusConfig, log=print) -> dict | None:
+def score(gene: str, cfg: ConsensusConfig, log=print, inputs: dict | None = None
+         ) -> dict | None:
     """Samples on disk → one consensus, or an explicit refusal.
 
     Chain A is the transcription factor and chain B is MED23, so the residues
     that reach the interface are `partner_contact_residues` — receptor-side by
     construction. Reading the target side by mistake is how a run ends up
     boxing MED23 around the TF's own numbering.
+
+    `inputs` is what `dispatch()` sent to Boltz for this ensemble — the config,
+    the MSAs, the seeds attempted vs returned. §14 requires the structural
+    model's inputs to be part of the scientific record, not just its output.
+    It is optional because `--score` can run standalone, well after the
+    dispatch that produced the samples on disk; there is nothing to attach in
+    that case and the record says so rather than guessing.
     """
     paths = sorted(workdir(gene).glob("sample_*.json"))
     if not paths:
@@ -106,13 +114,29 @@ def score(gene: str, cfg: ConsensusConfig, log=print) -> dict | None:
         # What the interface highlights. Empty whenever the consensus was
         # rejected: a refusal must not ship residues a viewer can paint.
         "partner_contact_residues": resolved if consensus.converged else [],
-        "overlaps_elk1_cavity": sorted(set(resolved) & set(MED23["residues"])),
+        # Same rule as the line above, for the same reason. This number reads
+        # as "how much of the ELK1 cavity does this TF also touch" and a
+        # reader will quote it before they read `consensus.status` — so a
+        # REFUSED run must not ship it either, or the residues it withheld
+        # above are exported anyway under a different key. This is exactly
+        # what shipped for INSM1-MED23: status "refused", and
+        # `overlaps_elk1_cavity` still non-empty.
+        "overlaps_elk1_cavity": (sorted(set(resolved) & set(MED23["residues"]))
+                                 if consensus.converged else []),
         "limitations": [
             "Computational structural hypothesis, not experimental evidence.",
             "Ensemble convergence is model self-consistency, not binding.",
             f"Residue numbering is MED23 {MED23_ACC}; residues unresolved in the "
             "free structure 9F76 cannot be drawn.",
         ],
+        # What was actually sent to Boltz, per §14. Without this, a 5-seed run
+        # that lost 2 to a failed dispatch leaves exactly 3 sample files on
+        # disk — numerically indistinguishable from a healthy 3-seed run — and
+        # a fake paired MSA would be invisible downstream.
+        "inputs": inputs if inputs is not None else {
+            "note": "not recorded: this consensus was built with --score from "
+                    "samples already on disk, not in the same process as the "
+                    "dispatch that produced them."},
     }
     out = workdir(gene) / "consensus.json"
     out.write_text(json.dumps(record, indent=2), encoding="utf-8")
@@ -218,12 +242,24 @@ def dispatch(gene: str, accession: str, samples: int = 3, log=print,
 
     wd = workdir(gene)
     wd.mkdir(parents=True, exist_ok=True)
-    msas, depth, _ = build_msas(tf, med23, wd / "msa", names=(gene.lower(), "med23"))
+    # The third value discarded here is where each chain's alignment actually
+    # came from. Losing it means the record can say an MSA was used and
+    # nothing about which one — not enough to reproduce or audit the run, and
+    # §14 requires the structural model's inputs to be part of the result.
+    msas, depth, a3m_paths = build_msas(tf, med23, wd / "msa",
+                                        names=(gene.lower(), "med23"))
     log(f"MSA      chain A {depth[0]} sequences, chain B {depth[1]} sequences "
         "(ColabFold server, per chain, unpaired)")
 
+    # The config is identical across seeds except the seed itself, so one
+    # object logged once describes every dispatch below.
+    boltz_cfg = Boltz2Config(diffusion_samples=1, include_pae_matrix=True,
+                             device="modal")
+    seeds_attempted = list(SEEDS[:samples])
+    seeds_returned: list[int] = []
+    seed_failures: list[dict] = []
     t0, written = time.time(), []
-    for i, seed in enumerate(SEEDS[:samples], 1):
+    for i, seed in enumerate(seeds_attempted, 1):
         # One dispatch per member: `diffusion_samples` returns only the best
         # sample by confidence, which cannot say whether independent samples
         # agree, and agreement is the entire question.
@@ -235,17 +271,34 @@ def dispatch(gene: str, accession: str, samples: int = 3, log=print,
                 Boltz2Config(diffusion_samples=1, include_pae_matrix=True,
                              seed=seed, device="modal"))
         except Exception as e:
+            # A seed that was attempted and failed is not the same result as
+            # a seed nobody asked for: one is a smaller ensemble by design,
+            # the other is missing signal. Both leave the same files on disk
+            # (fewer than `samples`), so the only place this distinction
+            # survives is here.
             log(f"  seed {seed}  FAILED  {type(e).__name__}: {str(e)[:120]}")
+            seed_failures.append({"seed": seed,
+                                  "error": f"{type(e).__name__}: {str(e)[:200]}"})
             continue
         payload = result.model_dump(mode="json") if hasattr(result, "model_dump") \
             else result
         p = wd / f"sample_{i}_seed{seed}.json"
         p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         written.append(p)
+        seeds_returned.append(seed)
         log(f"  seed {seed}  {time.time() - t1:.0f}s  -> {p.name}")
 
     log(f"{len(written)}/{samples} samples in {time.time() - t0:.0f}s")
-    return score(gene, cfg, log=log) if written else None
+    inputs = {
+        "boltz2_config": boltz_cfg.model_dump(mode="json"),
+        "msa_depth": {f"chain_A_{gene}": depth[0], "chain_B_MED23": depth[1]},
+        "a3m_paths": a3m_paths.split("; ") if a3m_paths else [],
+        "paired": msas.paired,
+        "accessions": {gene: accession, "MED23": MED23_ACC},
+        "seeds": {"attempted": seeds_attempted, "returned": seeds_returned,
+                  "failed": seed_failures},
+    }
+    return score(gene, cfg, log=log, inputs=inputs) if written else None
 
 
 def main() -> int:

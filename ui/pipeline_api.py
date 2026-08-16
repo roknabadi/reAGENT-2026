@@ -505,9 +505,14 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
         if got is not None:
             predicted[predict.upper()] = got
     converged = {g: (c, r) for g, (c, r) in predicted.items() if c.converged}
-    # One site is boxed per run, so the consensus that can define it is the
-    # first candidate's — and only if that ensemble converged.
-    consensus = converged.get(genes[0], (None, None))[0] if genes else None
+    # One site is boxed per run. It used to be read from genes[0] alone, so a
+    # second candidate's converged ensemble was computed and then thrown away
+    # whenever the first candidate in the shortlist had not converged. Walk
+    # the shortlist in order and take the first candidate that actually
+    # converged — still deterministic, but no longer blind to everyone but
+    # position zero.
+    consensus_gene = next((g for g in genes if g in converged), None)
+    consensus = converged[consensus_gene][0] if consensus_gene else None
 
     if converged:
         emit("stage", {
@@ -598,7 +603,12 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
         emit("stage", {
             "id": "site", "state": "done",
             "detail": (f"{site.size[0]:.1f} x {site.size[1]:.1f} x {site.size[2]:.1f} A "
-                       f"box on {cfg.partner_gene} around {len(site.residues)} residues"),
+                       f"box on {cfg.partner_gene} around {len(site.residues)} residues"
+                       # Which candidate's ensemble this box came from, so a run
+                       # with more than one converged candidate does not leave
+                       # the reader guessing which one actually supplied it.
+                       + (f", consensus from {consensus_gene}"
+                          if consensus is not None else "")),
             "note": (f"From {basis}. Screened against the free receptor, not a "
                      "TF-occupied one. "
                      + ("This is where the ensemble puts the transcription factor, "
@@ -634,16 +644,24 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # as recorded, exactly as `data.json` labels the cold-start landscape. A
     # screen that never ran and a screen that ran earlier are different
     # results and the interface says which one it is showing.
-    # A request can forbid the screen. "Only if a localized partner-side site is
-    # supported, proceed to screening; otherwise abstain and state what is
-    # missing" is control flow, and until this gate existed the pipeline read it
-    # as a disease name and screened anyway — answering a question nobody asked,
-    # confidently. Support means one of two things and neither is the curated
-    # cavity: a documented interaction with a mapped region on this partner, or
-    # an ensemble that converged.
+    # "Only if a localized partner-side site is supported, proceed to
+    # screening; otherwise abstain and state what is missing" is not a
+    # sentence a request has to use for the pipeline to owe it. It is the
+    # standing rule (§15-16): the screen requires evidence that places a site
+    # on THIS partner for one of THESE candidates, and the two things that
+    # count as that evidence are a documented interaction with a mapped
+    # region on this partner, or an ensemble that converged. The curated
+    # ELK1 cavity is neither — it is a labelled calibration surface, legal to
+    # DISPLAY (see the site stage above) and never legal to dock into on a
+    # candidate's behalf. This used to be enforced only when an LLM read the
+    # question and decided it demanded a gate, so the default — no gate read,
+    # no ensemble converged, nothing mapped — was to screen anyway on
+    # whatever `receptor_residues` fell back to, which is the ELK1 pocket.
+    # `require_site` can no longer be the thing that turns this check on; it
+    # can only sharpen the message when the request said so explicitly.
     supported = consensus is not None or bool(mapped)
     screen = _recorded_screen(site, genes)
-    if require_site and not supported:
+    if not supported:
         missing = []
         if not mapped:
             missing.append("no candidate here has a documented interaction with a "
@@ -653,7 +671,9 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
                            "them")
         emit("stage", {
             "id": "screening", "state": "abstained",
-            "detail": "the request gated the screen on a supported partner-side site",
+            "detail": ("the request gated the screen on a supported partner-side site"
+                       if require_site else
+                       "no supported partner-side site for any shortlisted candidate"),
             "note": ("; ".join(missing) + ". The only site on file is the curated "
                      "ELK1 cavity, which is calibration and not support for these "
                      "candidates, so nothing was docked. Predicting an interface "
@@ -710,24 +730,46 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # docked poses this project computed, `residues` would be a predicted
     # interface, and there is no ensemble inline, so that list is empty and the
     # panel says "not predicted" rather than borrowing the pocket.
+    #
+    # `poses` is one set of coordinates, docked into one box, and that box
+    # belongs to exactly one candidate: the one whose ensemble supplied
+    # `consensus`, or — when the box is the curated cavity instead — whoever
+    # the curated entry was measured on (ELK1, not any of `genes`, unless the
+    # run is asking about ELK1 itself). Attaching those poses to every
+    # shortlisted gene said a compound was docked against each of their
+    # interfaces when only one box was ever built.
+    site_owner = (consensus_gene if consensus is not None
+                 else CURATED_POCKETS.get(cfg.partner_gene, {}).get("partner"))
     for g in genes:
         hit = converged.get(g)
         residues = sorted(set(hit[1].get("partner_contact_residues", []))) if hit else []
+        own_poses = poses if (screen and g == site_owner) else []
+        note = ((f"{len(residues)} {cfg.partner_gene} residues, from an ensemble "
+                 f"where {hit[0].dominant_cluster_samples}/{hit[0].total_samples} "
+                 "samples agree. A prediction, not a contact.") if hit else
+                (f"No interface between {g} and {cfg.partner_gene} has been "
+                 "predicted, so nothing is highlighted for this candidate."))
+        if screen and consensus is None:
+            note += " The poses shown are docked into the ELK1 cavity."
+        elif screen and site_owner and g != site_owner:
+            note += (f" The site here was boxed for {site_owner}, not {g}; no "
+                     "poses are shown for this candidate.")
         emit("highlight", {
             "gene": g, "residues": residues,
-            "ligands": poses if screen else [],
+            "ligands": own_poses,
             # The union of what the shown poses contact. Computed, not
             # predicted and not observed: these are the residues a compound
             # this project docked came within 4.5 A of.
-            "ligand_residues": sorted({r for p in (poses if screen else [])
-                                       for r in p["residues"]}),
-            "note": ((f"{len(residues)} {cfg.partner_gene} residues, from an ensemble "
-                      f"where {hit[0].dominant_cluster_samples}/{hit[0].total_samples} "
-                      "samples agree. A prediction, not a contact.") if hit else
-                     (f"No interface between {g} and {cfg.partner_gene} has been "
-                      "predicted, so nothing is highlighted for this candidate."))
-                    + (" The poses shown are docked into the ELK1 cavity."
-                       if screen else "")})
+            "ligand_residues": sorted({r for p in own_poses for r in p["residues"]}),
+            # A contract with the UI, not decoration: it needs to tell a
+            # candidate-specific prediction apart from the labelled ELK1
+            # calibration surface without re-deriving `consensus is None`
+            # itself, so the basis and the residues that made the box travel
+            # with every highlight, not just the site stage's own event.
+            "calibration": consensus is None,
+            "site_basis": basis,
+            "site_residues": site.residues if site else [],
+            "note": note})
 
 
 

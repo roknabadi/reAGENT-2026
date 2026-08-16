@@ -107,8 +107,14 @@ def main() -> int:
                  f"{rec['consensus']['total_samples']} samples agree "
                  f"({rec['consensus']['ensemble_support']:.0%})")
     else:
+        # `curated_for` must be an independent claim about what this run is
+        # about, checked against the curated entry -- not read off that same
+        # entry, which is a tautology that always passes and defeats the
+        # guard in site.py. This branch is fixed by this script's own design
+        # (see the module docstring): with no `--gene`, it is always the ELK1
+        # calibration smoke test, so ELK1 is what to assert here.
         residues, basis, blockers = receptor_residues(
-            partner, allow_curated=True, curated_for=curated.get("partner"))
+            partner, allow_curated=True, curated_for="ELK1")
     if blockers:
         print(f"REFUSED  {'; '.join(blockers)}", file=sys.stderr)
         return 2
