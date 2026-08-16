@@ -1111,8 +1111,14 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
     # shortlisted, they do not pass, and the screen's own evidence gate is
     # untouched, so a named gene still cannot be docked into without a mapped
     # region or a converged ensemble.
+    # The partner is the receptor this run screens against, not a candidate for
+    # it. `_named_genes` returns it deliberately for the partner-first path
+    # ("what binds MED23?"), and letting that through here put MED23 in the
+    # candidate table as a transcription factor that failed its own dependency
+    # gate — a claim the pipeline does not make and cannot support.
     asked = [g for g in _named_genes(question, tf_path, cfg.partner_gene)
-             if g not in {v.gene for v in top}]
+             if g not in {v.gene for v in top}
+             and g != cfg.partner_gene.upper()]
     by_gene = {v.gene: v for v in verdicts}
     downstream = [v.gene for v in top] + asked
     for v in flagged:
