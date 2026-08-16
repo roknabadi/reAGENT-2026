@@ -139,8 +139,11 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
          "tfrac": round(c.dependency.target_dependent_fraction, 3),
          "ofrac": round(c.dependency.other_dependent_fraction, 3),
          "score": round(c.final_score, 3) if c.final_score is not None else None,
+         "partner_is_query": True,   # asked about, not discovered
          "gate_pass": True, "gate_why": [], "awaiting": False,
          "shortlisted": i < top_n,
+         # The partner is what this run SEARCHED against, not a result. Nothing
+         # computed here decides that MED23 is this TF's coactivator.
          "partner": cfg.partner_gene, "involvement": "unknown",
          "region": None, "region_mapped": False, "tractability": "unknown",
          "control": False, "concerns": [], "ready": False,

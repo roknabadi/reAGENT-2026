@@ -391,7 +391,9 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
       <h2>Every candidate is a branch that can close</h2>
       <p class="l">The run is one line. Each candidate leaves it, meets the gate it has to clear,
         and either merges back as a shortlisted hypothesis or closes with the reason recorded.
-        Nothing disappears quietly.</p>
+        Nothing disappears quietly. <span style="color:var(--ink-3)">Drawn from an earlier
+        run as an example of the shape; each branch names its own context. Ask a question
+        above to run it on yours.</span></p>
       <svg id="flowsvg" viewBox="0 0 1340 460" role="img"
            aria-label="Pipeline timeline: candidates branch off, pass or fail their gate, and merge or close.">
       </svg>
@@ -791,7 +793,7 @@ function run(q){
     recomputeExtent(); draw(); refreshSidebar();
   });
   live.addEventListener('candidates', e => {         // the table is this run's too
-    C = JSON.parse(e.data).rows; renderCandidates();
+    C = JSON.parse(e.data).rows; clearSeededStructures(); renderCandidates();
     setReady('candidates', C.length > 0,
              C.length ? '' : 'no candidate cleared the gates in this context');
   });
@@ -1003,7 +1005,9 @@ $('#thr').innerHTML=`<dt>median effect ≤</dt><dd>${T.median_target_effect}</dd
   <dt>cell lines ≥</dt><dd>${T.confidence_floor}</dd>`;
 $('#lnote').innerHTML=`<b>Amber</b> marks fewer than ${T.confidence_floor} cell lines — measured
   too sparsely to trust, whatever the effect size. <b>The shaded corner is the only region that
-  passes</b>, and in this lineage it is empty. Other lineages do contain hits.`;
+  passes</b>, and in ${liveContext||'this lineage'} ` + (nPass
+    ? `${nPass} TF${nPass===1?'':'s'} reach${nPass===1?'es':''} it.`
+    : `it is empty. Other lineages do contain hits.`);
 }
 refreshSidebar();
 
@@ -1017,10 +1021,18 @@ $('#rows').innerHTML=C.map((c,i)=>{const [dc,dl]=dep(c),[cc,cl]=con(c);
   return `<tr data-i="${i}" tabindex="0"><td class="gene">${c.gene}${c.shortlisted?' <span class="star">★</span>':''}</td>
   <td class="ctx">${c.awaiting?'—':c.context}</td><td class="num">${c.n??'—'}</td><td class="num">${fmt(c.median)}</td>
   <td class="num">${fmt(c.sel)}</td><td><span class="pill ${dc}"><i></i>${dl}</span></td>
-  <td><span class="pill ${cc}"><i></i>${cl}</span>${c.partner?` <span class="ctx">${c.partner}</span>`:''}</td>
+  <td><span class="pill ${cc}"><i></i>${cl}</span>${c.partner
+      ? ` <span class="ctx" title="${c.involvement==='unknown'
+          ? 'the coactivator this run searched against, not one found for this TF'
+          : 'the documented partner'}">${c.involvement==='unknown'?'vs ':''}${c.partner}</span>`
+      : ''}</td>
   <td class="num">${c.score===null?'—':fmt(c.score,3)}</td></tr>`;}).join('');
-let selIdx=null;
+  selIdx = null;          // a new table invalidates the old selection
 }
+// module scope: select() and initStructure() both read this. Declared inside
+// renderCandidates() it threw ReferenceError and the Structure tab rendered
+// nothing, silently.
+let selIdx = null;
 renderCandidates();
 
 function select(i){
@@ -1087,10 +1099,15 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
    missing and what would produce it. Borrowing another pair's structure, or
    quietly showing a prediction as if it were measured, would be the one lie this
    interface exists to avoid. */
-const STRUCTS = D.structures
+let STRUCTS = D.structures
   || (D.structure ? {[`${D.structure.gene||'ELK1'}|${D.structure.partner||'MED23'}`]: D.structure} : {});
 const structFor = c => (c && c.partner && STRUCTS[`${c.gene}|${c.partner}`]) || null;
-const PRED = D.predicted || {};
+let PRED = D.predicted || {};
+// A live run computes no structures and no predicted monomers, so the seed's
+// must not survive into it. Otherwise neuroblastoma inherits ISL1 and MYCN
+// panels from the seeded Lung run while melanoma shows nothing - an artifact of
+// which genes happened to be in data.json, presented as biology.
+function clearSeededStructures(){ STRUCTS = {}; PRED = {}; }
 const predFor = c => (c && PRED[c.gene]) || null;
 const words = s => (s||'unknown').replace(/_/g,' ');
 const pairOf = c => c.partner ? `${c.gene}–${c.partner}` : c.gene;
