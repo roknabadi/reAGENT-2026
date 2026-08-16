@@ -90,7 +90,23 @@ FIXTURE = REPO_ROOT / "src" / "reagent_workflow" / "fixtures" / "candidates.fixt
 # nobody can tell a real regression from a missing checkout.
 from reagent_workflow.benchflow_export import find_benchflow_python  # noqa: E402
 
-HAS_BENCHFLOW = find_benchflow_python(REPO_ROOT) is not None
+def _real_benchflow(py) -> bool:
+    """`import benchflow` alone is not enough: this repo has a benchflow/
+    directory, which Python happily imports as an empty namespace package, so a
+    bare import succeeds while every submodule is missing. Probe the submodule
+    the exporter actually uses."""
+    if py is None:
+        return False
+    import subprocess
+    try:
+        return subprocess.run(
+            [str(py), "-c", "import benchflow.traces.parsers"],
+            capture_output=True, timeout=60).returncode == 0
+    except Exception:
+        return False
+
+
+HAS_BENCHFLOW = _real_benchflow(find_benchflow_python(REPO_ROOT))
 try:
     import proto_tools  # noqa: F401
     HAS_PROTO = True
