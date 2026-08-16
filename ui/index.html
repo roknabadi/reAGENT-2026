@@ -2278,13 +2278,14 @@ async function paintMol(M, hl){
     // site is the centre of the frame and the protein is still a protein
     // around it.
     const focus = [...new Set([...pocket, ...pred, ...lig])];
-    if(focus.length){ molv.zoomTo({resi: focus}); molv.zoom(.38); }
+    if(focus.length){ molv.zoomTo({resi: focus}); molv.zoom(.52); }
     else { molv.zoomTo(); molv.zoom(.92); }
-    // What is left is the panel's own height: the site is centred in the canvas,
-    // and the canvas is shorter than it looks by however tall the strip is.
-    const dock = $('#ligdock');
-    const dockH = (!dock || dock.hidden) ? 0 : dock.getBoundingClientRect().height;
-    if(dockH > 40) molv.translate(0, -dockH / 2);
+    // No vertical offset. `translate` moves the model rather than setting a
+    // position, and `zoomTo` does not undo it, so every repaint added another
+    // shift — picking a second compound walked the protein off the top of the
+    // screen. Centring on the site puts it at the middle of the canvas, which
+    // is already above the strip, and the frame fills what the centring leaves
+    // at the top rather than being pushed into it.
 
     // Everything the cursor can land on, resolved once per paint so the hover
     // handler stays a lookup rather than a search. A residue can belong to
