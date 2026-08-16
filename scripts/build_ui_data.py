@@ -81,15 +81,40 @@ STRUCTURES = {
 
 
 def thresholds() -> dict:
-    """Read the live gate constants rather than restating them, so the drawn
-    boundary can never disagree with the gate that produced the points."""
-    import inspect
-    src = inspect.getsource(gate)
+    """Read the live gate constants from Kevin's dependency_flag gate
+    (tests/re-agent_discovery/src/config.py, applied in stage1_depmap.py),
+    NOT dependency_scout.ranking.gate.
+
+    Those are two different gates. dependency_scout.ranking.gate is a single
+    median-based path (median <= -0.5 AND target_frac >= 0.5 AND
+    other_frac <= 0.35 AND selectivity_delta >= 0.35) and is what this file
+    used to report here -- accurately for that gate, but that gate is not
+    what decides dependency_flag in the candidates below. Kevin's gate is
+    two independent OR'd paths (median-based, same shape as above but a
+    looser other-median floor; or a specificity-first path on raw fractions
+    for subtype-restricted dependencies a group median dilutes away -- see
+    stage1_depmap.py's _dependency_flag). Reporting the wrong one here drew
+    a scatterplot boundary that disagreed with the dependency_flag verdicts
+    actually attached to the points.
+    """
+    import sys as _sys
+    kevin_src = ROOT / "tests" / "re-agent_discovery" / "src"
+    _sys.path.insert(0, str(kevin_src))
+    import config as kevin_config  # noqa: E402
+
     return {
-        "median_target_effect": -0.5, "target_dependent_fraction": 0.5,
-        "other_dependent_fraction": 0.35, "selectivity_delta": 0.35,
-        "min_models": 3, "confidence_floor": MIN_MODELS,
-        "_source": "dependency_scout.ranking.gate", "_verified": "-0.5" in src,
+        "median_route": {
+            "median_target_effect_max": kevin_config.IN_CONTEXT_DEPENDENCY_THRESHOLD,
+            "other_median_effect_min": kevin_config.OUT_OF_CONTEXT_NONDEPENDENCY_THRESHOLD,
+        },
+        "specificity_first_route": {
+            "target_dependent_fraction_min": kevin_config.SPECIFICITY_FIRST_MIN_TARGET_FRACTION,
+            "other_dependent_fraction_max": kevin_config.SPECIFICITY_FIRST_MAX_OTHER_FRACTION,
+        },
+        "route_logic": "pass if EITHER route clears -- see stage1_depmap.py _dependency_flag",
+        "min_models": kevin_config.SUBTYPE_MIN_N_FLOOR,
+        "confidence_floor": kevin_config.SUBTYPE_MIN_N_FULL_CONFIDENCE,
+        "_source": "tests/re-agent_discovery/src/config.py (Kevin's dependency_flag gate)",
     }
 
 
@@ -208,18 +233,28 @@ def main() -> int:
                     (ROOT / p).read_text(encoding="utf-8"))
             candidates.append(c)
             seen.add(c.dependency.gene)
+    # Genes added here have no dependency evidence in this run's context set
+    # at all (they failed the loop above, or were never DepMap-tested here) --
+    # their evidence for being on this page is purely the Mediator/literature
+    # interface record, independent of dependency screening. ELK1 is the
+    # proof case: structurally solved contact, zero DepMap signal anywhere.
+    # Tracked explicitly so the UI never has to guess why a row with no
+    # dependency data is present -- and never silently reads as "passed."
+    mediator_literature_override_genes = set()
     for gene, p in INTERFACE.items():
         if gene not in seen:
             candidates.append(RankedCandidate(
                 gene=gene,
                 mediator=MediatorLink.model_validate_json(
                     (ROOT / p).read_text(encoding="utf-8"))))
+            mediator_literature_override_genes.add(gene)
 
     sl = build_shortlist(candidates, disease_scope="pan-cancer, DepMap 24Q2")
     rows = []
     for i, c in enumerate(sl.candidates):
         ok, reason = c.shortlistable
         d = c.dependency
+        is_override = c.name in mediator_literature_override_genes
         rows.append({
             "gene": c.name, "context": c.disease_context,
             "n": d.n_target_models if d else None,
@@ -228,8 +263,14 @@ def main() -> int:
             "tfrac": round(d.target_dependent_fraction, 3) if d else None,
             "ofrac": round(d.other_dependent_fraction, 3) if d else None,
             "score": round(c.final_score, 3) if c.final_score is not None else None,
-            "gate_pass": c.gate.eligible if c.gate else None,
-            "gate_why": c.gate.failures if c.gate else [],
+            # Never leave this ambiguous: a candidate with no dependency
+            # evidence in this run is a dependency-gate FAIL, not an unknown
+            # -- it must never render as if it cleared DepMap screening.
+            "gate_pass": False if is_override else (c.gate.eligible if c.gate else None),
+            "gate_why": (["no DepMap dependency evidence in this run -- included via "
+                          "Mediator/literature evidence instead, see inclusion_reason"]
+                         if is_override else (c.gate.failures if c.gate else [])),
+            "inclusion_reason": "mediator_literature_override" if is_override else "dependency_gate",
             "awaiting": c.awaiting_dependency_data,
             "shortlisted": i in sl.shortlist_indices,
             "blocked_because": reason,
