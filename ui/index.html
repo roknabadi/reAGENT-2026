@@ -261,7 +261,7 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .tcall .step{font-family:var(--mono);color:var(--ink);font-size:11px}
 .tcall .meta{margin-left:auto;font-family:var(--mono);color:var(--ink-3);font-size:10.5px}
 .tcall .err{color:var(--fail)}
-.tcall .body{padding:0 11px 11px;font-size:11.5px;line-height:1.5}
+.tcall .det{padding:0 11px 11px;font-size:11.5px;line-height:1.5}
 .tcall .lab{font-size:10px;text-transform:uppercase;letter-spacing:.07em;
   color:var(--ink-3);margin:8px 0 3px}
 .tcall pre{margin:0;padding:8px 9px;background:var(--bg);border:1px solid var(--line);
@@ -1121,7 +1121,7 @@ function thinkBlock(step, meta, isError, sections, open){
   const b=document.createElement('span');
   b.className='meta'+(isError?' err':''); b.textContent=meta;
   s.append(a,b); d.append(s);
-  const body=document.createElement('div'); body.className='body';
+  const body=document.createElement('div'); body.className='det';
   for(const [lab,text] of sections){
     if(!text) continue;
     const h=document.createElement('div'); h.className='lab'; h.textContent=lab;
@@ -1271,7 +1271,10 @@ function run(q, predict){
     const sel = C[selIdx];
     if(sel && sel.gene === h.gene) showPair?.(sel);
   });
-  live.addEventListener('thinking', e => addThinking(JSON.parse(e.data)));
+  // The payload is `{trace: {...}}`; the trace is what has `calls` on it.
+  // Passing the envelope meant `trace.calls` was always undefined, so the
+  // reasoning pane silently stayed empty for every run it has ever streamed.
+  live.addEventListener('thinking', e => addThinking(JSON.parse(e.data).trace || {}));
   live.addEventListener('summary', e => addSummary(JSON.parse(e.data)));
   live.addEventListener('answer', e => setAnswer(JSON.parse(e.data)));
   // A condition the request placed on the pipeline, echoed where the question
