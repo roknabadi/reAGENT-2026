@@ -6,13 +6,52 @@ def clamp(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
-def gate(e: DependencyEvidence, *, min_models: int = 3) -> GateResult:
+# Mirrors tests/re-agent_discovery/src/config.py -- keep both in sync by hand,
+# there is no shared package boundary between the two repos yet.
+MEDIAN_TARGET_EFFECT_MAX = -0.5
+MEDIAN_OTHER_EFFECT_MIN = -0.2
+SPECIFICITY_MIN_TARGET_FRACTION = 0.10
+SPECIFICITY_MAX_OTHER_FRACTION = 0.05
+
+
+def gate(e: DependencyEvidence, *, min_models: int = 5) -> GateResult:
+    """A candidate passes on EITHER path (Kevin's specificity-first fix,
+    ported from tests/re-agent_discovery/src/stage1_depmap.py::_dependency_flag,
+    2026-08-16 -- replaces the old single median-only path that this function
+    used to require unconditionally):
+    - median: the whole group is dependent (target median <= -0.5 and the
+      rest of the population median > -0.2). Rejects pan-essential genes on
+      its own.
+    - specificity-first: a meaningful fraction of the target group is
+      dependent (>= 10%) and almost none of the rest is (<= 5%), regardless
+      of the group median. Catches subpopulation-restricted dependencies
+      that a pooled-subtype median dilutes away -- e.g. ASCL1/POU2F3 in
+      SCLC, where the group is four mutually exclusive molecular subtypes
+      and pooling them hides a real subtype-defining dependency.
+    `min_models` defaults to 5, the statistical floor below which n=3-4
+    hits are noise (see team/FINDINGS_DEPMAP_ROUND01.md #3) -- 15 is full
+    confidence but is not enforced here as a hard failure, only as a
+    separate confidence flag upstream."""
     failures = []
-    if e.n_target_models < min_models: failures.append(f"fewer than {min_models} target-context models")
-    if e.median_target_effect > -0.5: failures.append("weak median dependency (must be <= -0.5)")
-    if e.target_dependent_fraction < 0.5: failures.append("dependency occurs in fewer than half of target models")
-    if e.other_dependent_fraction > 0.35: failures.append("dependency is too broad outside the target context")
-    if e.selectivity_delta < 0.35: failures.append("target-versus-rest selectivity delta is below 0.35")
+    if e.n_target_models < min_models:
+        failures.append(f"fewer than {min_models} target-context models")
+
+    median_path = (
+        e.median_target_effect <= MEDIAN_TARGET_EFFECT_MAX
+        and e.median_other_effect > MEDIAN_OTHER_EFFECT_MIN
+    )
+    specificity_path = (
+        e.target_dependent_fraction >= SPECIFICITY_MIN_TARGET_FRACTION
+        and e.other_dependent_fraction <= SPECIFICITY_MAX_OTHER_FRACTION
+    )
+    if not (median_path or specificity_path):
+        failures.append(
+            "fails both the median-dependency path (target median <= "
+            f"{MEDIAN_TARGET_EFFECT_MAX} and other median > {MEDIAN_OTHER_EFFECT_MIN}) "
+            "and the specificity-first path (target-dependent fraction >= "
+            f"{SPECIFICITY_MIN_TARGET_FRACTION:.0%} and other-dependent fraction <= "
+            f"{SPECIFICITY_MAX_OTHER_FRACTION:.0%})"
+        )
     return GateResult(eligible=not failures, failures=failures)
 
 

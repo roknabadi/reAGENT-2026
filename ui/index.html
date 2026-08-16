@@ -132,6 +132,9 @@ header{display:flex;align-items:center;gap:16px;padding:0 20px;height:56px;
 .qbar input:focus{outline:none}
 /* Quiet by design: it states that the next question continues this run, which
    is a property of the box, not an event worth announcing. */
+#newchat{font-size:12px;background:none;border:1px solid var(--line);border-radius:7px;
+  color:var(--ink-2);cursor:pointer;padding:5px 9px;white-space:nowrap;margin-left:8px}
+#newchat:hover{color:var(--ink);border-color:var(--ink-3)}
 #qsess{font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);
   border:1px solid var(--line);border-radius:5px;padding:1.5px 5px;white-space:nowrap;cursor:default}
 .qbar button{background:none;border:none;color:var(--ink-3);cursor:pointer;font-size:14px;padding:2px 4px}
@@ -663,6 +666,10 @@ whose inputs have not changed are reused rather than recomputed, and each says
 so.">follows on</span>
       <button id="go1" title="Run">↵</button>
     </div>
+    <button id="newchat" title="Start a new conversation. The current one is kept
+and can be returned to; the next question will not reuse any of it.">New chat</button>
+    <div style="display:none">
+    </div>
     <nav>
       <button data-v="landscape" aria-current="true">Landscape</button>
       <button data-v="candidates">Candidates</button>
@@ -1056,6 +1063,11 @@ $('#q1').onkeydown = e => { if(e.key==='Enter') enter($('#q1').value); };
 // the state this interface is not allowed to have.
 $('#home').onclick = () => { $('#landing').removeAttribute('hidden-state');
   $('#app').removeAttribute('data-on'); newSession(); };
+// Sessions no longer expire on a timer, so this is the only thing that ends
+// one. Without it the reader had no way to say "forget that run" short of
+// reloading, and a follow-up silently attaching to a conversation from an hour
+// ago is the state this interface is not allowed to have.
+$('#newchat').onclick = () => { newSession(); $('#q1').value=''; $('#q1').focus(); };
 
 function enter(q){
   $('#landing').setAttribute('hidden-state','');
