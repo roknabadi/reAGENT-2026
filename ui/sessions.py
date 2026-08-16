@@ -384,7 +384,7 @@ def _named_receptor(question: str) -> str | None:
     return None
 
 
-def classify(question: str, record: dict) -> FollowUp:
+def classify(question: str, record: dict, ask=None) -> FollowUp:
     """What this follow-up is, given what the session already computed.
 
     The default is `rerun`. Every cheap branch below is a pattern someone can
@@ -470,6 +470,88 @@ def classify(question: str, record: dict) -> FollowUp:
         return FollowUp("recall", gene,
                         "this asks about what the retained run produced, not for "
                         "something new to be computed", True)
+    # The patterns did not recognise it. Before spending a full run, let the
+    # model say what it is — it decides which retained path runs, never what the
+    # answer is, and anything it cannot place still re-runs.
+    if ask is not None:
+        routed = _model_route(question, record, ask)
+        if routed is not None:
+            return routed
     return FollowUp("rerun", None,
                     "nothing in this question matches a follow-up this session can "
                     "answer from what it already computed", False)
+
+# Kinds the model is allowed to choose. It picks which retained machinery runs;
+# it never produces an answer, a number, or a verdict.
+_MODEL_KINDS = {"verdict", "gene", "screen", "predict", "recall", "rerun"}
+
+_ROUTER_SYSTEM = """You route a follow-up question in a target-discovery interface.
+
+A previous run computed: a disease context, a dependency scan over transcription
+factors, literature evidence for the candidates it followed, and a structural
+and screening tail against one receptor.
+
+Choose ONE route:
+  verdict - asks why a gene passed or failed; the retained scan already decided
+  gene    - asks to follow a gene the scan measured but did not pursue
+  screen  - asks about the docking site or the compounds screened against it
+  recall  - asks about what the previous run produced, in any phrasing. This
+            includes narrowing, filtering, re-ordering or re-presenting those
+            results ("focus on the ones with a mapped region", "drop the ones
+            without a contact", "just the top one"): the run already computed
+            what is being filtered, so filtering it is not new work
+  predict - asks for a structure to be predicted for a gene
+  rerun   - anything the retained run cannot answer: a different disease, a
+            different receptor, a gene the scan never measured, or a genuinely
+            new question
+
+Reply with exactly one line: KIND or KIND GENE. No prose, no punctuation.
+Answer rerun when the question needs something the run did not compute - a
+different disease, a different receptor, a gene the scan never measured, or new
+retrieval. A question that only re-examines, filters or re-explains what the run
+already produced is not a rerun, however it is phrased."""
+
+
+def _model_route(question: str, record: dict, ask) -> "FollowUp | None":
+    """Ask the model which retained path this question wants, or None.
+
+    The patterns above recognise the phrasings someone thought of. A revision -
+    "focus on the ones with a mapped region", "drop the ones without a contact"
+    - matches none of them and falls to `rerun`, so the interface re-pulls the
+    literature to answer a question about literature it already pulled. That
+    reads as a follow-up feature that does not work, and it is the common case
+    rather than the exotic one.
+
+    The model chooses a route, not an answer. Every kind below is machinery that
+    already exists and that the deterministic router can also select; the model
+    only decides which one this sentence wants. An unrecognised reply, a gene the
+    scan never measured, or any failure at all falls back to a full run, which is
+    what would have happened anyway.
+    """
+    measured = set(record.get("measured") or {})
+    followed = set(record.get("genes") or [])
+    context = record.get("context") or "unknown"
+    partner = (record.get("partner") or "").upper()
+    prompt = (f"Context: {context}\nReceptor: {partner or 'unknown'}\n"
+              f"Followed downstream: {', '.join(sorted(followed)) or 'none'}\n"
+              f"Measured by the scan: {len(measured)} genes\n\n"
+              f"Follow-up: {question}")
+    try:
+        reply = (ask(_ROUTER_SYSTEM, prompt) or "").strip()
+    except Exception:
+        return None
+    if not reply:
+        return None
+    parts = reply.split()
+    kind = parts[0].lower().strip(".,:")
+    if kind not in _MODEL_KINDS or kind == "rerun":
+        return None
+    gene = parts[1].upper().strip(".,:") if len(parts) > 1 else None
+    if gene and gene not in (measured | followed):
+        # A gene the scan never measured has no retained numbers, whatever the
+        # model thought the sentence meant.
+        return None
+    if kind in {"verdict", "gene"} and not gene:
+        return None
+    return FollowUp(kind, gene,
+                    f"read as a {kind} follow-up on the retained run", True)
