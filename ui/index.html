@@ -303,6 +303,12 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .ligdock .hd{display:flex;align-items:baseline;gap:8px;margin-bottom:8px;
   font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--ink-3)}
 .ligdock .hd .of{font-family:var(--mono);letter-spacing:0;color:var(--ink-2)}
+.dockempty{margin:0;font-size:11.5px;line-height:1.5;color:var(--ink-2)}
+/* Whose cavity these were docked into. A compound shown against a candidate
+   who did not supply the box is a claim about that candidate unless the label
+   travels with it, so the label is in the header rather than in a footnote. */
+.ligdock .borrowed{margin-left:auto;text-transform:none;letter-spacing:0;
+  font-size:10.5px;color:var(--await)}
 .ligstrip{display:flex;gap:7px;overflow-x:auto;padding-bottom:2px;
   scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
 .ligstrip::-webkit-scrollbar{height:5px}
@@ -1693,14 +1699,21 @@ function siteLayer(hl){
     : {residues: hl.site_residues, label: 'ensemble consensus', state: 'predicted', calibration: false};
 }
 
+/* The compounds on screen are either this candidate's — docked into a box its
+   own ensemble built — or the drawn cavity's, docked into a site that belongs
+   to someone else and labelled that way wherever they appear. There is never a
+   third case, and every consumer asks here rather than deciding for itself. */
+const ligandsOf = hl => (hl?.ligands?.length ? hl.ligands : hl?.site_ligands || []);
+const ligandsAreOwn = hl => !!hl?.ligands?.length;
+
 const legendReceptor = hl => { const site = siteLayer(hl); return `
   <span><i style="background:var(--ink-3)"></i>MED23 backbone · observed</span>
   <span><i style="background:var(${site.calibration?'--control':'--fail'})"></i>${site.label} · ${site.state}</span>`
   + (hl?.residues?.length
      ? ` <span><i style="background:var(--fail)"></i>predicted interface · computed</span>` : '')
-  + (hl?.ligands?.length
+  + (ligandsOf(hl).length
      ? ` <span><i style="background:var(--pass)"></i>${
-         hl.ligands[Math.min(ligSel, hl.ligands.length-1)].name
+         ligandsOf(hl)[Math.min(ligSel, ligandsOf(hl).length-1)].name
        } pose &amp; contacts · computed</span>` : ''); };
 
 // `_read_screen` already dropped every pose that failed the pocket/box/clash
@@ -1763,13 +1776,29 @@ function predictBlock(M, c, hl){
    is what puts that compound in the pocket, so the strip and the viewer never
    disagree about which one is being looked at. */
 function ligandDock(hl){
-  const el = $('#ligdock'), ligs = hl?.ligands || [];
-  el.hidden = !ligs.length;
-  if(!ligs.length){ el.innerHTML=''; return; }
+  const el = $('#ligdock'), ligs = ligandsOf(hl);
+  el.hidden = !hl;
+  if(!hl){ el.innerHTML=''; return; }
+  // No compounds is a result, not an absence. Vanishing said nothing and read
+  // as a missing feature; the screen abstained, and the reason it abstained is
+  // the most useful thing this corner of the canvas can say.
+  if(!ligs.length){
+    el.innerHTML = `<div class="hd"><span>Docked compounds</span>
+      <span class="of">none</span></div>
+    <p class="dockempty">${hl.calibration
+      ? `Nothing was docked for ${hl.gene}. The cavity drawn is ELK1's, from the
+         deposited complex — screening abstains until ${hl.gene} has a site of
+         its own, which is what folding the ensemble decides.`
+      : `A site converged for ${hl.gene}, but no compounds have been docked into
+         it in this run.`}</p>`;
+    return;
+  }
   const i = Math.min(ligSel, ligs.length-1), l = ligs[i];
   el.innerHTML = `
   <div class="hd"><span>Docked compounds</span>
-    <span class="of">${i+1} / ${ligs.length}</span></div>
+    <span class="of">${i+1} / ${ligs.length}</span>
+    ${ligandsAreOwn(hl) ? '' : `<span class="borrowed">into the ${
+       hl.site_owner || 'calibration'} cavity, not ${hl.gene}'s site</span>`}</div>
   <div class="ligstrip">${ligs.map((g,k)=>`<div class="lig" data-lig="${k}"
        aria-current="${k===i}" tabindex="0" role="button"
        title="Show ${g.name} in the structure">
@@ -1820,8 +1849,8 @@ function receptorPanel(M, c, hl){
       <span class="muted">UniProt ${M.uniprot} feature table</span></dd>` : ''}
     <dt>${gene} interface</dt><dd>${hl?.residues?.length
         ? hl.residues.join(', ') : '<span class="muted">not predicted</span>'}</dd>
-    <dt>docked</dt><dd>${hl?.ligands?.length
-        ? dockedSummary(hl.ligands.length)
+    <dt>docked</dt><dd>${ligandsOf(hl).length
+        ? dockedSummary(ligandsOf(hl).length)
         : '<span class="muted">no screen run</span>'}</dd></dl></div>
   ${predictBlock(M, c, hl)}
   ${site.calibration ? `<p class="note">The cavity shown is where <b>ELK1</b> binds, from the deposited
@@ -1965,7 +1994,7 @@ async function paintMol(M, hl){
   molPaint = () => {
     const C={body:css('--ink-3'), pocket:css('--control'),
              pred:css('--fail'), lig:css('--pass')};
-    const ligs=hl?.ligands||[];
+    const ligs=ligandsOf(hl);
     const shown=ligs.length ? ligs[Math.min(ligSel, ligs.length-1)] : null;
     const site=siteLayer(hl);
     const pocket=site.residues, pred=hl?.residues||[],
@@ -2174,7 +2203,7 @@ async function paintReceptorThree(M, highlight){
     // than a dot at the centroid. Coordinates come from the pose's own
     // molblock, in this receptor's frame, so a compound sits where Vina put
     // it — the picture and the number are the same result.
-    for(const L of (highlight?.ligands||[])){
+    for(const L of ligandsOf(highlight)){
       const A2=L.pose?.atoms;
       if(!A2?.length){ balls([[0,...L.centroid]],CO.lig,R.lig,.85); continue; }
       const P2=A2.map(a=>new THREE.Vector3(a[1]-c0[0],a[2]-c0[1],a[3]-c0[2]));
@@ -2324,7 +2353,7 @@ showPair = async c => {
     ligandDock(hl);
     if(!view.hasAttribute('data-on')){ painted=null; return; }
     const key = `receptor|${c?.gene||''}|${hl?hl.residues.join(','):''}`
-              + `|${hl?.ligands?.map(l=>l.name).join(',')||''}|${ligSel}`;
+              + `|${ligandsOf(hl).map(l=>l.name).join(',')||''}|${ligSel}`;
     if(painted===key){ glc?.size(); return; }
     painted=key; view.setAttribute('data-loading','');
     try { await paintMol(MED23, hl); }

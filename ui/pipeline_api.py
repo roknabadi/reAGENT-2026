@@ -785,6 +785,16 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
         ensemble = predicted.get(g)
         emit("highlight", {
             "gene": g, "residues": residues,
+            # The compounds belong to the box, and the box belongs to one gene.
+            # `ligands` stays candidate-owned — a pose is only this candidate's
+            # if this candidate's ensemble built the box it sits in. But the
+            # screen still ran, on a cavity this receptor really has, and
+            # dropping the result on the floor for every gene but the owner
+            # left the stage note promising poses that nothing displayed.
+            # They travel as the site's, with the owner named, so the interface
+            # can show them without attributing them to whoever is selected.
+            "site_ligands": poses if (screen and not own_poses) else [],
+            "site_owner": site_owner,
             # Whether an ensemble has been run for this candidate at all, and
             # what it decided. Without this the panel can only offer to start
             # one, including for a candidate whose ensemble already ran and
