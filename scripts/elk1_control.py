@@ -59,7 +59,11 @@ def build_input(elk1: str, med23: str, samples: int, seed: int):
             {"id": "B", "sequence": tad, "entity_type": "protein"},
         ],
     }]
-    cfg = Boltz2Config(diffusion_samples=samples, include_pae_matrix=True, seed=seed)
+    # device="modal" marks this as remote; dispatch_to_modal swaps it for the
+    # container's physical device. Without it the config would carry "cuda",
+    # which is meaningless on the caller's machine.
+    cfg = Boltz2Config(diffusion_samples=samples, include_pae_matrix=True,
+                       seed=seed, device="modal")
     return Boltz2Input(complexes=complexes), cfg, tad
 
 
@@ -86,12 +90,17 @@ def main() -> int:
         print("\n--dry-run: nothing dispatched")
         return 0
 
-    from proto_tools.tools.structure_prediction.boltz2.boltz2 import run_boltz2
+    # `run_boltz2` runs LOCALLY: it builds ~/.proto/proto_tool_envs/boltz2_env
+    # and needs boltz[cuda], whose cuequivariance-ops-cu12 has no macOS-ARM
+    # wheel — the exact trap the handoff names. It printed "dispatching to
+    # Modal" and then failed a local resolve. `dispatch_to_modal` is the remote
+    # path; the logical device is translated to the container's physical one.
+    from proto_tools.modal.client import dispatch_to_modal
     OUT.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     print("\ndispatching to Modal ...")
     try:
-        result = run_boltz2(inp, cfg)
+        result = dispatch_to_modal("boltz2-prediction", inp, cfg)
     except Exception as e:
         print(f"\nFAILED after {time.time()-t0:.0f}s: {type(e).__name__}: {e}")
         return 1
