@@ -35,12 +35,14 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Callable
 
 import pandas as pd
 from pydantic import ValidationError
 
+import sessions as S_
 from dependency_scout.models import (Claim, InterfaceTractability,
                                      MediatorLink, SupportType)
 from reagent_workflow import agent as A
@@ -68,6 +70,14 @@ class _Recorder:
     drifts the moment a stage changes its wording — and an answer written from
     a drifted summary is an answer about a run that did not happen. Wrapping
     `emit` means the model reads exactly what the reader saw.
+
+    It is also what a session retains. `state()` returns the whole stream, each
+    event stamped with the epoch at which it was *computed* — not the epoch at
+    which it was last sent. A replayed event arrives carrying its original
+    stamp and is re-recorded under that stamp, so a follow-up on a follow-up
+    still reports the age of the run that did the work rather than the age of
+    the last replay. Without that, retained state quietly ages backwards until
+    it reads as fresh, which is the one thing this interface must never do.
     """
 
     def __init__(self, emit: Callable[[str, dict], None]) -> None:
@@ -76,12 +86,44 @@ class _Recorder:
         self.candidates: list[dict] = []
         self.highlights: list[dict] = []
         self.papers = 0
+        # The retained half: every event with its compute time, plus the few
+        # indexes a follow-up needs to answer without walking the stream.
+        self.events: list[tuple[str, dict, float]] = []
+        self.measured: dict[str, dict] = {}
+        self.evidence: dict[str, dict] = {}
+        self.rows: list[dict] = []
+        self.context: str | None = None
+        self.level: str | None = None
+        self.genes: list[str] = []
+        self.partner: str = ""
+        # A condition the request placed on the pipeline. It is retained with
+        # the rest of the run because it is still in force for the session: a
+        # follow-up that forgot it would run a screen the request forbade.
+        self.require_site = False
+        # Live objects a follow-up reuses in this process only: the docking box
+        # the site stage built, whether the evidence gate supported it, and the
+        # evidence dict the literature stage may have promoted a reading into.
+        self.runtime: dict = {}
 
     def __call__(self, event: str, payload: dict) -> None:
+        self.events.append(
+            (event, payload, float(payload.get("retained_at_epoch") or time.time())))
         if event == "stage":
             self.stages[payload["id"]] = {k: payload.get(k)
                                           for k in ("state", "detail", "note")}
+            if payload["id"] == "question" and payload.get("context"):
+                self.context = payload.get("context")
+                self.level = payload.get("level")
+        elif event == "landscape":
+            self.context = payload.get("context", self.context)
+            self.level = payload.get("level", self.level)
+            self.measured = {p["gene"]: p for p in payload.get("points", [])}
+        elif event == "evidence":
+            self.evidence[payload.get("gene")] = payload
+        elif event == "policy":
+            self.require_site = bool(payload.get("require_interface_site"))
         elif event == "candidates":
+            self.rows = list(payload.get("rows", []))
             self.candidates = [{k: r.get(k) for k in
                                 ("gene", "context", "median", "sel", "tfrac",
                                  "ofrac", "n", "q", "route")}
@@ -111,6 +153,44 @@ class _Recorder:
         return {"stages": self.stages, "shortlist": self.candidates,
                 "papers_retrieved": self.papers,
                 "partner_site_and_compounds": self.highlights}
+
+    def state(self) -> dict:
+        """Everything a follow-up can be answered from, JSON-able.
+
+        The event stream is kept whole rather than summarised. A summary is a
+        second description of the run that drifts from the first one, and this
+        file has already been bitten twice by a number recovered from prose;
+        replaying the events the reader actually saw cannot drift from them.
+        Only the `thinking` events are thinned — the trace arrives cumulative,
+        so every one but the last is a prefix of the last.
+        """
+        thinking = [i for i, (e, _, _) in enumerate(self.events) if e == "thinking"]
+        drop = set(thinking[:-1])
+        now = time.time()
+        return {
+            # The oldest surviving piece of work, not the newest. A follow-up
+            # re-records what it replays and adds a handful of events of its
+            # own; taking the newest would date the whole record to the last
+            # question asked about it, and "retained from the run at <now>" is
+            # the exact sentence this labelling exists to prevent.
+            "computed_at": min((at for _, _, at in self.events), default=now),
+            # When the scan itself ran, kept separately because it is what a
+            # verdict quotes and it must not drift to the start of whichever
+            # run happened to replay it.
+            "scan_at": next((at for e, _, at in reversed(self.events)
+                             if e == "landscape"), None),
+            "context": self.context,
+            "level": self.level,
+            "partner": self.partner,
+            "genes": list(self.genes),
+            "require_site": self.require_site,
+            "measured": self.measured,
+            "rows": self.rows,
+            "evidence": self.evidence,
+            "stages": self.stages,
+            "events": [[e, p, at] for i, (e, p, at) in enumerate(self.events)
+                       if i not in drop],
+        }
 
 
 # Words a model returns when it means "no region", which are not regions.
@@ -572,6 +652,11 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
                     "No abstract here documents a physical contact."))
                + (f" {len(errors)} axis search(es) failed." if errors else "")})
 
+    if isinstance(emit, _Recorder):
+        emit.genes = list(named)
+        emit.partner = cfg.partner_gene
+        emit.runtime.setdefault("trace", trace)
+        emit.runtime.setdefault("interface_evidence", interface_evidence)
     _structure_site_and_screen(emit, cfg, named, interface_evidence, free_receptor,
                                predict, require_site, trace)
 
@@ -947,11 +1032,29 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
 def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
              interface_evidence: dict[str, MediatorLink] | None = None,
              top_n: int = 3, free_receptor: Path | None = None,
-             predict: str | None = None) -> None:
-    """Stream the real pipeline for one question. `emit(event, payload)` per step."""
+             predict: str | None = None, runtime: dict | None = None) -> dict:
+    """Stream the real pipeline for one question. `emit(event, payload)` per step.
+
+    Returns what the run leaves behind: the whole event stream with each event
+    stamped when it was computed, plus the indexes a follow-up needs. The
+    caller decides whether to keep it — a run that is never asked about again
+    costs nothing extra for having been recorded, and `ui/serve.py` bounds how
+    many are held at once.
+
+    `runtime`, when given, is filled in place with the live objects a follow-up
+    in the same process can reuse: the docking box this run built, the evidence
+    dict its literature stage may have promoted a reading into, the agent trace
+    the reasoning rail is rendering. They are handed over as a side effect
+    rather than in the return value because they are the half that cannot be
+    serialized, and the return value is the half that can.
+    """
     ge_path, model_path, tf_path = data_paths
     interface_evidence = interface_evidence or {}
     emit = _Recorder(emit)
+    if runtime is not None:
+        emit.runtime = runtime
+    emit.partner = cfg.partner_gene
+    emit.runtime["interface_evidence"] = interface_evidence
 
     if not Path(ge_path).exists():
         emit("stage", {"id": "question", "state": "blocked",
@@ -960,7 +1063,7 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         for sid in DOWNSTREAM:
             emit("stage", {"id": sid, "state": "pending", "detail": "not run"})
         emit("done", {"ok": False})
-        return
+        return emit.state()
 
     # ── question -> context ────────────────────────────────────────────────
     #
@@ -972,6 +1075,7 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
     # the scan is unable to answer about.
     model = _model_table(model_path)
     trace = A.AgentTrace()
+    emit.runtime["trace"] = trace
     options = vocabulary(model)
     m, why, decided_by = None, "", "token match"
     policy = {"require_interface_site": False, "quote": None}
@@ -1013,7 +1117,7 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
             _partner_first(question, named, cfg, emit, trace, why, decided_by,
                            interface_evidence, free_receptor, predict,
                            policy["require_interface_site"])
-            return
+            return emit.state()
         emit("stage", {"id": "question", "state": "blocked",
                        "detail": question or "no question given",
                        "note": (why or "no disease context in this question "
@@ -1024,7 +1128,7 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
             emit("stage", {"id": sid, "state": "pending", "detail": "not run",
                            "note": "waiting on a disease context or a named gene"})
         emit("done", {"ok": False})
-        return
+        return emit.state()
 
     emit("stage", {
         "id": "question", "state": "done", "detail": question,
@@ -1048,7 +1152,7 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
         for sid in DOWNSTREAM[2:]:
             emit("stage", {"id": sid, "state": "pending", "detail": "not run"})
         emit("done", {"ok": False})
-        return
+        return emit.state()
 
     n_lines = verdicts[0].n_target
     emit("stage", {
@@ -1121,6 +1225,10 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
              and g != cfg.partner_gene.upper()]
     by_gene = {v.gene: v for v in verdicts}
     downstream = [v.gene for v in top] + asked
+    # The genes this run followed past the gate. A follow-up naming one of them
+    # is asking about work already done; a follow-up naming any other gene the
+    # scan measured is asking for the literature and structural halves only.
+    emit.genes = list(downstream)
     for v in flagged:
         routes[v.route] = routes.get(v.route, 0) + 1
     near = [v for v in flagged if not v.significant]
@@ -1289,3 +1397,342 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
                                       "stage above."})
     emit("thinking", {"trace": trace.as_dict()})
     emit("done", {"ok": True})
+    return emit.state()
+
+
+# ── follow-ups ─────────────────────────────────────────────────────────────
+#
+# A follow-up answers from what a completed run left behind. It lives under the
+# same rule as the screening and structure stages above: a stage never reports a
+# conclusion it did not compute this run. That is honoured by labelling rather
+# than by recomputation — every replayed event carries when it was computed,
+# every replayed stage note opens with that, and the answer names what was
+# retained. Nothing here re-decides a gate; a gate's verdict travels with the
+# state it was decided on, and the router refuses the cheap path outright for
+# any question that could have moved the context out from under it.
+
+def _retained(payload: dict, at: float, now: float) -> dict:
+    """A copy of an event, stamped with when it was actually computed.
+
+    `retained_at_epoch` survives the round trip on purpose. A follow-up on a
+    follow-up re-records what it replays, and without the original stamp the age
+    would reset on every replay until a twenty-minute-old number read as fresh —
+    the failure this labelling exists to prevent, arriving by drift instead.
+    """
+    out = dict(payload)
+    out["retained"] = True
+    out["retained_at_epoch"] = at
+    out["retained_at"] = S_.iso(at)
+    out["retained_age_s"] = max(0, int(now - at))
+    return out
+
+
+def _retained_stage(payload: dict, at: float, now: float) -> dict:
+    out = _retained(payload, at, now)
+    out["note"] = (f"Retained from the run at {S_.iso(at)}, {S_.ago(now - at)} ago; "
+                   "not recomputed for this question. "
+                   + (payload.get("note") or "")).strip()
+    return out
+
+
+# Replaying these would answer the previous question again. `answer` and
+# `summary` are written about one question and do not transfer to the next;
+# `done` closes a stream this follow-up has not finished.
+_REPLAY_SKIP = {"answer", "summary", "done", "session", "provenance"}
+
+
+def _replay(emit, record: dict, now: float, *, skip_stages=(), skip_events=(),
+            skip_genes=(), extra_rows=()) -> list[str]:
+    """Re-emit a completed run's stream, labelled with when each part was computed.
+
+    Returns the stage ids served from retained state, in order and once each —
+    a stage emits `running` before `done` and the ledger should read as a list
+    of stages, not of events — so the caller can say so out loud rather than
+    leaving the reader to notice the timestamps.
+    """
+    served: dict[str, None] = {}
+    for event, payload, at in record.get("events", []):
+        if event in _REPLAY_SKIP or event in skip_events:
+            continue
+        if event == "stage":
+            if payload.get("id") in skip_stages:
+                continue
+            served[payload["id"]] = None
+            emit(event, _retained_stage(payload, at, now))
+            continue
+        if event in ("evidence", "highlight", "paper") and payload.get("gene") in skip_genes:
+            continue
+        if event == "candidates" and extra_rows:
+            # The added rows carry the retained scan's own numbers for a gene it
+            # measured and did not shortlist, so the merged event is retained in
+            # full and keeps the scan's timestamp rather than this question's.
+            have = {r.get("gene") for r in payload.get("rows", [])}
+            payload = {**payload, "rows": list(payload.get("rows", []))
+                       + [r for r in extra_rows if r.get("gene") not in have]}
+        emit(event, _retained(payload, at, now))
+    return list(served)
+
+
+def _measured_row(record: dict, gene: str, partner: str) -> dict:
+    """A candidate row for a gene the retained scan measured but did not follow.
+
+    Same shape and same claim as the rows `run_live` emits for a gene named in
+    the question: this gene was measured like every other one and did not clear
+    the gate. Every number in it comes from the scan, so it rides the scan's
+    timestamp through `_replay` rather than this question's.
+    """
+    m = (record.get("measured") or {}).get(gene) or {}
+    return {"gene": gene, "context": record.get("context"),
+            "level": record.get("level"),
+            "n": m.get("n"), "median": m.get("median"), "sel": m.get("sel"),
+            "tfrac": m.get("tfrac"), "ofrac": m.get("ofrac"),
+            "q": m.get("q"), "route": m.get("route", "none"),
+            "gate_pass": bool(m.get("pass")), "gate_why": list(m.get("why") or []),
+            "awaiting": not m, "shortlisted": False,
+            "partner": partner, "partner_is_query": True,
+            "involvement": "unknown", "region": None, "region_mapped": False,
+            "tractability": "unknown", "control": False, "concerns": [],
+            "ready": False,
+            "blocked_because": (
+                "named in a follow-up; the retained scan measured it and did not "
+                "shortlist it" if m else
+                "named in a follow-up; not measured in this context"),
+            "claims": []}
+
+
+def _pct(x) -> str:
+    return "—" if x is None else f"{x:.0%}"
+
+
+def _num(x, places: int = 3) -> str:
+    return "—" if x is None else f"{x:.{places}f}"
+
+
+def _verdict_answer(record: dict, gene: str, now: float) -> str:
+    """Why a gene passed or failed, written from the numbers the scan computed.
+
+    Composed here rather than by the model on purpose. This is the follow-up
+    whose answer most obviously already exists, and it should not stop working
+    when there is no API key — nor should prose be generated over numbers when
+    the numbers are themselves the answer.
+    """
+    m = (record.get("measured") or {}).get(gene) or {}
+    at = float(record.get("scan_at") or record.get("computed_at") or now)
+    context = record.get("context") or "this context"
+    shortlisted = any(r.get("gene") == gene and r.get("shortlisted")
+                      for r in record.get("rows") or [])
+    if not m:
+        return (f"{gene} does not appear in the retained scan of {context}, so this "
+                "session has no verdict on it to quote. Asking without a session "
+                "scans for it.")
+    if m.get("pass"):
+        head = (f"{gene} cleared the dependency gate in {context} via the "
+                f"{m.get('route')} path"
+                + (" and was shortlisted." if shortlisted else
+                   ", but did not reach the top of the ranking, so nothing "
+                   "downstream ran for it."))
+    else:
+        why = "; ".join(m.get("why") or []) or "it cleared neither path"
+        head = (f"{gene} was measured in {context} and did not clear the dependency "
+                f"gate: {why}.")
+    numbers = (f"Median gene effect {_num(m.get('median'))} across {m.get('n')} "
+               f"{context} models, with {_num(m.get('sel'))} of selectivity against "
+               f"the rest of DepMap; {_pct(m.get('tfrac'))} of {context} models are "
+               f"dependent against {_pct(m.get('ofrac'))} elsewhere; "
+               f"q = {_num(m.get('q'), 2)}.")
+    if m.get("low_n"):
+        numbers += (" The cohort is below the confidence floor, so this verdict "
+                    "carries low confidence.")
+    return (head + "\n\n" + numbers + "\n\n"
+            + f"Every number here was computed by the scan at {S_.iso(at)}, "
+              f"{S_.ago(now - at)} ago. Nothing was re-run for this question and no "
+              "gate was re-decided: this is that scan's verdict, quoted back.")
+
+
+def _retained_caveat(record: dict, now: float, recomputed: list[str]) -> str:
+    at = float(record.get("computed_at") or now)
+    if recomputed:
+        return (f"Answered from this session. {', '.join(recomputed)} ran just now; "
+                f"everything else is retained from the run at {S_.iso(at)}, "
+                f"{S_.ago(now - at)} ago, and is labelled retained on each stage.")
+    return (f"Answered entirely from state the run at {S_.iso(at)} computed, "
+            f"{S_.ago(now - at)} ago. No stage ran for this question.")
+
+
+def _no_model_answer(record: dict, fu, now: float, recomputed: list[str]) -> str:
+    """What this session holds, with no model available to phrase it.
+
+    A run with no API key still computed everything a follow-up serves, and
+    withholding it because prose is unavailable would hide state the reader is
+    entitled to. The stage lines, quoted, with their provenance attached.
+    """
+    at = float(record.get("computed_at") or now)
+    lines = [f"{sid}: {v.get('state')} — {v.get('detail')}"
+             for sid, v in (record.get("stages") or {}).items()
+             if v.get("state") not in (None, "pending")]
+    return ((f"No model is configured, so this is the session's own record rather "
+             f"than prose over it. {fu.reason}.") + "\n\n" + "\n".join(lines) + "\n\n"
+            + f"Those lines were produced by the run at {S_.iso(at)}, "
+              f"{S_.ago(now - at)} ago"
+            + (f", except {', '.join(recomputed)}, which ran for this question."
+               if recomputed else ", and none of them ran for this question."))
+
+
+def _literature_for(emit, cfg, gene: str, context: str, interface_evidence: dict,
+                    trace) -> None:
+    """The evidence axes for one added gene, run now against the retained context.
+
+    This is the half of a "what about <GENE>?" follow-up that genuinely has to
+    run: nothing was ever retrieved for this gene. The scan behind the context,
+    the gate, and every other candidate's evidence are untouched, which is what
+    makes the follow-up cheap — one subprocess per axis for one gene, rather
+    than the whole pipeline again.
+    """
+    emit("stage", {"id": "literature", "state": "running",
+                   "detail": f"six evidence axes for {gene}",
+                   "note": f"Added by a follow-up. The scan of {context or 'this run'} "
+                           "and every other candidate's evidence are retained; only "
+                           "this gene's retrieval is new."})
+    ev, papers, errors = gather(gene, context, cfg.partner_gene, per_axis=8)
+    for p in papers:
+        emit("paper", {"title": p.title, "id": p.accession, "url": p.url,
+                       "abstract": p.abstract, "axis": p.axis,
+                       "gene": gene, "support": p.suggested_support})
+    read = {"contact_documented": False, "support": "none", "note": "not assessed"}
+    if A.available():
+        read, _ = A.read_evidence(trace, gene, papers)
+        emit("thinking", {"trace": trace.as_dict()})
+        # Same carriage as the ranked path: a region read here reaches the
+        # screen's gate the way a curated one does, and stays labelled as a
+        # reading rather than as a file a person wrote.
+        _promote_reading(gene, read, papers, cfg, interface_evidence, emit)
+    emit("evidence", {"gene": gene, "axes": {
+        a: {"on_target": r.n_on_target, "returned": r.n_papers,
+            "note": r.note, "query": r.query} for a, r in ev.axes.items()},
+        "read": read})
+    if errors:
+        emit("stage", {"id": "literature", "state": "blocked",
+                       "detail": f"{len(errors)} axis search(es) failed for {gene}",
+                       "note": "; ".join(errors[:2])})
+        return
+    emit("stage", {
+        "id": "literature", "state": "done" if papers else "abstained",
+        "detail": f"{len(papers)} on-target papers for {gene} across "
+                  f"{len(ev.axes_with_hits)} axes with hits",
+        "note": ("Retrieved for this question. Only papers naming the gene are "
+                 "counted. "
+                 + ("Read: " + (read.get("note") or "")[:200] if A.available()
+                    else "No model is configured, so nothing was read."))})
+
+
+def follow_up(question: str, record: dict, runtime: dict, fu, emit, cfg,
+              free_receptor: Path | None = None, require_site: bool = False) -> dict:
+    """Answer a follow-up, recomputing only the stages whose inputs changed.
+
+    `fu` is a `sessions.FollowUp`, and its `recompute` list is the contract:
+    every stage not in it is replayed from `record` under the timestamp of the
+    run that computed it, and every stage in it runs for real against the same
+    context, the same scan and the same evidence — which is the point. A
+    question that could have moved the context never reaches here; the router
+    sends that to a full run and says why.
+
+    Returns the session's new record. Replayed events keep their original
+    stamps and recomputed ones take this moment's, so the next follow-up still
+    knows which half of the state is which.
+    """
+    emit = _Recorder(emit)
+    now = time.time()
+    at = float(record.get("computed_at") or now)
+    recompute = set(fu.recompute)
+    genes = list(record.get("genes") or [])
+    trace = runtime.get("trace") or A.AgentTrace()
+    interface_evidence = runtime.get("interface_evidence") or {}
+    emit.partner = record.get("partner") or cfg.partner_gene
+    emit.context, emit.level = record.get("context"), record.get("level")
+    # Carried forward explicitly, not only via the replayed `policy` event: a
+    # condition the first request set has to survive into the record this
+    # follow-up returns, or the follow-up after it inherits a weaker gate.
+    emit.require_site = bool(require_site)
+    # The session's own dict, mutated in place: whatever the structural tail
+    # rebuilds below has to be what the *next* follow-up reuses, not a copy of
+    # what the last one saw.
+    emit.runtime = runtime
+    emit.runtime["trace"] = trace
+
+    # The one stage that is always this run's own work. Matching an intent
+    # happened now, and the reader has to see which intent matched — and
+    # therefore what was skipped — before anything retained appears below it.
+    emit("stage", {
+        "id": "question", "state": "done", "detail": question,
+        "context": record.get("context"), "level": record.get("level"),
+        "follow_up": fu.kind,
+        "note": (f"Follow-up: {fu.reason}. The context "
+                 + (f"{record.get('context')} " if record.get("context") else "")
+                 + f"was resolved by the run at {S_.iso(at)} and is not re-resolved "
+                   "here. "
+                 + (f"Recomputed for this question: {', '.join(sorted(recompute))}. "
+                    if recompute else "Nothing was recomputed. ")
+                 + "Every stage below that did not run says so, and says when it did.")})
+
+    extra_rows: tuple = ()
+    if fu.gene and fu.gene not in genes and fu.kind in ("gene", "predict"):
+        extra_rows = (_measured_row(record, fu.gene, emit.partner),)
+        genes = genes + [fu.gene]
+    emit.genes = list(genes)
+
+    # A recomputed structural tail re-emits every candidate's highlight, so the
+    # retained ones are dropped rather than left to be overwritten out of order.
+    skip_events = {"highlight"} if "structure" in recompute else set()
+    skip_genes = {fu.gene} if fu.kind == "gene" else set()
+    served = _replay(emit, record, now, skip_stages={"question"} | recompute,
+                     skip_events=skip_events, skip_genes=skip_genes,
+                     extra_rows=extra_rows)
+
+    if "literature" in recompute and fu.gene:
+        _literature_for(emit, cfg, fu.gene, record.get("context") or "",
+                        interface_evidence, trace)
+    if "structure" in recompute:
+        # The same call a full run makes, with the same evidence gate. All a
+        # follow-up saves here is the scan and the retrieval above it; nothing
+        # downstream is allowed to be cheaper than it was.
+        _structure_site_and_screen(
+            emit, cfg, genes, interface_evidence, free_receptor,
+            fu.gene if fu.kind == "predict" else None, require_site, trace)
+
+    # The ledger for this question: which stages were served from state and
+    # which ran. `serve.py` has already said *that* this is a follow-up; this
+    # says what that cost and what it did not.
+    emit("provenance", {"kind": fu.kind, "reason": fu.reason,
+                        "retained_at": S_.iso(at), "retained_age_s": int(now - at),
+                        "retained_stages": served,
+                        "recomputed_stages": sorted(recompute)})
+
+    if fu.kind == "verdict" and fu.gene:
+        emit("answer", {"text": _verdict_answer(record, fu.gene, now), "model": "",
+                        "caveat": _retained_caveat(record, now, sorted(recompute))})
+    elif A.available():
+        # The model gets the same record a full run hands it, plus provenance.
+        # Rule 1 of its system prompt is that every number must appear in the
+        # record; the provenance block is what stops it presenting those numbers
+        # as this question's work.
+        body = dict(emit.record())
+        body["provenance"] = {
+            "this_is_a_follow_up": True,
+            "retained_from_run_at": S_.iso(at),
+            "retained_age": S_.ago(now - at),
+            "stages_recomputed_for_this_question": sorted(recompute) or None,
+            "note": ("Stages not listed as recomputed did not run for this "
+                     "question. Say so when you quote their numbers."),
+        }
+        text, _ = A.answer(trace, question, body)
+        if text:
+            emit("answer", {"text": text, "model": A.MODEL,
+                            "caveat": _retained_caveat(record, now, sorted(recompute))})
+    else:
+        emit("answer", {"text": _no_model_answer(record, fu, now, sorted(recompute)),
+                        "model": "",
+                        "caveat": _retained_caveat(record, now, sorted(recompute))})
+
+    emit("thinking", {"trace": trace.as_dict()})
+    emit("done", {"ok": True})
+    return emit.state()
