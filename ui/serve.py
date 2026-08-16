@@ -21,6 +21,7 @@ see `ui/sessions.py` for why that labelling is the whole of the design.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -32,6 +33,47 @@ from urllib.parse import parse_qs, urlparse
 
 UI = Path(__file__).resolve().parent
 ROOT = UI.parent
+
+
+def _load_env(path: Path = None) -> list[str]:
+    """Read `.env` into the environment, without overwriting what is already set.
+
+    `activate.sh` does this, and for a while it was the only thing that did — so
+    `python ui/serve.py` started a server with no ANTHROPIC_API_KEY, every
+    literature stage stopped at "Retrieved, not read", no abstract was ever
+    assessed for a documented contact, and the Reasoning tab stayed empty. None
+    of that looked like a missing credential from the page: it looked like the
+    pipeline had read the papers and found nothing.
+
+    Existing environment wins, so an operator who exported a different key in
+    their shell keeps it. Values are taken literally apart from surrounding
+    quotes; this is a dotenv reader for our own file, not a shell.
+    """
+    path = path or ROOT / ".env"
+    loaded: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return loaded
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):]
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ[key] = value
+        loaded.append(key)
+    return loaded
+
+
+_ENV_LOADED = _load_env()
 if str(UI) not in sys.path:
     sys.path.insert(0, str(UI))
 import sessions  # noqa: E402  (needs UI on the path; stdlib-only, like this file)
@@ -273,7 +315,16 @@ class Handler(SimpleHTTPRequestHandler):
 def main() -> int:
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8931
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    print(f"→ http://localhost:{port}   (paperclip: {'found' if shutil.which('paperclip') or Path(PAPERCLIP).exists() else 'MISSING'})")
+    paperclip = "found" if shutil.which("paperclip") or Path(PAPERCLIP).exists() else "MISSING"
+    # Say whether reading is on. Without a key the pipeline still runs, still
+    # retrieves, and still fills the page — it just never reads an abstract, and
+    # nothing on screen distinguishes that from a literature search that found
+    # nothing. A line at startup is the cheapest place to notice.
+    reading = "on" if os.environ.get("ANTHROPIC_API_KEY") else (
+        "OFF — no ANTHROPIC_API_KEY, so abstracts are retrieved but never read")
+    print(f"→ http://localhost:{port}   (paperclip: {paperclip}; reading: {reading})")
+    if _ENV_LOADED:
+        print(f"   loaded from .env: {', '.join(_ENV_LOADED)}")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

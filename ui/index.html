@@ -130,6 +130,10 @@ header{display:flex;align-items:center;gap:16px;padding:0 20px;height:56px;
 .qbar input{flex:1;font:inherit;font-size:13px;background:none;border:none;color:var(--ink);
   padding:8px 2px;min-width:0}
 .qbar input:focus{outline:none}
+/* Quiet by design: it states that the next question continues this run, which
+   is a property of the box, not an event worth announcing. */
+#qsess{font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);
+  border:1px solid var(--line);border-radius:5px;padding:1.5px 5px;white-space:nowrap;cursor:default}
 .qbar button{background:none;border:none;color:var(--ink-3);cursor:pointer;font-size:14px;padding:2px 4px}
 .qbar button:hover{color:var(--ink)}
 nav{display:flex;gap:2px;margin-left:auto}
@@ -643,6 +647,9 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
     <div class="qbar">
       <span style="color:var(--ink-3);font-size:13px">⌕</span>
       <input id="q1" placeholder="Ask another question…" autocomplete="off">
+      <span id="qsess" hidden title="The next question continues this run: stages
+whose inputs have not changed are reused rather than recomputed, and each says
+so.">follows on</span>
       <button id="go1" title="Run">↵</button>
     </div>
     <nav>
@@ -1042,7 +1049,11 @@ $('#home').onclick = () => { $('#landing').removeAttribute('hidden-state');
 function enter(q){
   $('#landing').setAttribute('hidden-state','');
   $('#app').setAttribute('data-on','');
-  $('#q1').value = q;
+  // Emptied rather than filled with the question just asked. This is the only
+  // place to ask a follow-up, and leaving the previous question sitting in it
+  // made it read as the box that had already been used — the follow-up path
+  // existed, was wired to this input, and was invisible.
+  $('#q1').value = '';
   // Already inside the app: run immediately. The delay below exists to let the
   // landing fade out before the plot measures itself, and paying it again on
   // every subsequent question just makes the interface feel slow.
@@ -1270,7 +1281,8 @@ function setAnswer(d){
    problem wearing a different hat. */
 let SESSION = null;
 let TURNS = [];
-function newSession(){ SESSION = null; TURNS = []; renderConvo(); }
+function newSession(){ SESSION = null; TURNS = []; renderConvo();
+  const m = $('#qsess'); if(m) m.hidden = true; }
 function renderConvo(){
   const box=$('#convo'), past=TURNS.slice(0,-1);
   box.hidden = !past.length;
@@ -1326,6 +1338,7 @@ function run(q, predict){
   live.addEventListener('session', e => {
     const d = JSON.parse(e.data);
     SESSION = d.id;
+    $('#qsess').hidden = false;
     const t = TURNS[TURNS.length-1];
     if(t){ t.kind = d.follow_up ? d.kind : 'run'; t.reason = d.reason; }
     renderConvo();
