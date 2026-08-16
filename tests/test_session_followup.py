@@ -625,3 +625,45 @@ def test_a_session_can_be_inspected_and_a_missing_one_is_a_404(server):
     with pytest.raises(urllib.error.HTTPError) as e:
         get_json(base, "/api/session?id=nope")
     assert e.value.code == 404
+
+
+# ── a different receptor is a different question ────────────────────────────
+
+def _record_about(partner: str) -> dict:
+    rec = dict(RECORD)
+    rec["partner"] = partner
+    return rec
+
+
+def test_a_different_receptor_re_runs_rather_than_reusing_the_last_one():
+    """The bug this rule exists for.
+
+    Asking about MED23 after a KMT2A run classified as a cheap `screen`
+    follow-up: the pipeline built a MED23 box and docked into it while the view
+    still drew KMT2A and showed no compounds, because the two halves disagreed
+    about which protein the run was about.
+    """
+    fu = SS.classify("screen small molecules against MED23",
+                           _record_about("KMT2A"))
+    assert fu.cheap is False
+    assert fu.kind == "rerun"
+    assert "MED23" in fu.reason and "KMT2A" in fu.reason
+
+
+def test_an_alias_is_not_resolved_here_and_that_costs_only_a_re_run():
+    # MLL is KMT2A, and this rule does not know it. The result is a re-run of a
+    # question that was going to re-run anyway — never an answer about the
+    # wrong protein, which is the direction to err in.
+    assert SS.classify("a mapped region on MLL",
+                             _record_about("KMT2A")).cheap is False
+
+
+def test_the_same_receptor_named_again_is_still_a_follow_up():
+    fu = SS.classify("what would we screen against MED23?",
+                           _record_about("MED23"))
+    assert fu.kind != "rerun" or "receptor" not in fu.reason
+
+
+def test_naming_no_receptor_leaves_classification_alone():
+    fu = SS.classify("why was NKX2-1 rejected?", _record_about("MED23"))
+    assert fu.kind == "verdict" and fu.cheap is True

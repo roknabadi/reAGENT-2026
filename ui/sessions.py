@@ -286,6 +286,22 @@ def _other_context(question: str, context: str | None) -> str:
     return ""
 
 
+# "on MED23", "against MLL", "partner KMT2A" — the phrasings a question uses to
+# name the protein being screened, as opposed to the TF doing the binding.
+_RECEPTOR_CUE = re.compile(
+    r"\b(?:on|against|partner|receptor|subunit|target(?:ing)?)\s+"
+    r"(?:the\s+)?([A-Z][A-Z0-9]{1,}(?:-[A-Z0-9]+)?)\b")
+
+
+def _named_receptor(question: str) -> str | None:
+    """The receptor a question names, or None. Symbols only, uppercase only."""
+    for tok in _RECEPTOR_CUE.findall(question or ""):
+        up = tok.upper()
+        if up not in _NOT_A_GENE and len(up) >= 3:
+            return up
+    return None
+
+
 def classify(question: str, record: dict) -> FollowUp:
     """What this follow-up is, given what the session already computed.
 
@@ -304,6 +320,22 @@ def classify(question: str, record: dict) -> FollowUp:
     followed = set(record.get("genes") or [])
     partner = (record.get("partner") or "").upper()
     known = measured | followed | ({partner} if partner else set())
+
+    # A different receptor is a different question, exactly as a different
+    # cohort is: the site, the screen and the structure all belong to the
+    # protein being screened. Without this, asking about MED23 after a KMT2A run
+    # came back as a cheap `screen` follow-up — the pipeline built a MED23 box
+    # and docked twelve compounds into it while the view still drew KMT2A and
+    # showed none of them, because the two halves disagreed about what the run
+    # was about. Aliases are not resolved here (MLL and KMT2A read as different
+    # symbols), which costs a re-run that was already going to be a re-run and
+    # never answers about the wrong protein.
+    asked_for = _named_receptor(q)
+    if partner and asked_for and asked_for != partner:
+        return FollowUp("rerun", None,
+                        f"this question is about {asked_for}, and the retained run "
+                        f"is about {partner} — a different receptor is a different "
+                        "site, screen and structure", False)
 
     context = record.get("context")
     other = _other_context(q, context)

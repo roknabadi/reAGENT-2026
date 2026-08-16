@@ -771,6 +771,30 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
                     "Without one there is nothing to rank, and ranking on the "
                     "whole of DepMap would answer a question nobody asked."})
 
+    # This run's candidates are the genes it was asked about. Saying so is not
+    # decoration: without it the table keeps whatever the last question put
+    # there, and everything downstream keys off that table — a screen that
+    # docked twelve compounds for RUNX2 displayed none of them because the rows
+    # on screen were still a previous question's lung shortlist, and no row
+    # matched the gene the poses belonged to. There are no cohort numbers here
+    # by definition, and the rows say that rather than leaving blanks to read
+    # as zeroes.
+    emit("candidates", {"rows": [
+        {"gene": g, "context": None, "level": None,
+         "n": None, "median": None, "sel": None, "tfrac": None, "ofrac": None,
+         "q": None, "route": "none",
+         "gate_pass": False, "gate_why": [], "awaiting": True,
+         "shortlisted": False,
+         "partner": cfg.partner_gene, "partner_is_query": True,
+         "involvement": "unknown", "region": None, "region_mapped": False,
+         "tractability": "unknown", "control": False, "concerns": [],
+         "ready": False,
+         "blocked_because": ("named in the question, which gave no disease "
+                             "context: there is no cohort to measure a "
+                             "dependency against"),
+         "claims": []}
+        for g in named]})
+
     # Three axes, not six. The three that are dropped — dependency, driver,
     # normal tissue — all read `{context}`, and a question with no disease has
     # nothing to put there; searching them anyway spends a subprocess each on a
