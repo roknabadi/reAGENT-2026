@@ -59,10 +59,17 @@ def build_input(elk1: str, med23: str, samples: int, seed: int):
             {"id": "B", "sequence": tad, "entity_type": "protein"},
         ],
     }]
-    # device="modal" marks this as remote; dispatch_to_modal swaps it for the
-    # container's physical device. Without it the config would carry "cuda",
+    # `diffusion_samples` does NOT give an ensemble. proto_tools documents it as
+    # "Independent structure samples per complex; the best by confidence is
+    # returned" — 5 are generated internally and 1 comes back. The control asks
+    # whether *independent samples agree*, which that parameter cannot answer.
+    # Each ensemble member is therefore its own dispatch with its own seed, and
+    # this builds the config for one of them.
+    #
+    # device="modal" marks the request remote; dispatch_to_modal swaps it for
+    # the container's physical device. Without it the config carries "cuda",
     # which is meaningless on the caller's machine.
-    cfg = Boltz2Config(diffusion_samples=samples, include_pae_matrix=True,
+    cfg = Boltz2Config(diffusion_samples=1, include_pae_matrix=True,
                        seed=seed, device="modal")
     return Boltz2Input(complexes=complexes), cfg, tad
 
@@ -98,16 +105,25 @@ def main() -> int:
     from proto_tools.modal.client import dispatch_to_modal
     OUT.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    print("\ndispatching to Modal ...")
-    try:
-        result = dispatch_to_modal("boltz2-prediction", inp, cfg)
-    except Exception as e:
-        print(f"\nFAILED after {time.time()-t0:.0f}s: {type(e).__name__}: {e}")
-        return 1
-    dt = time.time() - t0
-    print(f"returned in {dt:.0f}s ({dt/max(a.samples,1):.0f}s per sample)")
 
-    payload = result.model_dump(mode="json")
+    # One dispatch per ensemble member, each with its own seed. Seeds are
+    # derived from the base seed so the ensemble is reproducible.
+    payloads = []
+    for i in range(a.samples):
+        seed_i = a.seed + i
+        inp_i, cfg_i, _ = build_input(elk1, med23, 1, seed_i)
+        print(f"\ndispatching sample {i + 1}/{a.samples} (seed {seed_i}) ...")
+        try:
+            result = dispatch_to_modal("boltz2-prediction", inp_i, cfg_i)
+        except Exception as e:
+            print(f"FAILED after {time.time()-t0:.0f}s: {type(e).__name__}: {e}")
+            return 1
+        payloads.append(result.model_dump(mode="json"))
+    dt = time.time() - t0
+    print(f"\nreturned in {dt:.0f}s ({dt/max(a.samples,1):.0f}s per sample)")
+
+    payload = {"structures": [s for p in payloads
+                              for s in (p.get("structures") or [])]}
 
     # Each predicted structure goes out as its own .cif, and the metrics as a
     # small JSON beside them. Writing one combined blob and slicing it to 20MB
