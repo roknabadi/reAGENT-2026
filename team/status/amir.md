@@ -2,6 +2,29 @@
 
 Newest on top. Format: ../README.md
 
+## 2026-08-15 (3) — Amir
+Did: **retracted the ELK1–MED23 control result.** `scripts/calibrate_structure.py`
+carried `MED23 = "O75448"`, which is MED24 — a different subunit of the same
+Mediator tail module, 989 aa against MED23's 1368. The GPU run docked the ELK1
+motif onto MED24 and scored it with MED23 numbering from 9F6Y, so "the control
+fails" is withdrawn: nothing about Boltz2 on this interface has been shown either
+way. Found it by asking whether our contact detection was at fault; it is not —
+run over the deposited 9F6Y coordinates it recovers 7/7 published pocket residues
+(339, 343, 379, 382, 383, 533, 537) and ELK1 375–383. Fixed the accession, added
+`verify_accession` applied to **both** chains (gene symbol + presence in 9F6Y's
+cross-references — MED24 shares 10 of MED23's 13 PDB entries, so the
+structure-specific check is what separates them), made `elk1_control.py` fetch and
+verify by accession instead of reading a hand-written `seqs.json`, and added
+`tests/test_calibration_constants.py` (8 tests, the real MED24 entry replayed as
+the negative case). Branch `fix/med23-accession`.
+Next: re-run the control against real MED23 on Modal — 1368 aa instead of 989, so
+expect it to be slower than the 56 s/sample we measured.
+Blocked: none. Flagging for the team: the void run produced ipTM 0.267
+[0.245–0.284] with five samples agreeing closely and a consensus module refusing
+with a specific, correct-sounding reason. It read as a clean negative. A
+confident-looking negative is not self-evidently a negative about the thing you
+meant.
+
 ## 2026-08-15 (2) — Amir
 Did: TASKS.md **#2 `demo.json`** on `feature/demo-json-contract`. One
 self-contained file per run, `reagent-agent export-demo <run_id>`, also emitted by
