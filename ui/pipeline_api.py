@@ -35,7 +35,10 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.parse
+import urllib.request
 from pathlib import Path
+from functools import lru_cache
 from typing import Callable
 
 import pandas as pd
@@ -378,7 +381,7 @@ def _live_screen(site, genes: list[str], emit, trace):
     return _read_screen(out, site)
 
 
-def _recorded_interface(gene: str):
+def _recorded_interface(gene: str, partner: str = "MED23"):
     """The predicted TF–partner interface for `gene`, if an ensemble produced one.
 
     Written by `scripts/predict_med23_interface.py`, which co-folds the pair on
@@ -387,7 +390,13 @@ def _recorded_interface(gene: str):
     returned as-is: `receptor_residues` refuses a blocked consensus, and the
     interface reports the refusal instead of quietly falling back.
     """
-    path = ROOT / "runs" / "interfaces" / f"{gene.upper()}_MED23" / "consensus.json"
+    # Keyed on the partner, not on MED23. This read `{gene}_MED23` while the
+    # rest of the run followed `cfg.partner_gene`, so once a question could name
+    # its own receptor, a KMT2A run happily reported an E2F1-MED23 ensemble as
+    # its structural result: the right gene against the wrong protein, which is
+    # the one substitution this project has already been burned by.
+    path = (ROOT / "runs" / "interfaces" / f"{gene.upper()}_{partner.upper()}"
+            / "consensus.json")
     if not path.is_file():
         return None
     try:
@@ -400,7 +409,7 @@ def _recorded_interface(gene: str):
 PREDICT_SAMPLES = 3          # the consensus floor; five is the batch convention
 
 
-def _predict_interface(gene: str, emit) -> tuple[tuple | None, str]:
+def _predict_interface(gene: str, emit, partner: str = "MED23") -> tuple[tuple | None, str]:
     """Run the real predictor for `gene`, live, and return what it wrote.
 
     This is a bridge, not a second implementation: `scripts/predict_med23_interface`
@@ -421,6 +430,18 @@ def _predict_interface(gene: str, emit) -> tuple[tuple | None, str]:
     emitted, because the stage this returns into emits its own verdict
     afterwards and would otherwise overwrite the only explanation on screen.
     """
+    # The backend co-folds against MED23 and writes runs/interfaces/<GENE>_MED23.
+    # Running it for a question about another receptor would spend GPU on the
+    # wrong protein and then file the answer under the right gene, which is
+    # worse than not running: the result looks like the one that was asked for.
+    if partner.upper() != "MED23":
+        note = (f"the predictor only co-folds against MED23; this run is about "
+                f"{partner}, so no dispatch was made")
+        emit("stage", {"id": "structure", "state": "abstained",
+                       "detail": f"no predictor for {gene}-{partner}",
+                       "note": note})
+        return None, note
+
     import sys
     scripts = str(ROOT / "scripts")
     if scripts not in sys.path:
@@ -465,9 +486,96 @@ def _predict_interface(gene: str, emit) -> tuple[tuple | None, str]:
                        "detail": f"prediction failed: {type(e).__name__}",
                        "note": note})
         return None, note
-    got = _recorded_interface(gene)
+    got = _recorded_interface(gene, partner)
     return got, ("" if got is not None else
                  f"the {gene} dispatch returned but wrote no consensus file")
+
+
+def _axis_progress(emit, gene: str, done: list, total: int, label: str):
+    """Stream each literature axis as it lands.
+
+    `literature.gather` has always accepted an `on_axis` hook and nothing ever
+    passed one. A stage that runs one Paperclip subprocess per axis per
+    candidate, then reads every on-target abstract, therefore reported
+    "running" and nothing else for minutes — which from the outside is
+    indistinguishable from a hang, and was read as one.
+
+    Re-emitting the `literature` stage rather than inventing an event type: the
+    front end already renders stage detail, so the progress appears with no
+    change to the client.
+    """
+    def on_axis(axis: str, n_papers: int, err: str | None = None) -> None:
+        done[0] += 1
+        got = f"{err[:48]}" if err else (f"{n_papers} on-target"
+                                         if n_papers else "nothing on-target")
+        emit("stage", {"id": "literature", "state": "running",
+                       "detail": f"{done[0]}/{total} searches — {gene} · {axis}: {got}",
+                       "note": label})
+    return on_axis
+
+
+# A question can name the receptor it means. "a mapped interacting region on
+# MLL" is a question about KMT2A, and answering it with MED23 results is not a
+# partial answer, it is an answer about a different protein.
+_PARTNER_CUE = re.compile(
+    r"\b(?:region|interface|site|contact|contacts|pocket|binding|bind|binds|"
+    r"interaction|interacts?|screen(?:ing)?)\b[^.;]{0,40}?\b"
+    r"(?:on|with|to|against|for)\s+(?:the\s+)?([A-Za-z][A-Za-z0-9-]{2,15})\b",
+    re.I)
+
+# Symbols the corpus and the user use interchangeably with the reviewed symbol.
+# Resolution goes through UniProt, but a synonym has to survive the regex first,
+# and "MLL" is the name in almost every paper about KMT2A.
+_PARTNER_STOPWORDS = {"the", "any", "this", "that", "these", "those", "small",
+                      "molecules", "molecule", "compounds", "literature", "them",
+                      "one", "ones", "which", "each", "site", "sites", "region"}
+
+
+@lru_cache(maxsize=64)
+def _reviewed_symbol(token: str) -> tuple[str, str] | None:
+    """(official symbol, accession) for a gene name or synonym, or None.
+
+    `gene:` rather than `gene_exact:` so synonyms resolve — MLL is not a
+    reviewed symbol, KMT2A is, and a user is far more likely to type the former.
+    Reviewed + human only: an unreviewed hit is not something to point a
+    pipeline at.
+    """
+    q = urllib.parse.quote(f"gene:{token} AND organism_id:9606 AND reviewed:true")
+    url = (f"https://rest.uniprot.org/uniprotkb/search?query={q}"
+           "&fields=accession,gene_primary&format=json&size=1")
+    try:
+        with urllib.request.urlopen(url, timeout=15) as r:
+            hits = json.load(r).get("results") or []
+    except Exception:
+        return None
+    if not hits:
+        return None
+    genes = hits[0].get("genes") or [{}]
+    sym = (genes[0].get("geneName") or {}).get("value")
+    return (sym.upper(), hits[0]["primaryAccession"]) if sym else None
+
+
+def _named_partner(question: str, default: str) -> tuple[str, str | None, str]:
+    """The receptor this question is about. Returns (symbol, accession, why).
+
+    Falls back to the configured default, but never silently: the caller emits
+    `why` so a run that could not read a partner out of the question says which
+    protein it answered about. Silently substituting the default is how a
+    question about MLL came back as a MED23 answer, screen and structure
+    included.
+    """
+    for tok in _PARTNER_CUE.findall(question or ""):
+        if tok.lower() in _PARTNER_STOPWORDS or tok.upper() == default.upper():
+            continue
+        got = _reviewed_symbol(tok)
+        if got:
+            sym, acc = got
+            named = f"read from the question ({tok!r} -> {sym}, {acc})"
+            return sym, acc, named
+        return default, None, (
+            f"{tok!r} did not resolve to a reviewed human gene, so this run "
+            f"answers about {default}")
+    return default, None, f"no receptor named in the question, so {default} was used"
 
 
 def _model_table(model_path) -> pd.DataFrame:
@@ -533,12 +641,17 @@ def _partner_first(question: str, named: list[str], cfg, emit, trace, why: str,
     emit("stage", {"id": "literature", "state": "running",
                    "detail": f"{len(axes)} interface axes for {', '.join(named)}"})
     total_on, hits, errors, read = 0, 0, [], {}
+    _axis_done, _axis_total = [0], len(axes) * len(named[:2])
     for gene in named[:2]:          # two is enough to keep a demo interactive
         # Eight per axis, not four. One subprocess runs per axis either way, so
         # the extra results are nearly free — and the abstract that names the
         # residues is routinely not in the top four. Retrieval was the binding
         # constraint on whether anything could be mapped at all.
-        ev, papers, errs = gather(gene, "", cfg.partner_gene, axes=axes, per_axis=8)
+        ev, papers, errs = gather(
+            gene, "", cfg.partner_gene, axes=axes, per_axis=8,
+            on_axis=_axis_progress(emit, gene, _axis_done, _axis_total,
+                                   "Retrieved, not read. Reading happens after "
+                                   "retrieval and is reported separately."))
         errors.extend(errs)
         for p in papers:
             emit("paper", {"title": p.title, "id": p.accession, "url": p.url,
@@ -615,7 +728,7 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # costed decision, not something a page load should trigger. What this
     # stage does is look for an ensemble a previous dispatch left on disk for
     # the shortlisted candidates, and report honestly when there is none.
-    predicted = {g: _recorded_interface(g) for g in genes}
+    predicted = {g: _recorded_interface(g, cfg.partner_gene) for g in genes}
     predicted = {g: p for g, p in predicted.items() if p is not None}
     # An explicit request to fold one of these candidates now. Only when the
     # caller named it and only when nothing is already on disk: a page load must
@@ -639,7 +752,8 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
                          "to fold it again, or add seeds with "
                          "scripts/predict_med23_interface.py.")})
         else:
-            got, predict_note = _predict_interface(predict.upper(), emit)
+            got, predict_note = _predict_interface(predict.upper(), emit,
+                                                   cfg.partner_gene)
             if got is not None:
                 predicted[predict.upper()] = got
     converged = {g: (c, r) for g, (c, r) in predicted.items() if c.converged}
@@ -953,6 +1067,18 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
     interface_evidence = interface_evidence or {}
     emit = _Recorder(emit)
 
+    # Which receptor this run is about, before anything is searched for it. The
+    # partner used to be a config default that no question could reach, so
+    # "a mapped interacting region on MLL" ran six literature axes against
+    # MED23, screened MED23's ELK1 cavity and drew MED23 on the structure tab —
+    # a complete, confident answer to a question nobody asked. The default is
+    # still the default, but a run now states which protein it answered about.
+    partner, partner_acc, partner_why = _named_partner(question, cfg.partner_gene)
+    if partner.upper() != cfg.partner_gene.upper():
+        cfg = cfg.model_copy(update={"partner_gene": partner})
+    emit("partner", {"gene": partner, "uniprot": partner_acc, "why": partner_why,
+                     "curated_pocket": partner.upper() in CURATED_POCKETS})
+
     if not Path(ge_path).exists():
         emit("stage", {"id": "question", "state": "blocked",
                        "detail": f"{Path(ge_path).name} is not present",
@@ -1196,8 +1322,13 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
                                   "candidate(s)")})
         total_on, total_axes, hits, leads, errors = 0, 0, 0, [], []
         read: dict[str, dict] = {}
+        _axis_done, _axis_total = [0], len(AXES) * len(downstream)
         for gene in downstream:
-            ev, papers, errs = gather(gene, m.context, cfg.partner_gene, per_axis=8)
+            ev, papers, errs = gather(
+                gene, m.context, cfg.partner_gene, per_axis=8,
+                on_axis=_axis_progress(emit, gene, _axis_done, _axis_total,
+                                       "Retrieved, not read. Only papers naming "
+                                       "the gene are counted."))
             errors.extend(errs)
             for p in papers:
                 emit("paper", {"title": p.title, "id": p.accession, "url": p.url,
