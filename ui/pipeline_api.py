@@ -41,6 +41,8 @@ from pathlib import Path
 from functools import lru_cache
 from typing import Callable
 
+from collections import Counter
+
 import pandas as pd
 from pydantic import ValidationError
 
@@ -50,7 +52,7 @@ from reagent_workflow import agent as A
 from reagent_workflow import verdict as V
 from reagent_workflow.chemistry import depict, describe, parse_molblock
 from reagent_workflow.interface import InterfaceConsensus, parse_mmcif
-from reagent_workflow.literature import AXES, gather
+from reagent_workflow.literature import AXES, gather, search
 from reagent_workflow.resolve import resolve, vocabulary
 from reagent_workflow.site import (CURATED_POCKETS, build_search_site,
                                    receptor_residues)
@@ -578,6 +580,64 @@ def _named_partner(question: str, default: str) -> tuple[str, str | None, str]:
     return default, None, f"no receptor named in the question, so {default} was used"
 
 
+# "Which transcription factors have a mapped interacting region on MLL" makes
+# the contact the SELECTOR. Ranking by dependency and then asking whether the
+# winners happen to touch the receptor answers a different question: it returns
+# the top dependencies, which is one step away from what was asked, and a TF
+# with a documented contact and no dependency never appears at all.
+_SELECTS_BY_CONTACT = re.compile(
+    r"\b(?:which|what|any|list|find|identify)\b[^.?;]{0,90}?"
+    r"\b(?:mapped\s+interacting\s+region|interacting\s+region|interface|"
+    r"contacts?|binds?|binding|interacts?\s+with|partners?)\b", re.I)
+
+
+def _selects_by_contact(question: str) -> bool:
+    return bool(_SELECTS_BY_CONTACT.search(question or ""))
+
+
+def _tfs_documented_with(partner: str, tf_path, emit,
+                         per_query: int = 12) -> list[tuple[str, int]]:
+    """TF symbols the literature names as contacting `partner`, most-cited first.
+
+    Retrieval keyed on the receptor rather than on a candidate: the question
+    asks who binds it, so that is what gets searched for. Symbols are kept only
+    if the TF catalogue knows them — an abstract naming KMT2A, MLL and AML is
+    three tokens and one transcription factor.
+
+    This selects who to look at. Whether a contact is really documented, and
+    whether a region is really mapped, is still decided downstream by reading
+    the papers; a hit here is a lead, not a claim.
+    """
+    from dependency_scout.depmap import load_tf_universe
+    try:
+        universe = load_tf_universe(str(tf_path))
+    except Exception:
+        universe = set()
+    if not universe:
+        return []
+    queries = [
+        f"{partner} transcription factor physical interaction mapped binding region",
+        f"{partner} interacts with transcription factor co-immunoprecipitation domain",
+        f"{partner} complex structure interface transcription factor residues",
+    ]
+    tally: Counter = Counter()
+    for i, q in enumerate(queries, 1):
+        emit("stage", {"id": "literature", "state": "running",
+                       "detail": f"{i}/{len(queries)} partner searches — "
+                                 f"who is documented to contact {partner}?",
+                       "note": "Selecting candidates by contact, because that is "
+                               "what the question selected on."})
+        papers, err = search(q, "partner_first", per_query)
+        if err:
+            continue
+        for pap in papers:
+            text = f"{pap.title} {pap.abstract or ''}"
+            hits = set(re.findall(r"\b[A-Z][A-Z0-9-]{2,9}\b", text)) & universe
+            for sym in hits - {partner.upper()}:
+                tally[sym] += 1
+    return tally.most_common()
+
+
 def _model_table(model_path) -> pd.DataFrame:
     return pd.read_csv(model_path, usecols=["ModelID", "OncotreeLineage",
                                             "OncotreeSubtype"])
@@ -730,6 +790,29 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # the shortlisted candidates, and report honestly when there is none.
     predicted = {g: _recorded_interface(g, cfg.partner_gene) for g in genes}
     predicted = {g: p for g, p in predicted.items() if p is not None}
+
+    # A request that says "screen against that site" has asked for a site, and
+    # when the receptor has no deposited pocket the only way to obtain one is to
+    # predict it. Without this the chain could not close: the structure stage
+    # abstained pending a button, the site stage abstained for want of a
+    # consensus, and the screen abstained for want of a site — three correct
+    # refusals that together made the instruction unsatisfiable.
+    #
+    # Bounded deliberately. One candidate, not the shortlist: three GPU seeds is
+    # already minutes and credits, and a sentence typed into a box should not be
+    # able to spend that per candidate. The rest stay available through the
+    # button, one at a time, chosen by a person.
+    if (predict is None and require_site and not predicted
+            and cfg.partner_gene.upper() not in CURATED_POCKETS and genes):
+        predict = genes[0]
+        emit("stage", {
+            "id": "structure", "state": "running",
+            "detail": f"no pocket on file for {cfg.partner_gene}; predicting "
+                      f"{predict}–{cfg.partner_gene} because the request asked "
+                      f"for a site",
+            "note": "Three Boltz-2 seeds on Modal, minutes of GPU. Only the "
+                    "first candidate is folded automatically; the others need "
+                    "the button on the structure panel."})
     # An explicit request to fold one of these candidates now. Only when the
     # caller named it and only when nothing is already on disk: a page load must
     # never start a GPU job, and a job that already ran must never be repeated
@@ -1246,7 +1329,35 @@ def run_live(question: str, data_paths, cfg, emit: Callable[[str, dict], None],
              if g not in {v.gene for v in top}
              and g != cfg.partner_gene.upper()]
     by_gene = {v.gene: v for v in verdicts}
-    downstream = [v.gene for v in top] + asked
+    # Candidates the question selected on: TFs the literature documents as
+    # contacting the receptor. They ride alongside the dependency shortlist
+    # rather than replacing it — a contact with no dependency is still worth
+    # showing, and so is a dependency with no contact, but the question asked
+    # about the first and only the second used to be looked for.
+    by_contact: list[str] = []
+    if _selects_by_contact(question):
+        measured = {v.gene for v in verdicts}
+        for sym, n_papers in _tfs_documented_with(cfg.partner_gene, tf_path, emit):
+            if sym not in {v.gene for v in top} and sym not in asked:
+                by_contact.append(sym)
+            if len(by_contact) >= top_n:
+                break
+        emit("stage", {
+            "id": "ranking", "state": "done" if by_contact else "abstained",
+            "detail": (f"{len(by_contact)} candidate(s) selected by documented "
+                       f"contact with {cfg.partner_gene}: {', '.join(by_contact)}"
+                       if by_contact else
+                       f"no transcription factor in the catalogue is named in the "
+                       f"literature as contacting {cfg.partner_gene}"),
+            "note": ("The question selected on the contact, so the candidates were "
+                     "retrieved for the receptor rather than ranked by dependency. "
+                     "Their dependency numbers are reported beside them; "
+                     + (f"{sum(1 for g in by_contact if g in measured)} of "
+                        f"{len(by_contact)} were measured in this context."
+                        if by_contact else
+                        "the dependency shortlist is still shown below."))})
+
+    downstream = [v.gene for v in top] + asked + by_contact
     for v in flagged:
         routes[v.route] = routes.get(v.route, 0) + 1
     near = [v for v in flagged if not v.significant]
