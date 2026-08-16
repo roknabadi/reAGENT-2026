@@ -37,12 +37,16 @@ from reagent_workflow.chemistry import (Compound, assemble_library, describe,
                                         amphiphilicity_proxy, standardize)
 from reagent_workflow.discovery_config import DiscoveryConfig
 from reagent_workflow.interface import parse_mmcif
+from reagent_workflow import verdict as V
 from reagent_workflow.literature import gather
-from reagent_workflow.site import build_search_site
+from reagent_workflow.site import build_search_site, receptor_residues
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 D = ROOT / "downloads"
-GE, MODELS, TFS = D / "CRISPRGeneEffect.csv", D / "Model.csv", D / "lambert_tfs.csv"
+# The release the canonical gate is written against; see verdict.DEPMAP_RELEASE.
+GE = D / "24Q4" / "CRISPRGeneEffect.csv"
+MODELS = D / "24Q4" / "Model.csv"
+TFS = D / "lambert_tfs.csv"
 FREE_RECEPTOR = D / "9F76.cif"
 EXAMPLES = ROOT / "examples"
 MIN_MODELS = 15
@@ -157,44 +161,54 @@ def run(context: str, column: str | None, cfg: DiscoveryConfig, quiet=False) -> 
            "Scoped to public DepMap dependency data and the PMC full-text corpus.")
 
     # 1 — discovery
+    #
+    # The gate is imported, never restated. This used to call `rank_all`, whose
+    # four-way AND is a different test from the canonical one in
+    # stage1_depmap.py: it has no specificity-first path, so a dependency
+    # confined to part of a context -- the ASCL1/POU2F3 case -- failed here
+    # while passing there, and which answer you got depended on which script
+    # you ran.
     s = r.stage("discovery", "Target discovery")
     if not GE.exists():
         s.blocked(f"missing {GE.name}", "see team/TASKS.md for the fetch command")
         return r
-    universe = load_tf_universe(TFS)
     try:
-        records = analyze_gene_effects(GE, MODELS, context=context, genes=universe,
-                                       context_column=column,
-                                       source_version="DepMap Public 24Q2")
+        ge, model = V.load_matrix(str(GE), str(MODELS), str(TFS))
+        verdicts = V.scan_context(ge, model, context,
+                                  level={"OncotreeSubtype": "subtype",
+                                         "OncotreeLineage": "lineage"}.get(column))
     except Exception as e:
         s.blocked(f"context {context!r} could not be screened", str(e)[:160])
         return r
-    if not records:
-        s.blocked(f"no cell lines matched {context!r}",
+    if not verdicts:
+        s.blocked(f"no screened cell lines matched {context!r}",
                   "check the context name against DepMap OncotreeLineage/OncotreeSubtype")
         return r
-    ranked = rank_all(records)
-    n_lines = max(c.dependency.n_target_models for c in ranked)
+    ranked = [V.to_candidate(v) for v in verdicts]
+    n_lines = verdicts[0].n_target
     s.done(f"{len(ranked)} TFs screened across {n_lines} {context} cell lines",
-           "DepMap 24Q2 Chronos, restricted to the Lambert TF catalogue.",
-           screened=len(ranked), cell_lines=n_lines)
+           f"DepMap {V.DEPMAP_RELEASE} Chronos, restricted to the Lambert TF "
+           f"catalogue; gate from {V.CANONICAL_SOURCE}.",
+           screened=len(ranked), cell_lines=n_lines,
+           level=verdicts[0].context_level)
 
     # 2 — gates
     s = r.stage("ranking", "Ranking & gates")
-    eligible = [c for c in ranked
-                if c.gate.eligible and c.dependency.n_target_models >= MIN_MODELS]
-    tally: dict[str, int] = {}
-    for c in ranked:
-        for w in c.gate.failures:
-            tally[w] = tally.get(w, 0) + 1
-    top = "; ".join(f"{n}x {w}" for w, n in sorted(tally.items(), key=lambda kv: -kv[1])[:2])
+    eligible = [c for c, v in zip(ranked, verdicts) if v.significant]
+    flagged = [v for v in verdicts if v.dependency_flag]
+    routes: dict[str, int] = {}
+    for v in flagged:
+        routes[v.route] = routes.get(v.route, 0) + 1
+    top = "; ".join(f"{n} via {r_} path" for r_, n in sorted(routes.items())) or \
+        "no candidate passed on either path"
     if eligible:
         names = ", ".join(f"{c.dependency.gene} (sel {c.dependency.selectivity_delta:.2f})"
                           for c in eligible[:5])
-        s.done(f"{len(eligible)} of {len(ranked)} clear every gate: {names}", top,
-               eligible=len(eligible))
+        s.done(f"{len(eligible)} of {len(ranked)} clear the gate at FDR "
+               f"{V.FDR_ALPHA}: {names}", top, eligible=len(eligible))
     else:
-        s.abstain(f"0 of {len(ranked)} clear every gate", top, eligible=0)
+        s.abstain(f"0 of {len(ranked)} clear the gate at FDR {V.FDR_ALPHA}", top,
+                  eligible=0)
 
     # 3 — literature, per candidate, per evidence axis (Andrey's stage-1 brief)
     s = r.stage("literature", "Literature")
@@ -250,25 +264,50 @@ def run(context: str, column: str | None, cfg: DiscoveryConfig, quiet=False) -> 
 
     # 5 — structural ensemble
     s = r.stage("structure", "Structural ensemble")
+    consensus = None   # nothing inline produces one; see the note below
     s.abstain("no Boltz ensemble on disk for this context",
               "Structural discovery is not run inline; it is a separate, costed step. "
               "The consensus module is calibrated and ready to consume one.")
 
+    # A curated pocket is admissible only for the interaction it was measured
+    # on. That is the ELK1-MED23 reference complex and nothing else, so it
+    # unlocks only when this run's own evidence marks a candidate as the
+    # calibration link.
+    calib = [c for c in eligible if c.mediator.calibration_only]
+    calibration_only = calib[0].name if calib else None
+
     # 6 — druggable site
+    #
+    # This stage used to parse integers out of `mediator.tf_region` -- free
+    # text describing where on the *TF* the binding motif sits -- and hand them
+    # to a function that boxes the *receptor*. Boxing MED23 at ELK1's residues
+    # 374-384 lands on an unrelated part of MED23, and because residue numbers
+    # are per-chain there is nothing downstream that could notice. A mapped
+    # interacting region is a fact about the TF; it is not a receptor pocket
+    # and cannot be converted into one by reading numbers out of a sentence.
     s = r.stage("site", "Druggable site")
     site = None
-    if with_contact and FREE_RECEPTOR.exists():
-        pocket = sorted({int(m) for c in with_contact
-                         for m in re.findall(r"\b(\d{2,4})\b", c.mediator.tf_region or "")})
-        site = build_search_site(parse_mmcif(FREE_RECEPTOR), pocket[:12],
-                                cfg.structure, receptor_path=str(FREE_RECEPTOR))
+    residues, basis, blockers = receptor_residues(
+        cfg.partner_gene,
+        consensus=consensus,                      # None unless an ensemble ran
+        allow_curated=bool(calibration_only),      # ELK1/MED23 reference only
+        curated_for=calibration_only)
+    if not blockers and FREE_RECEPTOR.exists():
+        site = build_search_site(parse_mmcif(FREE_RECEPTOR), residues,
+                                 cfg.structure, receptor_path=str(FREE_RECEPTOR))
+        site.basis = basis
         (s.done if site.defensible else s.abstain)(
-            f"box {site.size} A around {len(site.residues)} residues" if site.defensible
+            f"box {site.size} A around {len(site.residues)} {cfg.partner_gene} "
+            f"residues, from {basis}" if site.defensible
             else "; ".join(site.blockers)[:150],
             "Screened against the free receptor, not a TF-occupied one.")
     else:
-        s.abstain("no consensus interface to place a box around",
-                  "A site needs a mapped contact first.")
+        if not FREE_RECEPTOR.exists() and not blockers:
+            blockers = [f"the free {cfg.partner_gene} structure is not on disk"]
+        s.abstain("; ".join(blockers)[:170],
+                  "A docking box must come from receptor-side coordinates: either "
+                  "an ensemble consensus this run computed, or a published "
+                  "structure. There is no third source.")
 
     # 7 — compound library
     s = r.stage("chemistry", "Compound library")

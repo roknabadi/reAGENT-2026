@@ -125,14 +125,20 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception:
                 continue
 
+        # The release the canonical gate is written against. Falling back to the
+        # older files would answer with 24Q2 numbers under a 24Q4 label, so the
+        # directory is named rather than searched for.
         D = ROOT / "downloads"
+        release = D / "24Q4"
         try:
             run_live(
                 q,
-                (D / "CRISPRGeneEffect.csv", D / "Model.csv", D / "lambert_tfs.csv"),
+                (release / "CRISPRGeneEffect.csv", release / "Model.csv",
+                 D / "lambert_tfs.csv"),
                 DiscoveryConfig(),
                 self._sse,
                 interface_evidence=evidence,
+                free_receptor=D / "9F76.cif",
             )
         except (BrokenPipeError, ConnectionResetError):
             raise
