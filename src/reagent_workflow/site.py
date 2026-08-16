@@ -28,7 +28,7 @@ import math
 from pydantic import BaseModel, ConfigDict, Field
 
 from .discovery_config import StructureConfig
-from .interface import Atom
+from .interface import Atom, InterfaceConsensus, InterfaceHypothesis
 
 # Experimentally determined receptor-side pockets. Keyed by receptor gene, and
 # usable only for the interaction they were measured on -- these are the
@@ -175,6 +175,72 @@ def build_search_site(free_receptor: list[Atom], consensus_residues: list[int],
             f"{cfg.max_box_dimension_angstrom:.0f} A limit for a localised site: this "
             "is a broad surface rather than a groove, and is not plausibly "
             "small-molecule addressable")
+    return site
+
+
+def site_from_consensus(consensus: InterfaceConsensus,
+                        free_receptor: list[Atom],
+                        cfg: StructureConfig | None = None,
+                        receptor_chain: str | None = None,
+                        receptor_path: str | None = None,
+                        hypothesis: InterfaceHypothesis | None = None,
+                        approved_by: str | None = None) -> SearchSite:
+    """The only path from a consensus to a docking box.
+
+    Docking a site asserts that the site is where the interface is. Only a
+    `converged` consensus carries that claim on its own.
+
+    An `ambiguous` consensus holds one or more localized hypotheses that did not
+    carry the ensemble — the ELK1-MED23 control produced exactly that, with the
+    hypothesis matching the published pocket sitting in a minority of one. It is
+    worth keeping and worth sampling against; it is not worth spending a screen
+    on. So it docks only when a person names the hypothesis and signs for it,
+    and the site records who did.
+
+    `approved_by` is a person, not a flag: an unconverged site that reaches a
+    screen should say on its face whose judgement put it there.
+    """
+    if consensus.status == "converged" and consensus.primary_hypothesis is not None:
+        chosen, basis = consensus.primary_hypothesis, None
+    elif consensus.status == "ambiguous":
+        if not approved_by:
+            return _blocked(
+                f"consensus status is `ambiguous`: {len(consensus.alternative_hypotheses)} "
+                f"hypothes(es) retained, none converged. Next action is "
+                f"`{consensus.next_action}`. An unconverged interface may not "
+                "generate a docking site automatically; it needs a named human "
+                "approval and a chosen hypothesis.",
+                consensus.partner_contact_residues)
+        candidates = [h for h in consensus.alternative_hypotheses if h.localized]
+        if hypothesis is None:
+            if len(candidates) != 1:
+                return _blocked(
+                    f"approval given but no hypothesis chosen, and {len(candidates)} "
+                    "localized hypotheses are retained: the approval has to name "
+                    "which one to dock.", consensus.partner_contact_residues)
+            hypothesis = candidates[0]
+        if not hypothesis.localized:
+            return _blocked(
+                f"hypothesis {hypothesis.hypothesis_id} is not localized, so it "
+                "cannot define a search region whatever the approval says.",
+                hypothesis.partner_contact_residues)
+        chosen = hypothesis
+        basis = (f"UNCONVERGED minority hypothesis {chosen.hypothesis_id} "
+                 f"({chosen.support_fraction:.0%} of the ensemble, samples "
+                 f"{'+'.join(chosen.sample_ids)}), docked on the explicit "
+                 f"approval of {approved_by}")
+    else:
+        return _blocked(
+            f"consensus status is `{consensus.status}`, next action "
+            f"`{consensus.next_action}`: no interface hypothesis is defensible "
+            "enough to define a search region.",
+            consensus.partner_contact_residues)
+
+    site = build_search_site(free_receptor, chosen.partner_contact_residues, cfg,
+                             receptor_chain=receptor_chain,
+                             receptor_path=receptor_path)
+    if basis:
+        site.basis = basis + "; " + site.basis
     return site
 
 

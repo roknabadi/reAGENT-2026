@@ -1,7 +1,7 @@
 # ELK1–MED23 positive control
 
-**Result, 2026-08-15, against real MED23: one sample in five recovers the
-published site exactly. Our consensus rule discards it.**
+**Result, 2026-08-15, against real MED23: 3 of 15 samples across two runs
+recover the published site exactly. Our consensus rule discards them.**
 
 Jump to [the result](#the-result-med23-q9ulk4-5-seeds). The retraction below
 concerns the earlier run against the wrong protein and is kept because the
@@ -180,15 +180,92 @@ Partially, and not reliably enough to use yet.
 - No claim of binding, affinity, or experimental validation follows from this.
   It is a computational prediction that matches a published structure.
 
+## Follow-up: the consensus fix, and what it does not fix
+
+`build_consensus` now scores and keeps **every** cluster as an
+`InterfaceHypothesis` rather than reducing the losers to sample names, and
+distinguishes `ambiguous` (nothing converged, but something defensible survived
+— next action `sample_more`) from `refused`. Only `converged` can generate a
+docking site; `ambiguous` needs a named human approval and a chosen hypothesis.
+Thresholds unchanged.
+
+Re-running this artifact through it gives **`refused`**, not `ambiguous`, and the
+reason is worth recording: **no cluster is localized, including sample 2.**
+
+| hypothesis | samples | support | segment span | partner residues | spatial extent | pocket |
+|---|---|---|---|---|---|---|
+| H1 | s0+s1 | 40% | 62 aa | 133 | 65 Å | 0/7 |
+| **H2** | **s2** | 20% | **75 aa** | 118 | **75 Å** | **7/7** |
+| H3 | s3 | 20% | 69 aa | 87 | 76 Å | 0/7 |
+| H4 | s4 | 20% | 75 aa | 97 | 64 Å | 0/7 |
+
+Sample 2 does not propose a compact alternative site. It proposes a **75 Å
+diffuse surface that contains the correct 17 Å pocket**. The seven published
+residues are in there, along with 111 others.
+
+Scoring the compact contact patch separately — weighting each target residue by
+its contact mass instead of counting residues, at the same 80% coverage — was
+tried and does not change this: sample 2 goes from 75 to 66 residues, still well
+beyond the 40-residue limit. The drape is not a thin tail that trimming removes;
+it carries real contact mass. That measure is therefore not shipped, rather than
+having its thresholds bent until this one case passes.
+
+So the majority-vote defect and the ELK1 refusal are two separate problems. The
+first is fixed and regression-tested. The second is that a 92-residue
+disordered window laid across a receptor produces no compact segment on either
+side, so the pipeline cannot yet distinguish "found the pocket and much else"
+from "found nothing".
+
+## 10 more seeds: it recurs, and ipTM does not survive
+
+Seeds 20260820–20260829, same conditions, 729 s. **2 of 10 recover 7/7** —
+samples 4 and 6. With the first run that is **3 of 15, a 20% hit rate holding
+across two independent runs.** The dominant cluster was again 40% and again 0/7.
+
+**The ipTM hypothesis is dead.** It ranked the correct sample first in the
+5-seed run on a 0.018 margin; over 15 samples the three recoveries rank **1st,
+3rd and 8th**. Sample 6 — the strongest recovery in either run — sits third
+behind two samples that are 0/7, on a margin of 0.004. That observation was
+noise, which is why it was written down as a hypothesis rather than a rule.
+
+**Interface pLDDT does better.** Pooled over all 15 samples, the three
+recoveries rank **1st, 3rd and 4th** — all three inside the top four
+(p ≈ 0.009 if position were random). This is the pLDDT of the atoms actually in
+contact, not of the complex; `complex_plddt` is flat at 0.84 and separates
+nothing. Three positives is not a rule either, but it is the next thing to test
+and it is already computed per hypothesis by `build_consensus`.
+
+**A pocket count alone can still be fooled — and was.** Only **2 of 15** samples
+put a motif residue against a pocket residue:
+
+| sample | pocket | motif↔pocket pairs | iface pLDDT | ipTM |
+|---|---|---|---|---|
+| B/s6 | 7/7 | **18** — E377-M382 2.46 Å, E378-M533 2.83 Å, E381-M537 3.17 Å | 60.87 | 0.469 |
+| A/s2 | 7/7 | 5 — E378-M537 3.17 Å | 59.54 | 0.481 |
+| **B/s4** | **7/7** | **0** | 60.46 | 0.246 |
+
+B/sample_4 recovers every published pocket residue **with the wrong part of
+ELK1**. Right site, wrong register. A scorer counting pocket residues ranks it
+equal to B/sample_6; the pairing measure separates them immediately. This is the
+same lesson as the motif-recovery trap, one level down: a count of residues seen
+at *an* interface is not evidence that the two things touch *each other*.
+
+Consensus status on the 10-seed ensemble is again **`refused`** — seven
+hypotheses, spans 57–79 residues, none localized. Same reason as before.
+
 ## Next
 
-1. More seeds on this pair — is the hit rate ~20%, and does ipTM keep ranking
-   the correct sample first as n grows? That is the only cheap way to find out
-   whether the 0.018 margin is signal.
-2. A discriminator that is not majority vote. Interface pLDDT restricted to
-   contact residues, or PAE across the interface, are both already in the
-   payload and neither has been looked at per-sample.
-3. Re-run with pSer383 if Boltz2 can take a modified residue.
+1. **Submit a shorter ELK1 window.** The control gives Boltz2 92 residues of
+   mostly disordered TAD, and the drape that defeats localization is largely
+   that window. The cheapest test of whether the diffuse interface is the
+   model's answer or the question's fault.
+2. ~~More seeds — does the hit rate hold, does ipTM keep ranking the correct
+   sample first?~~ **Done: 20% holds over 15 samples; ipTM does not.**
+3. Test interface pLDDT as the discriminator, on a pair that is not this one.
+   It put all three recoveries in the top four of 15 here, which is the best
+   candidate so far, and testing it on the case it was noticed in proves
+   nothing. Interface PAE is in the payload and has not been looked at.
+4. Re-run with pSer383 if Boltz2 can take a modified residue.
 
 Reproduce:
 
