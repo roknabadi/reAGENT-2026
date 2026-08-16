@@ -1046,6 +1046,9 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # refuse the pocket for every TF except ELK1, which is the right guard when
     # a caller is about to assert the site belongs to their TF, and the wrong
     # one when the interface is showing a labelled calibration surface.
+    _entry = CURATED_POCKETS.get(cfg.partner_gene.upper()) or {}
+    curated_partner = str(_entry.get("partner") or "")
+    own_here = [g for g in genes if g.upper() == curated_partner.upper()]
     residues, basis, blockers = receptor_residues(cfg.partner_gene,
                                                   consensus=consensus,
                                                   allow_curated=True)
@@ -1065,17 +1068,36 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
                        # the reader guessing which one actually supplied it.
                        + (f", consensus from {consensus_gene}"
                           if consensus is not None else "")),
-            "note": (f"From {basis}. Screened against the free receptor, not a "
-                     "TF-occupied one. "
+            # Two structures, and the sentence has to keep them apart. The box
+            # is MAPPED on the complex and APPLIED to the apo receptor, which is
+            # ordinary practice: you dock into the site as it sits when the TF
+            # is not in it. Written as "screened against the free receptor" and
+            # nothing else, the answer read it as "the site was never seen with
+            # the TF bound, so it is only calibration" — the opposite of what
+            # the coordinates are.
+            "note": (f"From {basis}. The box is mapped on the complex and applied "
+                     "to the free receptor, so compounds are docked into the site "
+                     "as it sits when the transcription factor is not in it. "
                      + ("This is where the ensemble puts the transcription factor, "
                         "so a compound in this box is the blocking hypothesis: it "
                         "occupies the surface the TF would have used. Predicted, "
                         "not observed."
                         if consensus is not None else
-                        "This is the cavity that binds ELK1 — calibration, not a "
-                        "site established for "
-                        + (", ".join(genes) if genes else "any candidate here")
-                        + ".")),
+                        # Said carefully, because the same sentence has to be
+                        # true whether or not the pocket's own partner is one of
+                        # the candidates. It read "the cavity that binds ELK1 —
+                        # calibration, not a site established for ELK1", which
+                        # contradicts itself on the one run where it matters.
+                        (f"This is {own_here[0]}'s own site, mapped on the "
+                           f"{own_here[0]}–{cfg.partner_gene} complex. For "
+                           f"{own_here[0]} it is the published interface; for any "
+                           "other transcription factor it would be calibration."
+                           if own_here else
+                           f"This is the cavity that binds "
+                           f"{curated_partner or 'the calibration partner'} — "
+                           "calibration, not a site established for "
+                           + (", ".join(genes) if genes else "any candidate here")
+                           + "."))),
             "center": site.center, "size": site.size, "residues": site.residues})
     else:
         why = blockers or (site.blockers if site else
@@ -1115,7 +1137,22 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # whatever `receptor_residues` fell back to, which is the ELK1 pocket.
     # `require_site` can no longer be the thing that turns this check on; it
     # can only sharpen the message when the request said so explicitly.
-    supported = consensus is not None or bool(mapped)
+    # A third kind of support, and the one this missed: the curated pocket's own
+    # partner. `calibration_only` keeps ELK1 out of a shortlist, which is right
+    # — it must never be presented as a discovered target. But it was also
+    # keeping ELK1 out of `mapped`, so a question about the ELK1–MED23 interface
+    # was refused a screen against the cavity that binds ELK1, on the grounds
+    # that the cavity is "not support for these candidates". The candidate was
+    # ELK1. The coordinates come from the ELK1 complex. The note said both
+    # things in one sentence: "the cavity that binds ELK1 — calibration, not a
+    # site established for ELK1".
+    #
+    # The guard still holds for everyone else: E2F1 does not become dockable
+    # because ELK1's pocket exists. It is the pocket's own partner, and only
+    # that partner, whose mapped site this is.
+    entry = CURATED_POCKETS.get(cfg.partner_gene.upper()) or {}
+    own = [g for g in genes if g.upper() == str(entry.get("partner", "")).upper()]
+    supported = consensus is not None or bool(mapped) or bool(own)
     screen = _recorded_screen(site, genes)
     if not supported:
         missing = []
