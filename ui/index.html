@@ -323,6 +323,28 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
   font-size:11.5px;color:var(--ink-3);background:var(--bg)}
 #v-structure[data-loading] .loading3d{display:grid}
 
+/* ── loader: a protein ribbon, drawn rather than shipped as a PNG so it
+   re-themes, scales and stays a few KB ── */
+.loading{position:absolute;inset:0;display:grid;place-items:center;gap:0;
+  background:var(--bg);z-index:6;transition:opacity .35s}
+.loading[hidden-state]{opacity:0;pointer-events:none}
+.ribbon{width:132px;height:76px;overflow:visible}
+.ribbon path{fill:none;stroke-linecap:round;stroke-width:7}
+.ribbon .r1{stroke:var(--pass)}   .ribbon .r2{stroke:var(--control)}
+.ribbon .r3{stroke:var(--await)}  .ribbon .r4{stroke:var(--fail)}
+.ribbon path{stroke-dasharray:52 148;animation:coil 2.6s cubic-bezier(.45,0,.55,1) infinite}
+.ribbon .r2{animation-delay:-.65s} .ribbon .r3{animation-delay:-1.3s}
+.ribbon .r4{animation-delay:-1.95s}
+@keyframes coil{to{stroke-dashoffset:-200}}
+.loading .msg{position:absolute;bottom:calc(50% - 74px);font-family:var(--mono);
+  font-size:11.5px;color:var(--ink-3);text-align:center;letter-spacing:.02em}
+.loading .msg b{color:var(--ink-2);font-weight:500}
+@media (prefers-reduced-motion:reduce){.ribbon path{animation:none;stroke-dasharray:none}}
+
+/* tabs are dead until their view has something real in it */
+nav button[disabled]{opacity:.4;cursor:not-allowed}
+nav button[disabled]:hover{background:none;color:var(--ink-2)}
+
 @media (max-width:1240px){ .body{grid-template-columns:230px 1fr} .srcs{display:none} }
 @media (max-width:940px){
   .body{grid-template-columns:1fr;grid-template-rows:auto 1fr}
@@ -402,6 +424,15 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
     <main>
       <section class="view" id="v-landscape" data-on>
         <div id="plotwrap">
+          <div class="loading" id="load-landscape">
+        <svg class="ribbon" viewBox="0 0 200 100" aria-hidden="true">
+          <path class="r1" d="M10 50 Q35 10 60 50 T110 50 T160 50 T210 50"/>
+          <path class="r2" d="M10 50 Q35 10 60 50 T110 50 T160 50 T210 50"/>
+          <path class="r3" d="M10 50 Q35 90 60 50 T110 50 T160 50 T210 50"/>
+          <path class="r4" d="M10 50 Q35 90 60 50 T110 50 T160 50 T210 50"/>
+        </svg>
+        <div class="msg" id="msg-landscape"><b>screening the transcription-factor universe</b><br>this is computed, not cached</div>
+      </div>
           <canvas id="plot"></canvas>
           <div class="hint">scroll to zoom · drag to pan</div>
           <div class="zoomctl">
@@ -424,7 +455,16 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
       </section>
 
       <section class="view" id="v-candidates">
-        <div class="tablewrap">
+        <div class="tablewrap" style="position:relative">
+          <div class="loading" id="load-candidates">
+        <svg class="ribbon" viewBox="0 0 200 100" aria-hidden="true">
+          <path class="r1" d="M10 50 Q35 10 60 50 T110 50 T160 50 T210 50"/>
+          <path class="r2" d="M10 50 Q35 10 60 50 T110 50 T160 50 T210 50"/>
+          <path class="r3" d="M10 50 Q35 90 60 50 T110 50 T160 50 T210 50"/>
+          <path class="r4" d="M10 50 Q35 90 60 50 T110 50 T160 50 T210 50"/>
+        </svg>
+        <div class="msg" id="msg-candidates"><b>waiting for candidates that clear the gates</b><br>this is computed, not cached</div>
+      </div>
           <table><caption>Candidates<div class="capsub" id="csub"></div></caption>
             <thead><tr><th>TF</th><th>Context</th><th class="num">n</th><th class="num">median</th>
               <th class="num">selectivity</th><th>Dependency</th><th>Contact</th><th class="num">score</th></tr></thead>
@@ -461,6 +501,8 @@ let liveContext = D.landscape_context;
 
 /* theme — declared before setTheme runs, or the first call hits the TDZ */
 let booted=false, renderStructure=null, heroRetheme=null, showPair=null;
+// declared before any setReady call, or the first one hits the TDZ
+const READY = {landscape:false, candidates:false, structure:true};
 const setTheme = t => { document.documentElement.dataset.theme=t; localStorage.dsTheme=t;
   if(booted){ draw(); renderStructure?.(); } heroRetheme?.(); };
 setTheme(localStorage.dsTheme || (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
@@ -736,7 +778,7 @@ let es=null;
 function run(q){
   es?.close();
   STAGES.forEach(([id])=>setStage({id,state:'pending',detail:'',note:''}));
-  $('#papers').innerHTML=''; $('#srcCount').textContent='';
+  $('#papers').innerHTML=''; $('#srcCount').textContent=''; resetReady();
   const live = new EventSource('/api/run?q='+encodeURIComponent(q||''));
   es = live;
   let got=false;
@@ -745,10 +787,13 @@ function run(q){
   live.addEventListener('landscape', e => {          // the plot is this run's, not a cache
     const d = JSON.parse(e.data);
     pts = d.points; liveContext = d.context;
+    setReady('landscape', true);
     recomputeExtent(); draw(); refreshSidebar();
   });
   live.addEventListener('candidates', e => {         // the table is this run's too
     C = JSON.parse(e.data).rows; renderCandidates();
+    setReady('candidates', C.length > 0,
+             C.length ? '' : 'no candidate cleared the gates in this context');
   });
   live.addEventListener('done', () => live.close());
   live.onerror = () => { live.close(); if(!got) replay(q); };
@@ -824,6 +869,21 @@ function resetView(){ const r=cv.getBoundingClientRect();
          x:M.l, y:M.t }; }
 const sx=p=>(X(p)-EXT.x0)*view.kx+view.x, sy=p=>(EXT.y1-Y(p))*view.ky+view.y;
 
+function labelled(){
+  // Everything that cleared the gates, plus the most extreme rejections, which
+  // are what make the boundary legible: profoundly dependent but unselective.
+  const passed = pts.filter(p=>p.pass);
+  const rejected = pts.filter(p=>!p.pass && !p.low_n)
+                      .sort((a,b)=>a.median-b.median).slice(0,3);
+  const selective = pts.filter(p=>!p.pass && !p.low_n)
+                      .sort((a,b)=>b.sel-a.sel).slice(0,2);
+  const seen=new Set(); const out=[];
+  for(const p of [...passed, ...rejected, ...selective]){
+    if(seen.has(p.gene)) continue; seen.add(p.gene); out.push(p);
+  }
+  return out.slice(0,10);
+}
+
 function draw(){
   const r=cv.getBoundingClientRect(); if(!view||!r.width) return;
   ctx.clearRect(0,0,r.width,r.height);
@@ -863,8 +923,10 @@ function draw(){
   }
   ctx.font='600 11.5px '+css('--mono'); ctx.textAlign='left';
   const placed=[];
-  for(const g of ['CTCF','MYC','GTF2B','ASCL1','POU2F3','INSM1']){
-    const p=pts.find(q=>q.gene===g); if(!p) continue;
+  // Labels are derived from THIS run's data, never a fixed gene list. A hardcoded
+  // list showed Lung genes on a Skin plot: the points were live, the names were not.
+  for(const p of labelled()){
+    const g=p.gene;
     const x=sx(p)+8; let y=sy(p)+4;
     if(x<PL||x>PR-58||y<PT+10||y>PB) continue;
     while(placed.some(q=>Math.abs(q.y-y)<13&&Math.abs(q.x-x)<58)) y+=13;
@@ -995,6 +1057,23 @@ $('#rows').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){
   const r=e.target.closest('tr'); if(r){e.preventDefault();select(r.dataset.i);}}});
 
 /* ══ NAV ══════════════════════════════════════════════════ */
+/* A tab is dead until its view holds something from this run. Clicking a dead
+   tab still takes you there and shows the loader, so the answer to "why is it
+   empty" is on screen rather than inferred. */
+function setReady(view, ok, msg){
+  READY[view] = ok;
+  const btn = document.querySelector(`nav button[data-v=${view}]`);
+  if(btn) btn.disabled = !ok;
+  const el = document.querySelector('#load-'+view);
+  if(el) el.toggleAttribute('hidden-state', ok);
+  const m = document.querySelector('#msg-'+view);
+  if(m && msg) m.innerHTML = `<b>${msg}</b><br>this is computed, not cached`;
+}
+function resetReady(){
+  setReady('landscape', false, 'screening the transcription-factor universe');
+  setReady('candidates', false, 'waiting for candidates that clear the gates');
+}
+
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button').forEach(x=>x.setAttribute('aria-current',x===b));
   document.querySelectorAll('.view').forEach(v=>v.toggleAttribute('data-on',v.id==='v-'+b.dataset.v));
