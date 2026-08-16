@@ -147,35 +147,32 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 /* Two panes. The run's own account on the left, the thing it is talking about
    on the right, and nothing competing with either — sources slide over when
    asked for rather than holding a third of the width permanently. */
-.body{position:relative;display:grid;grid-template-columns:320px 1fr;
+.body{position:relative;display:grid;grid-template-columns:340px 1fr;
   min-height:0;overflow:hidden}
-.body[data-src=off]{grid-template-columns:264px 1fr 42px}
-.srcs #papers{transition:opacity .2s}
-.body[data-src=off] .srcs #papers{opacity:0}
 .body > *{min-width:0;min-height:0}
 
-/* ── timeline rail ── */
-.rail{border-right:1px solid var(--line);background:var(--sunk);overflow-y:auto;
-  padding:26px 0 40px}
-.rail h2,.srcs h2{font-size:10px;text-transform:uppercase;letter-spacing:.11em;
+/* ── run rail ── */
+/* The rail itself does not scroll — the open pane does. One scrollbar on
+   screen, and switching panes never loses your place in the others. */
+.rail{border-right:1px solid var(--line);background:var(--sunk);
+  display:flex;flex-direction:column;overflow:hidden}
+.rail h2{font-size:10px;text-transform:uppercase;letter-spacing:.11em;
   color:var(--ink-3);font-weight:600;margin:0 0 14px;padding:0 18px;
   display:flex;align-items:center;gap:8px}
 /* Slim, quiet scrollbars on the panels that actually scroll. The platform
    default is a wide flat bar that reads as chrome rather than content on a
    rail this narrow, in both engines that still need the vendor rule. */
-.rail,#thinking,#anstext,.srcs{scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
-.rail::-webkit-scrollbar,#thinking::-webkit-scrollbar,
-#anstext::-webkit-scrollbar,.srcs::-webkit-scrollbar{width:6px}
-.rail::-webkit-scrollbar-track,#thinking::-webkit-scrollbar-track,
-#anstext::-webkit-scrollbar-track,.srcs::-webkit-scrollbar-track{background:transparent}
-.rail::-webkit-scrollbar-thumb,#thinking::-webkit-scrollbar-thumb,
-#anstext::-webkit-scrollbar-thumb,.srcs::-webkit-scrollbar-thumb{
+.pane,#anstext{scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
+.pane::-webkit-scrollbar,#anstext::-webkit-scrollbar{width:6px}
+.pane::-webkit-scrollbar-track,#anstext::-webkit-scrollbar-track{background:transparent}
+.pane::-webkit-scrollbar-thumb,#anstext::-webkit-scrollbar-thumb{
   background:var(--line-2);border-radius:6px}
 /* The run, top to bottom: what was asked, what came back, how, and what ran.
    Blocks used to be fenced off by a full-bleed rule; dropped in favor of
    whitespace and each section's own uppercase label, which is quieter and
    still reads as one column of a transcript rather than four boxed panels. */
-.ask,.ans,.think{padding-bottom:2px;margin-bottom:28px}
+.ask{flex:none;padding:26px 0 16px}
+.ask h2{margin-bottom:10px}
 .askq{margin:0;padding:0 18px;font-size:13px;line-height:1.5;color:var(--ink)}
 .askq:not(.set){color:var(--ink-3)}
 /* A multi-sentence request is normal here — the pipeline reads control flow out
@@ -186,8 +183,32 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .askq.set{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;
   overflow:hidden;cursor:pointer}
 .askq.set[data-open]{-webkit-line-clamp:unset;display:block;cursor:default}
-#anstext{padding:0 18px;font-size:12.5px;line-height:1.62;color:var(--ink-2);
-  max-height:32vh;overflow-y:auto}
+
+/* Four views of one run, switched in place. Stacked, they made a column two
+   thousand pixels long where whichever one you wanted was off-screen. */
+.tabs{flex:none;display:flex;gap:2px;padding:0 12px;border-bottom:1px solid var(--line)}
+.tabs button{appearance:none;background:none;border:none;border-radius:0;
+  border-bottom:1.5px solid transparent;
+  margin-bottom:-1px;padding:9px 8px;font:inherit;font-size:11px;font-weight:500;
+  letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);cursor:pointer;
+  display:flex;align-items:center;gap:5px;transition:color .15s,border-color .15s}
+.tabs button:hover{color:var(--ink-2)}
+.tabs button[aria-current]{color:var(--ink);border-bottom-color:var(--control)}
+.tabs .n{font-family:var(--mono);font-size:10px;color:var(--ink-3);letter-spacing:0}
+.tabs .n:empty{display:none}
+.tabs button[data-new]::after{content:"";width:5px;height:5px;border-radius:50%;
+  background:var(--control)}
+.panes{position:relative;flex:1;min-height:0}
+.pane{position:absolute;inset:0;overflow-y:auto;padding:20px 0 40px;
+  opacity:0;visibility:hidden;transform:translateY(5px);
+  transition:opacity .2s ease,transform .2s ease,visibility .2s}
+.pane[data-on]{opacity:1;visibility:visible;transform:none}
+@media (prefers-reduced-motion:reduce){.pane{transition:none}}
+.pane .empty{padding:0 18px;font-size:12.5px;color:var(--ink-3);line-height:1.5}
+.who{padding:0 18px 8px;font-family:var(--mono);font-size:10px;
+  text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3)}
+.who:empty{display:none}
+#anstext{padding:0 18px;font-size:12.5px;line-height:1.62;color:var(--ink-2)}
 #anstext p{margin:0 0 9px}
 #anstext p:last-child{margin-bottom:0}
 #anstext p:first-child{color:var(--ink)}
@@ -229,28 +250,6 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .stage.in{animation:slideIn .4s ease both}
 @keyframes slideIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 
-/* ── sources rail ── */
-.srcs{position:absolute;right:0;top:0;bottom:0;width:340px;z-index:6;
-  transform:translateX(101%);transition:transform .28s cubic-bezier(.4,0,.2,1);
-  box-shadow:-18px 0 40px rgba(0,0,0,.28);
-  border-left:1px solid var(--line);background:var(--sunk);overflow-y:auto;padding:26px 0 40px;
-  position:relative}
-.srcs h2{display:flex;align-items:center;gap:8px;padding-right:12px}
-.srcs h2 .cnt{font-family:var(--mono);color:var(--ink-2);letter-spacing:0}
-.srcs-toggle{margin-left:auto;background:none;border:1px solid var(--line);color:var(--ink-3);
-  width:22px;height:22px;border-radius:6px;cursor:pointer;display:grid;place-items:center;
-  font-size:11px;line-height:1;flex:none;transition:color .15s,border-color .15s}
-.srcs-toggle:hover{color:var(--ink);border-color:var(--line-2)}
-/* collapsed: a 42px spine that still says what is behind it */
-.body[data-src=off] .srcs{overflow:hidden;padding:14px 0}
-.body[data-src=off] .srcs h2{flex-direction:column;align-items:center;gap:14px;padding:0;margin:0}
-.body[data-src=off] .srcs h2 .lbl{writing-mode:vertical-rl;letter-spacing:.14em;order:2}
-.body[data-src=off] .srcs h2 .cnt{order:3;writing-mode:vertical-rl}
-.body[data-src=off] .srcs-toggle{margin:0;order:1}
-.body[data-src=off] #papers{display:none}
-.srcs h2 .lbl{white-space:nowrap}
-/* Reasoning log. Collapsed by default: it is there to be checked, not read
-   every time, and it must not push the pipeline out of view. */
 #thinking{max-height:40vh;overflow-y:auto}
 .tcall{margin:0 14px 6px;background:var(--card);border:1px solid transparent;
   border-radius:var(--r);overflow:hidden;transition:border-color .15s}
@@ -277,17 +276,6 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .paper .a{font-size:11.5px;color:var(--ink-2);line-height:1.45;
   display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .paper .id{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:6px}
-.srcs .empty{padding:0 18px;font-size:12.5px;color:var(--ink-3);line-height:1.5}
-.body[data-src=on] .srcs{transform:none}
-@media (prefers-reduced-motion:reduce){.srcs{transition:none}}
-/* The drawer's handle lives in the header, where the count is readable without
-   giving up a column to show it. */
-.src-open{display:flex;align-items:center;gap:7px;padding:6px 11px;background:none;
-  border:1px solid var(--line);border-radius:999px;color:var(--ink-3);font:inherit;
-  font-size:11.5px;cursor:pointer;transition:color .15s,border-color .15s}
-.src-open:hover{color:var(--ink);border-color:var(--line-2)}
-.src-open .n{font-family:var(--mono);color:var(--ink-2)}
-.body[data-src=on] .src-open{color:var(--ink);border-color:var(--line-2)}
 /* The only control here that costs GPU time. Styled as a deliberate action,
    not as a link you brush past. */
 .predict-btn{display:block;width:100%;margin:0 0 6px;padding:8px 10px;
@@ -299,23 +287,47 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 /* A verdict, not an invitation. */
 .ran{display:block;font-size:11.5px;color:var(--ink);margin-bottom:5px}
 .note code{font-family:var(--mono);font-size:10.5px;color:var(--ink-2)}
-/* A docked compound, shown as a molecule rather than as a row in a table:
-   the 2D structure a chemist reads, its score, the residues it touches, and
-   the SMILES the screen was actually run on. */
-.lig{display:grid;grid-template-columns:118px 1fr;gap:10px;align-items:center;
-  margin:8px 0;padding:8px 9px;background:var(--card);border:1px solid var(--line);
-  border-radius:var(--r);cursor:pointer;transition:border-color .15s,opacity .15s}
-/* Only the selected compound is drawn in the structure, so the unselected ones
-   are dimmed here: the list and the viewer say the same thing. */
-.lig:not([aria-current=true]){opacity:.55}
-.lig:hover{border-color:var(--line-2);opacity:1}
-.lig[aria-current=true]{border-color:var(--pass)}
+/* The compounds that were docked, on the canvas rather than behind a panel.
+   Every one is a chip you can click; the one you pick is the one drawn in the
+   pocket and the only one shown in full. Andrey's note — display them one by
+   one, not several at once — is the reason the detail is singular. */
+.ligdock{position:absolute;left:16px;bottom:16px;z-index:5;
+  width:min(660px,calc(100% - 210px));
+  background:color-mix(in srgb,var(--card) 82%,transparent);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border:1px solid var(--line);border-radius:12px;padding:9px 11px 10px;
+  box-shadow:0 10px 34px rgba(0,0,0,.24);
+  animation:dockIn .3s ease both}
+@keyframes dockIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.ligdock{animation:none}}
+.ligdock .hd{display:flex;align-items:baseline;gap:8px;margin-bottom:8px;
+  font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--ink-3)}
+.ligdock .hd .of{font-family:var(--mono);letter-spacing:0;color:var(--ink-2)}
+.ligstrip{display:flex;gap:7px;overflow-x:auto;padding-bottom:2px;
+  scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
+.ligstrip::-webkit-scrollbar{height:5px}
+.ligstrip::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:5px}
+.lig{flex:none;width:96px;background:var(--bg);border:1px solid var(--line);
+  border-radius:9px;padding:6px;cursor:pointer;text-align:center;
+  transition:border-color .15s,opacity .15s,transform .15s}
+/* Only the selected compound is drawn in the structure, so the rest are dimmed:
+   the strip and the viewer say the same thing. */
+.lig:not([aria-current=true]){opacity:.5}
+.lig:hover{border-color:var(--line-2);opacity:1;transform:translateY(-1px)}
+.lig[aria-current=true]{border-color:var(--pass);opacity:1}
 .lig:focus-visible{outline:2px solid var(--pass);outline-offset:2px}
-.lig2d{color:var(--ink-2);display:grid;place-items:center;min-height:74px}
-.lig2d svg{width:100%;height:auto;max-height:96px;display:block}
+.lig2d{color:var(--ink-2);display:grid;place-items:center;height:54px;overflow:hidden}
+.lig2d svg{width:100%;height:100%;display:block}
+.lig .n{font-size:10.5px;font-weight:500;margin-top:4px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lig .sc{font-family:var(--mono);font-size:10px;color:var(--ink-2)}
+/* The one that is selected, in full. */
+.ligone{display:grid;grid-template-columns:104px 1fr;gap:12px;align-items:center;
+  margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}
+.ligone .lig2d{height:88px}
 .ligmeta{min-width:0}
-.ligmeta .n{font-size:12px;font-weight:500}
-.ligmeta .sc{font-family:var(--mono);font-size:11px;color:var(--ink-2);margin-left:4px}
+.ligmeta .n{font-size:12.5px;font-weight:500}
+.ligmeta .sc{font-family:var(--mono);font-size:11px;color:var(--ink-2);margin-left:5px}
 .ligmeta .k{font-size:11px;color:var(--ink-2);margin-top:2px}
 .ligmeta .geo{color:var(--ink-3)}
 /* Whether the structure is one a public database recognises. Verified is not a
@@ -489,7 +501,7 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
 .inspect .tag i{width:7px;height:7px;border-radius:2px;display:inline-block}
 .inspect .rest{position:static;color:var(--ink-3);font-size:10.5px;
   margin-top:9px;line-height:1.4}
-.leg{position:absolute;left:18px;bottom:16px;font-size:11.5px;background:var(--glass);
+.leg{position:absolute;left:18px;top:16px;font-size:11.5px;background:var(--glass);
   backdrop-filter:blur(9px);border:1px solid var(--line);border-radius:12px;
   padding:10px 13px;display:flex;flex-direction:column;gap:6px}
 .leg > span{display:flex;align-items:center;gap:8px;white-space:nowrap}
@@ -525,6 +537,9 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
 .ribbon .r2{animation-delay:-.65s} .ribbon .r3{animation-delay:-1.3s}
 .ribbon .r4{animation-delay:-1.95s}
 @keyframes coil{to{stroke-dashoffset:-200}}
+/* The run is over and this view got nothing. The ribbon stops moving and goes
+   quiet: a loader that outlives its run reads as a hang, not as a refusal. */
+.loading[data-still] path{animation:none;stroke-dasharray:none;opacity:.22}
 .loading .msg{position:absolute;bottom:calc(50% - 74px);font-family:var(--mono);
   font-size:11.5px;color:var(--ink-3);text-align:center;letter-spacing:.02em}
 .loading .msg b{color:var(--ink-2);font-weight:500}
@@ -534,10 +549,10 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
 nav button[disabled]{opacity:.4;cursor:not-allowed}
 nav button[disabled]:hover{background:none;color:var(--ink-2)}
 
-@media (max-width:1240px){ .body{grid-template-columns:230px 1fr} .srcs{display:none} }
+@media (max-width:1240px){ .body{grid-template-columns:270px 1fr} }
 @media (max-width:940px){
   .body{grid-template-columns:1fr;grid-template-rows:auto 1fr}
-  .rail{border-right:none;border-bottom:1px solid var(--line);max-height:180px}
+  .rail{border-right:none;border-bottom:1px solid var(--line);max-height:260px}
   #v-landscape,#v-candidates,#v-structure{grid-template-columns:1fr}
   .side,#detail{display:none}
 }
@@ -602,9 +617,6 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
       <button data-v="candidates">Candidates</button>
       <button data-v="structure">Structure</button>
     </nav>
-    <button class="src-open" id="srcOpen" aria-expanded="false" aria-controls="papers"
-            title="Papers retrieved during this run">Sources <span class="n"
-            id="srcOpenCount">0</span></button>
     <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
   </header>
 
@@ -615,28 +627,45 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
          computed. Reasoning used to sit beside the sources, which put the
          model's working next to other people's papers and made both harder to
          scan. -->
+    <!-- Everything the run produced, in one column and one scroll context at a
+         time. Four panes rather than four stacked sections: the answer, the
+         stages, the model's calls and the papers are read one at a time, and
+         stacking them made a single column two thousand pixels long that hid
+         whichever one you were not looking at. The question stays pinned above
+         them because it is the context for all four. -->
     <div class="rail">
       <section class="ask">
         <h2><span class="lbl">Question</span></h2>
         <p id="askq" class="askq">Ask a question above to start a run.</p>
       </section>
 
-      <section class="ans" id="ans" hidden>
-        <h2><span class="lbl">Answer</span><span class="cnt" id="ansmodel"></span></h2>
-        <div id="anstext"></div>
-        <p class="caveat" id="anscaveat"></p>
-      </section>
+      <div class="tabs" id="railtabs" role="tablist" aria-label="Run detail">
+        <button data-pane="answer" aria-current="true">Answer</button>
+        <button data-pane="pipeline">Pipeline</button>
+        <button data-pane="reason">Reasoning<span class="n" id="thinkCount"></span></button>
+        <button data-pane="sources">Sources<span class="n" id="srcCount"></span></button>
+      </div>
 
-      <section class="think">
-        <h2><span class="lbl">Reasoning</span><span class="cnt" id="thinkCount"></span>
-          <button class="srcs-toggle" id="thinkToggle" aria-expanded="false"
-                  aria-controls="thinking" title="Show reasoning">›</button></h2>
-        <div id="thinking" hidden><p class="empty">Every call the model makes
-          appears here, with what it was asked and what it said.</p></div>
-      </section>
-
-      <h2><span class="lbl">Pipeline</span></h2>
-      <div id="stages"></div>
+      <div class="panes">
+        <section class="pane" id="pane-answer" data-on>
+          <div id="ans" hidden>
+            <div class="who" id="ansmodel"></div>
+            <div id="anstext"></div>
+            <p class="caveat" id="anscaveat"></p>
+          </div>
+          <p class="empty" id="ansempty">The model's answer to your question
+            appears here when the run finishes.</p>
+        </section>
+        <section class="pane" id="pane-pipeline"><div id="stages"></div></section>
+        <section class="pane" id="pane-reason">
+          <div id="thinking"><p class="empty">Every call the model makes appears
+            here, with what it was asked and what it said.</p></div>
+        </section>
+        <section class="pane" id="pane-sources">
+          <div id="papers"><p class="empty">Papers retrieved during the run
+            appear here, newest first.</p></div>
+        </section>
+      </div>
     </div>
 
     <main>
@@ -708,19 +737,13 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
                chased across the canvas to be read. -->
           <div class="inspect" id="inspect" hidden></div>
           <div class="leg" id="leg"></div>
+          <div class="ligdock" id="ligdock" hidden></div>
           <div class="nostruct" id="nostruct"></div>
           <div class="loading3d" id="loading3d">building structure…</div></div>
         <div class="side" id="saside"></div>
       </section>
     </main>
 
-    <div class="srcs">
-      <h2><span class="lbl">Sources</span><span class="cnt" id="srcCount"></span>
-        <button class="srcs-toggle" id="srcToggle" aria-expanded="true"
-                aria-controls="papers" title="Hide sources">›</button></h2>
-      <div id="papers"><p class="empty">Papers retrieved during the run appear here, newest first.</p></div>
-
-    </div>
   </div>
 </div>
 
@@ -1024,28 +1047,29 @@ function setStage({id,state,detail,note}){
   el.querySelector('.dt').textContent = detail||'';
   el.querySelector('.nt').textContent = note||'';
 }
-/* Sources are a drawer now, not a column. They are the run's inputs rather than
-   its output, and a third of the width held open for them permanently was the
-   largest single source of clutter on this page. Closed by default; the header
-   handle carries the count, so nothing is hidden — only put away. A stored
-   preference from an earlier visit still wins, in either direction. */
-{
-  const body=document.querySelector('.body'), open=$('#srcOpen'), inner=$('#srcToggle');
-  const apply=on=>{
-    body.dataset.src = on ? 'on' : 'off';
-    open.setAttribute('aria-expanded', String(on));
-    if(booted){ sizePlot(); draw(); }
-  };
-  if(inner){ inner.textContent='×'; inner.title='Close sources'; }
-  apply(localStorage.dsSrc === 'on');
-  const set = on => { localStorage.dsSrc = on ? 'on' : 'off'; apply(on);
-    // The plot and both 3D canvases measure themselves; a transform-driven
-    // drawer fires no resize event, so they are told once the slide has ended.
-    setTimeout(()=>{ sizePlot(); draw(); glc?.size(); molv?.resize();
-                     renderStructure?.(); }, 320); };
-  open.onclick = () => set(body.dataset.src !== 'on');
-  inner?.addEventListener('click', () => set(false));
-}
+/* One column, four views of the same run. Sources moved in here with the rest:
+   they are the run's inputs, and a drawer that slid over the canvas was both
+   the buggiest thing on the page and the only module that lived somewhere
+   else. Panes cross-fade in place, so switching never moves the layout. */
+const showPane = name => {
+  for(const b of document.querySelectorAll('#railtabs button')){
+    const on = b.dataset.pane === name;
+    b.toggleAttribute('aria-current', on);
+    if(on) b.removeAttribute('data-new');
+  }
+  for(const p of document.querySelectorAll('.pane'))
+    p.toggleAttribute('data-on', p.id === `pane-${name}`);
+};
+$('#railtabs').onclick = e => {
+  const b = e.target.closest('button');
+  if(b) showPane(b.dataset.pane);
+};
+/* A pane that gains something while you are looking at another one says so,
+   rather than counting on you to go and check. */
+const flagPane = name => {
+  const b = document.querySelector(`#railtabs button[data-pane="${name}"]`);
+  if(b && !b.hasAttribute('aria-current')) b.setAttribute('data-new','');
+};
 /* The structure's detail panel floats over the canvas; this puts it away
    entirely, so the thing being looked at can have the whole frame. */
 {
@@ -1068,8 +1092,8 @@ function addPaper(p){
     <div class="id">${p.id}</div>`;
   box.prepend(a);
   const n=box.querySelectorAll('.paper').length;
-  document.querySelector('#srcCount').textContent = n ? n : '';
-  $('#srcOpenCount').textContent = n;
+  $('#srcCount').textContent = n ? n : '';
+  flagPane('sources');
 }
 
 /* Reasoning rail: every exchange with the model, kept for the whole run.
@@ -1079,10 +1103,12 @@ function addPaper(p){
    prompts carry <, > and & that innerHTML would eat. */
 let thoughtsShown = 0;
 function resetThinking(){
-  $('#thinking').replaceChildren();
   $('#thinkCount').textContent = ''; thoughtsShown = 0;
+  $('#thinking').innerHTML = `<p class="empty">Every call the model makes appears
+    here, with what it was asked and what it said.</p>`;
 }
 function thinkBlock(step, meta, isError, sections, open){
+  $('#thinking').querySelector('.empty')?.remove();
   const d=document.createElement('details'); d.className='tcall'; d.open=!!open;
   const s=document.createElement('summary');
   const a=document.createElement('span'); a.className='step'; a.textContent=step;
@@ -1097,6 +1123,7 @@ function thinkBlock(step, meta, isError, sections, open){
     body.append(h,pre);
   }
   d.append(body); $('#thinking').append(d);
+  flagPane('reason');
 }
 function addThinking(trace){
   for(const c of (trace.calls||[]).slice(thoughtsShown))
@@ -1114,15 +1141,6 @@ function addSummary(s){
   thinkBlock('summary', s.model||'', false,
              [['prose', s.text], ['caveat', s.caveat]], true);
 }
-{
-  const btn=$('#thinkToggle'), box=$('#thinking');
-  btn.onclick = () => { const open = box.hidden;
-    box.hidden = !open;
-    btn.textContent = open ? '⌄' : '›';
-    btn.setAttribute('aria-expanded', String(open));
-    btn.title = open ? 'Hide reasoning' : 'Show reasoning'; };
-}
-
 /* The one action in this interface that spends money. It re-runs the current
    question with an explicit request to fold one candidate, so the dispatch is
    always something a person asked for by name and never something a page load
@@ -1132,6 +1150,7 @@ function addSummary(s){
 function selectLigand(i){
   ligSel = i;
   const c = C[selIdx];
+  ligandDock(c ? HIGHLIGHT[c.gene] : null);
   if(c) showPair?.(c);
 }
 document.addEventListener('keydown', e => {
@@ -1154,6 +1173,7 @@ document.addEventListener('click', e => {
    else here would be markdown rendering for markup that should not arrive. */
 function resetAnswer(){
   const a=$('#ans'); a.hidden=true; a.removeAttribute('data-in');
+  $('#ansempty').hidden = false;
   $('#anstext').replaceChildren(); $('#anscaveat').textContent='';
   $('#ansmodel').textContent='';
 }
@@ -1167,16 +1187,18 @@ function setAnswer(d){
   $('#ansmodel').textContent = d.model || '';
   $('#anscaveat').textContent = d.caveat || '';
   const a=$('#ans'); a.hidden=false; a.setAttribute('data-in','');
-  a.scrollIntoView({block:'nearest', behavior:
-    matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+  $('#ansempty').hidden = true;
+  showPane('answer');
 }
 
 let es=null;
 function run(q, predict){
   es?.close();
   STAGES.forEach(([id])=>setStage({id,state:'pending',detail:'',note:''}));
-  $('#papers').innerHTML=''; $('#srcCount').textContent=''; $('#srcOpenCount').textContent='0'; resetReady();
-  resetThinking(); resetAnswer();
+  $('#papers').innerHTML=`<p class="empty">Papers retrieved during this run
+    appear here, newest first.</p>`;
+  $('#srcCount').textContent=''; resetReady();
+  resetThinking(); resetAnswer(); showPane('pipeline');
   SITE = null; SCREEN = null;   // this run's own box and pose counts, not the last run's
   document.querySelectorAll('.ask .caveat').forEach(n=>n.remove());
   const asked=$('#askq');
@@ -1256,7 +1278,15 @@ function run(q, predict){
     p.textContent = (d.quote ? `“${d.quote}” — ` : '') + d.note;
     $('#askq').after(p);
   });
-  live.addEventListener('done', () => live.close());
+  /* A view that never received its data must stop pretending to be loading.
+     The abstaining runs are the ones that produce no landscape at all, and a
+     spinner that outlives the run reads as a hang rather than as a refusal. */
+  live.addEventListener('done', () => { live.close();
+    for(const v of ['landscape','candidates'])
+      if(!READY[v]) setReady(v, false, 'this run produced no '
+        + (v==='landscape' ? 'dependency landscape' : 'candidate')
+        + ' — see the pipeline for why', false);
+  });
   live.onerror = () => { live.close(); if(!got) replay(q); };
 }
 
@@ -1584,14 +1614,16 @@ $('#rows').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){
 /* A tab is dead until its view holds something from this run. Clicking a dead
    tab still takes you there and shows the loader, so the answer to "why is it
    empty" is on screen rather than inferred. */
-function setReady(view, ok, msg){
+function setReady(view, ok, msg, running=true){
   READY[view] = ok;
   const btn = document.querySelector(`nav button[data-v=${view}]`);
   if(btn) btn.disabled = !ok;
   const el = document.querySelector('#load-'+view);
-  if(el) el.toggleAttribute('hidden-state', ok);
+  if(el){ el.toggleAttribute('hidden-state', ok);
+          el.toggleAttribute('data-still', !running); }
   const m = document.querySelector('#msg-'+view);
-  if(m && msg) m.innerHTML = `<b>${msg}</b><br>this is computed, not cached`;
+  if(m && msg) m.innerHTML = `<b>${msg}</b>`
+    + (running ? '<br>this is computed, not cached' : '');
 }
 function resetReady(){
   setReady('landscape', false, 'screening the transcription-factor universe');
@@ -1724,6 +1756,44 @@ function predictBlock(M, c, hl){
       <code>scripts/predict_med23_interface.py ${c.gene} --dispatch</code>.</span></p>`;
 }
 
+/* The docked compounds, on the canvas. The strip is every compound the screen
+   produced; the card below it is only the selected one, drawn as a molecule
+   rather than as a row in a table — its 2D structure, its score, the residues
+   it touches, and the SMILES the screen was actually run on. Selecting a chip
+   is what puts that compound in the pocket, so the strip and the viewer never
+   disagree about which one is being looked at. */
+function ligandDock(hl){
+  const el = $('#ligdock'), ligs = hl?.ligands || [];
+  el.hidden = !ligs.length;
+  if(!ligs.length){ el.innerHTML=''; return; }
+  const i = Math.min(ligSel, ligs.length-1), l = ligs[i];
+  el.innerHTML = `
+  <div class="hd"><span>Docked compounds</span>
+    <span class="of">${i+1} / ${ligs.length}</span></div>
+  <div class="ligstrip">${ligs.map((g,k)=>`<div class="lig" data-lig="${k}"
+       aria-current="${k===i}" tabindex="0" role="button"
+       title="Show ${g.name} in the structure">
+    <div class="lig2d">${g.svg||''}</div>
+    <div class="n">${g.name}</div>
+    <div class="sc">${g.score.toFixed(2)}</div></div>`).join('')}</div>
+  <div class="ligone">
+    <div class="lig2d">${l.svg||''}</div>
+    <div class="ligmeta">
+      <div class="n">${l.name} <span class="sc">${l.score.toFixed(2)} kcal/mol</span></div>
+      <div class="k">contacts ${l.residues?.length ? l.residues.join(', ')
+                                : '<span class="muted">none in the cavity</span>'}</div>
+      ${l.closest!=null?`<div class="k">closest approach ${l.closest} Å${
+          l.offset!=null?` \u00b7 ${l.offset} Å from box centre`:''}</div>`:''}
+      ${l.identity?.status ? `<div class="k id-${l.identity.status}">${
+          l.identity.status==='verified'
+            ? `identity verified \u00b7 PubChem ${l.identity.cid} ${l.identity.name||''}`
+            : l.identity.status==='not_in_pubchem'
+              ? 'no PubChem record for this exact structure'
+              : `identity unchecked — ${l.identity.note||l.identity.status}`}</div>` : ''}
+      ${l.rationale ? `<div class="k why">${l.rationale}</div>` : ''}
+      <div class="smi" title="${l.smiles||''}">${l.smiles||''}</div>
+    </div></div>`;
+}
 function receptorPanel(M, c, hl){
   const gene=c?.gene||'this candidate';
   const site=siteLayer(hl);
@@ -1753,25 +1823,6 @@ function receptorPanel(M, c, hl){
     <dt>docked</dt><dd>${hl?.ligands?.length
         ? dockedSummary(hl.ligands.length)
         : '<span class="muted">no screen run</span>'}</dd></dl></div>
-  ${(hl?.ligands||[]).map((l,i)=>`<div class="lig" data-lig="${i}"
-       aria-current="${i===Math.min(ligSel,(hl.ligands.length-1))}"
-       tabindex="0" role="button" title="Show ${l.name} in the structure">
-    <div class="lig2d">${l.svg||''}</div>
-    <div class="ligmeta">
-      <div class="n">${l.name} <span class="sc">${l.score.toFixed(2)} kcal/mol</span></div>
-      <div class="k">contacts ${l.residues?.length ? l.residues.join(', ')
-                                : '<span class="muted">none in the cavity</span>'}</div>
-      ${l.closest!=null?`<div class="k">closest approach ${l.closest} Å${
-          l.offset!=null?` · ${l.offset} Å from box centre`:''}</div>`:''}
-      ${l.identity?.status ? `<div class="k id-${l.identity.status}">${
-          l.identity.status==='verified'
-            ? `identity verified · PubChem ${l.identity.cid} ${l.identity.name||''}`
-            : l.identity.status==='not_in_pubchem'
-              ? 'no PubChem record for this exact structure'
-              : `identity unchecked — ${l.identity.note||l.identity.status}`}</div>` : ''}
-      ${l.rationale ? `<div class="k why">${l.rationale}</div>` : ''}
-      <div class="smi" title="${l.smiles||''}">${l.smiles||''}</div>
-    </div></div>`).join('')}
   ${predictBlock(M, c, hl)}
   ${site.calibration ? `<p class="note">The cavity shown is where <b>ELK1</b> binds, from the deposited
     complex — an interaction that depends on ELK1 being phosphorylated at Ser383,
@@ -2259,7 +2310,7 @@ showPair = async c => {
   const useReceptor = MED23 && (!c?.partner || c.partner === MED23.gene || (!S && !P));
   view.toggleAttribute('data-nostruct', !S && !P && !MED23);
   if(!S && !P && !MED23){
-    painted=null; renderStructure=null; $('#leg').innerHTML='';
+    painted=null; renderStructure=null; $('#leg').innerHTML=''; ligandDock(null);
     view.removeAttribute('data-loading');
     $('#nostruct').innerHTML=`<div><span class="g">${pairOf(c)}</span>
       ${c.partner?'no coordinates for this pair':'no contact partner to model'}</div>`;
@@ -2270,6 +2321,7 @@ showPair = async c => {
     const hl = HIGHLIGHT[c?.gene] || null;
     $('#leg').innerHTML = legendReceptor(hl);
     $('#saside').innerHTML = receptorPanel(MED23, c, hl);
+    ligandDock(hl);
     if(!view.hasAttribute('data-on')){ painted=null; return; }
     const key = `receptor|${c?.gene||''}|${hl?hl.residues.join(','):''}`
               + `|${hl?.ligands?.map(l=>l.name).join(',')||''}|${ligSel}`;
@@ -2287,6 +2339,7 @@ showPair = async c => {
     return;
   }
   hideMol();          // the other two views own the three.js canvas
+  ligandDock(null);
   $('#leg').innerHTML = S ? legendFor(S) : legendPredicted();
   $('#saside').innerHTML = S ? solvedPanel(S) : predictedPanel(P,c);
   // Selecting a row while another view is up must not build a WebGL context for a
