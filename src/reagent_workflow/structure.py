@@ -12,10 +12,20 @@ Contracts used here were read off the installed packages, not guessed:
 
 Model roles are enforced by ``StructuralModelRequest``. Two models predict the
 target-partner complex and may vote on the interface: **Boltz2** and
-**AlphaFold2**, both of which take the whole complex and pair heterocomplex
-MSAs. **ESMFold2** checks monomers or structured domains and is never used as an
-interface predictor — it is a single-sequence model, and counting its opinion on
-an interface it was never shown would manufacture consensus.
+**AlphaFold2**, both of which take the whole complex and, when given one, pair
+heterocomplex MSAs. This module does not build or attach one: ``run_boltz2``/
+``run_alphafold2`` only ever use an MSA the caller supplies through
+``Boltz2Input.msas``/``AlphaFold2Input.msas`` — ``use_msa=True`` in the tool
+config does not itself trigger a search on the installed path, it only decides
+whether a supplied alignment is honoured. Every prediction dispatched here
+therefore runs single-sequence, which is materially weaker for these two
+models than an aligned run, and the request records ``use_msa: False`` rather
+than asserting an alignment that was never made. The real per-chain alignment
+path exists at ``scripts/pou2f3_control.py:build_msas`` (a public ColabFold
+search) but is not wired into this orchestration layer. **ESMFold2** checks
+monomers or structured domains and is never used as an interface predictor —
+it is a single-sequence model, and counting its opinion on an interface it was
+never shown would manufacture consensus.
 
 Agreement is judged on overlapping confidence intervals across replicate seeds,
 not on point estimates: two runs of a stochastic model differ, and the interval
@@ -40,6 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import RunConfig
+from .discovery_config import StructureConfig
 from .models import (
     CandidateHypothesis,
     ChainSpec,
@@ -63,9 +74,30 @@ ALPHAFOLD2_TOOL_KEY = "alphafold2-prediction"
 # consensus rather than measure it.
 INTERFACE_MODELS = ("boltz2", "alphafold2")
 
-# Confidence floors used only to phrase the comparison, never to claim validation.
+# Every structural threshold has exactly one definition, in discovery_config.py
+# (see its module docstring); a second hardcoded copy here is how the two
+# quietly drift apart. One frozen instance is enough: nothing in this module
+# constructs a StructureConfig with non-default fields.
+_STRUCTURE_CONFIG = StructureConfig()
+
+# Confidence floors used only to phrase the comparison, never to claim
+# validation. LOW_CONFIDENCE_PLDDT has no equivalent in StructureConfig, so it
+# stays local; LOW_CONFIDENCE_IPTM is read from the canonical source instead of
+# restating its value.
 LOW_CONFIDENCE_PLDDT = 0.70
-LOW_CONFIDENCE_IPTM = 0.60
+LOW_CONFIDENCE_IPTM = _STRUCTURE_CONFIG.iptm_warning_threshold
+
+# Recorded on every completed Boltz2/AlphaFold2 result: this orchestration
+# layer runs them single-sequence (see the module docstring for why), and a
+# result must say so rather than let a reader assume the co-evolutionary
+# signal these models are tuned for was present.
+MSA_LIMITATION = (
+    "Single-sequence mode: no MSA was built or attached for this prediction. "
+    "Boltz2/AlphaFold2 only use an MSA the caller supplies; this "
+    "orchestration path does not build one (the real alignment path is "
+    "scripts/pou2f3_control.py:build_msas), so this run has no "
+    "co-evolutionary signal and is substantially weaker without it."
+)
 
 
 class StructureExecutionError(RuntimeError):
@@ -176,11 +208,27 @@ def build_requests(
     )
 
     device = "modal" if config.allow_live_modal else "cpu"
-    boltz_config = {"device": device, "seed": seed, "use_msa": True, "diffusion_samples": 1}
+    # `use_msa: True` here used to assert an alignment that this module never
+    # builds or attaches (see the module docstring), so the persisted request
+    # recorded a fair Boltz-2/AlphaFold2 run while every dispatch actually ran
+    # single-sequence. `use_msa: False` makes that true instead of hiding it,
+    # and `msa_source`/`msa_depth_per_chain`/`msa_paths` are logged here because
+    # `StructuralModelRequest` has no dedicated field for them (models.py is
+    # out of scope for this fix) and `config` is what actually gets persisted.
+    no_msa_provenance = {
+        "msa_source": None, "msa_depth_per_chain": {}, "msa_paths": [],
+    }
+    boltz_config = {
+        "device": device, "seed": seed, "use_msa": False, "diffusion_samples": 1,
+        **no_msa_provenance,
+    }
     esm_config = {"device": device, "seed": seed, "model_checkpoint": "esmfold2-fast"}
 
-    af2_config = {"device": device, "seed": seed, "use_msa": True,
-                  "pair_heterocomplex_msas": True, "num_recycles": 3}
+    af2_config = {
+        "device": device, "seed": seed, "use_msa": False,
+        "pair_heterocomplex_msas": False, "num_recycles": 3,
+        **no_msa_provenance,
+    }
 
     requests = [
         StructuralModelRequest(
@@ -238,18 +286,31 @@ def build_requests(
     return requests
 
 
+# Keys `build_requests` puts in `request.config` to log MSA provenance on the
+# persisted request (see its comment). They describe the request, not the
+# tool: Boltz2Config/AlphaFold2Config/ESMFold2Config all set extra="forbid",
+# so passing them through as **kwargs raises instead of silently ignoring them.
+_CONFIG_PROVENANCE_KEYS = ("msa_source", "msa_depth_per_chain", "msa_paths")
+
+
+def _tool_config_kwargs(config: dict[str, Any]) -> dict[str, Any]:
+    """`request.config` minus the provenance keys, safe to unpack into a Config."""
+    return {k: v for k, v in config.items() if k not in _CONFIG_PROVENANCE_KEYS}
+
+
 def _tool_input_and_config(request: StructuralModelRequest, complex_obj: Any) -> tuple[Any, Any, str]:
     """Build the installed Proto input/config pair for this request's model.
 
     One place, because a two-branch if/else silently routed AlphaFold2 into the
     ESMFold2 contract and validated its config against the wrong model.
     """
+    kwargs = _tool_config_kwargs(request.config)
     if request.model == "boltz2":
         from proto_tools.tools.structure_prediction.boltz2 import (  # noqa: PLC0415
             Boltz2Config, Boltz2Input,
         )
         return (
-            Boltz2Input(complexes=[complex_obj]), Boltz2Config(**request.config),
+            Boltz2Input(complexes=[complex_obj]), Boltz2Config(**kwargs),
             "proto_tools.tools.structure_prediction.boltz2.Boltz2Input",
         )
     if request.model == "alphafold2":
@@ -258,14 +319,14 @@ def _tool_input_and_config(request: StructuralModelRequest, complex_obj: Any) ->
         )
         return (
             AlphaFold2Input(complexes=[complex_obj]),
-            AlphaFold2Config(**request.config),
+            AlphaFold2Config(**kwargs),
             "proto_tools.tools.structure_prediction.alphafold2.AlphaFold2Input",
         )
     from proto_tools.tools.structure_prediction.esmfold2 import (  # noqa: PLC0415
         ESMFold2Config, ESMFold2Input,
     )
     return (
-        ESMFold2Input(complexes=[complex_obj]), ESMFold2Config(**request.config),
+        ESMFold2Input(complexes=[complex_obj]), ESMFold2Config(**kwargs),
         "proto_tools.tools.structure_prediction.esmfold2.ESMFold2Input",
     )
 
@@ -405,10 +466,15 @@ def execute_request(
     both human approval and ``allow_live_modal``; without them the result is a
     recorded ``skipped``, not a silent fallback.
 
-    On the live path this runs ``config.structure_replicates`` predictions that
-    differ only in seed, and returns one result carrying the confidence interval
-    across them. Replicates cost GPU jobs, so the cached and fixture paths serve
-    whatever interval was stored rather than re-running anything.
+    On the live path this runs ``StructureConfig.discovery_diffusion_samples``
+    predictions that differ only in seed, and returns one result carrying the
+    confidence interval across them — never ``config.structure_replicates``:
+    that field stays on ``RunConfig`` because it is hashed into ``config_hash``
+    and every existing trace's provenance depends on it staying put, but §7 of
+    discovery_config.py is the one place the actual ensemble size is decided,
+    and nothing was reading it before this. Replicates cost GPU jobs, so the
+    cached and fixture paths serve whatever interval was stored rather than
+    re-running anything.
     """
     chain_map = {c.chain_id: c.role for c in request.chains}
 
@@ -463,7 +529,7 @@ def execute_request(
             error="; ".join(validation["blockers"]) or "request failed validation",
         )
 
-    replicates = max(1, config.structure_replicates)
+    replicates = max(1, _STRUCTURE_CONFIG.discovery_diffusion_samples)
     if replicates == 1:
         return _dispatch_live(request, caches, max_retries=max_retries)
 
@@ -473,9 +539,20 @@ def execute_request(
     results: list[StructuralModelResult] = []
     for index in range(replicates):
         seed = base_seed + index
+        replicate_config = {**request.config, "seed": seed}
         replicate = request.model_copy(update={
             "seed": seed,
-            "config": {**request.config, "seed": seed},
+            "config": replicate_config,
+            # Recomputed per replicate, not inherited from the base request.
+            # All replicates used to share one input_hash, so every dispatch
+            # cached to and overwrote the same entry and the same structure
+            # file — only the last seed's coordinates ever survived, and an
+            # ensemble could not be reconstructed from disk. Each seed now
+            # gets its own address, keyed on the same inputs the hash always
+            # used plus the seed that actually varies between them.
+            "input_hash": _request_hash(
+                request.model, list(request.chains), replicate_config, seed
+            ),
             "request_id": (
                 request.request_id if index == 0 else f"{request.request_id}-r{index}"
             ),
@@ -491,7 +568,30 @@ def execute_request(
     if not finished:
         return results[0]
     aggregated = aggregate_replicates(finished, level=config.ci_confidence_level)
-    return aggregated.model_copy(update={"request_id": request.request_id})
+    aggregated = aggregated.model_copy(update={
+        "request_id": request.request_id,
+        # The aggregate is addressed by the base request's own hash, distinct
+        # from any replicate's — a rerun of this exact request looks up that
+        # address at the top of this function, so it must resolve to the
+        # interval, not to whichever replicate happened to be cached last.
+        "input_hash": request.input_hash,
+    })
+    if caches:
+        caches[0].put(request.input_hash, {
+            "confidence": aggregated.confidence,
+            "confidence_ci": {
+                metric: ci.model_dump(mode="json")
+                for metric, ci in aggregated.confidence_ci.items()
+            },
+            "replicate_seeds": aggregated.replicate_seeds,
+            "model_version": aggregated.model_version,
+            "proto_tools_version": aggregated.proto_tools_version,
+            "output_hash": aggregated.output_hash,
+            "artifact_paths": [p for r in finished for p in r.artifact_paths],
+            "limitations": aggregated.limitations,
+            "unresolved_questions": aggregated.unresolved_questions,
+        })
+    return aggregated
 
 
 def _dispatch_live(
@@ -545,6 +645,13 @@ def _dispatch_live(
             except OSError as exc:  # disk full, permissions - do not lose the run
                 _logger.warning("could not persist structural output: %s", exc)
 
+        limitations = ["Computational prediction. Not experimental evidence."]
+        if request.model in INTERFACE_MODELS:
+            # Only boltz2/alphafold2 make an MSA-dependent accuracy claim;
+            # ESMFold2 is a single-sequence model by design and this caveat
+            # would be noise on its monomer checks.
+            limitations.append(MSA_LIMITATION)
+
         cache_payload = {
             "confidence": confidence,
             "model_version": request.model,
@@ -552,7 +659,7 @@ def _dispatch_live(
             "runtime_ms": runtime_ms,
             "output_hash": content_hash(payload),
             "artifact_paths": artifact_paths,
-            "limitations": ["Computational prediction. Not experimental evidence."],
+            "limitations": limitations,
             "unresolved_questions": [
                 "Interface residue identity is not resolved well enough to define "
                 "a pocket without further evidence.",
@@ -567,7 +674,7 @@ def _dispatch_live(
             input_hash=request.input_hash, output_hash=content_hash(payload),
             runtime_ms=runtime_ms, seed=request.seed, config=request.config,
             proto_tools_version=proto_tool_versions().get("proto_tools"),
-            limitations=["Computational prediction. Not experimental evidence."],
+            limitations=limitations,
         )
 
     return StructuralModelResult(
@@ -827,6 +934,16 @@ def compare_models(
         )
 
     # -- does each interface model clear the confidence floor? ---------------
+    # Falling below the floor disqualifies a model's result regardless of how
+    # many others ran — that is not a claim about agreement, it is a number
+    # failing to clear a floor. Clearing it is different: with a second
+    # interface model present, one model's own ipTM reaching the floor is
+    # corroborating context alongside the CI-overlap comparison above, so it
+    # is recorded as a vote. With only one interface model available there is
+    # nothing to corroborate — a lone ipTM clearing a threshold is one
+    # stochastic scalar, and counting it as a vote/agreement let verdict reach
+    # "consistent" on that scalar alone with no comparison ever made. That
+    # case is recorded as a note instead.
     votes = 0
     for name, result in sorted(interface_results.items()):
         iptm = result.confidence.get("iptm")
@@ -845,16 +962,31 @@ def compare_models(
                 f"{name} interface confidence is low (ipTM {iptm:.2f}); the "
                 "predicted interface is not a reliable basis for a pocket."
             )
-        else:
+        elif len(interface_results) >= 2:
             votes += 1
             agreements.append(f"{name} reports interface confidence ipTM {iptm:.2f}.")
+        else:
+            limitations.append(
+                f"{name} reports interface confidence ipTM {iptm:.2f}, clearing "
+                f"the {LOW_CONFIDENCE_IPTM} floor, but that is a single model's "
+                "own score with nothing to corroborate it, so it is recorded as "
+                "a note rather than a vote or an agreement."
+            )
 
     # -- monomer sanity, which informs but does not vote ---------------------
+    # Goes to `limitations`, never `disagreements`: `disagreements` drives the
+    # interface verdict below, and ESMFold2 never saw the interface. It used
+    # to land in `disagreements` and flip a converged interface prediction to
+    # "inconsistent" on a monomer's own confidence — exactly the manufactured
+    # consensus this module's docstring and compare_models' docstring both say
+    # ESMFold2 must not produce. These targets are disordered activation
+    # domains, so a low isolated-chain pLDDT is closer to the default outcome
+    # than the exception.
     for result in usable_esm:
         plddt = result.confidence.get("plddt")
         if plddt is not None and plddt < LOW_CONFIDENCE_PLDDT:
             role = next(iter(result.chain_map.values()), result.request_id)
-            disagreements.append(
+            limitations.append(
                 f"ESMFold2 monomer confidence for the {role} is low "
                 f"(pLDDT {plddt:.2f}); that chain may be disordered in isolation."
             )

@@ -155,11 +155,22 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
 .rail h2,.srcs h2{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
   color:var(--ink-3);font-weight:600;margin:0 0 12px;padding:0 18px;
   display:flex;align-items:center;gap:8px}
+/* Slim, quiet scrollbars on the panels that actually scroll. The platform
+   default is a wide flat bar that reads as chrome rather than content on a
+   rail this narrow, in both engines that still need the vendor rule. */
+.rail,#thinking,#anstext,.srcs{scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
+.rail::-webkit-scrollbar,#thinking::-webkit-scrollbar,
+#anstext::-webkit-scrollbar,.srcs::-webkit-scrollbar{width:6px}
+.rail::-webkit-scrollbar-track,#thinking::-webkit-scrollbar-track,
+#anstext::-webkit-scrollbar-track,.srcs::-webkit-scrollbar-track{background:transparent}
+.rail::-webkit-scrollbar-thumb,#thinking::-webkit-scrollbar-thumb,
+#anstext::-webkit-scrollbar-thumb,.srcs::-webkit-scrollbar-thumb{
+  background:var(--line-2);border-radius:6px}
 /* The run, top to bottom: what was asked, what came back, how, and what ran.
-   Each block is separated by a rule rather than a card, so the rail reads as
-   one column of a transcript instead of four unrelated panels. */
-.ask,.ans,.think{padding-bottom:14px;margin-bottom:14px;
-  border-bottom:1px solid var(--line)}
+   Blocks used to be fenced off by a full-bleed rule; dropped in favor of
+   whitespace and each section's own uppercase label, which is quieter and
+   still reads as one column of a transcript rather than four boxed panels. */
+.ask,.ans,.think{padding-bottom:2px;margin-bottom:28px}
 .askq{margin:0;padding:0 18px;font-size:13px;line-height:1.5;color:var(--ink)}
 .askq:not(.set){color:var(--ink-3)}
 /* A multi-sentence request is normal here — the pipeline reads control flow out
@@ -472,7 +483,7 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
   <button class="icon-btn" id="theme0" title="Toggle theme" aria-label="Toggle theme">◐</button>
   <div class="hero">
     <div class="land-in">
-      <div class="badge"><b>●</b> DepMap 24Q2 · Lambert TF catalogue · PMC full text</div>
+      <div class="badge"><b>●</b> <span id="depmapBadge">DepMap 24Q2</span> · Lambert TF catalogue · PMC full text</div>
       <h1>Ask a disease question.<br><span>Watch the evidence decide.</span></h1>
       <p class="lede">An agentic pipeline from disease biology to a testable drug hypothesis.
         It gathers public genetic, structural and literature evidence, ranks what survives, and
@@ -485,9 +496,8 @@ nav button[disabled]:hover{background:none;color:var(--ink-2)}
         <div class="chips" id="chips"></div>
       </div>
       <div class="land-foot">
-        <span><b>1,588</b> TFs screened</span>
-        <span><b>1,100</b> cell lines</span>
-        <span><b>8</b> stages, each abstains on its own</span>
+        <span><b id="landTF"></b> TFs screened</span>
+        <span><b id="landStages"></b> stages, each abstains on its own</span>
       </div>
     </div>
     <div class="stage3d">
@@ -645,6 +655,24 @@ const T = D.thresholds;
 // no run has reported its gate yet, and the panel says so rather than showing
 // the seed file's retired rule as if it were current.
 let GATE = null;
+// The docking box a live run actually built, from the `site` stage's own
+// payload. `setStage` below only draws {id,state,detail,note} and drops
+// everything else, so center/size/residues would otherwise never reach the
+// screen. Null until a run reports a defensible site.
+let SITE = null;
+// Scored/docked/clean-pose counts, parsed from the `screening` stage's detail
+// line — the only place pipeline_api reports them; they are never their own
+// SSE field. Null means no screen has reported yet, or its detail text did not
+// match the expected shape, and the panel falls back to what it can see.
+let SCREEN = null;
+// data.json's cold-start view was built from DepMap 24Q2 (see its own
+// `generated_from`); a live run reports its own release on `thresholds`, and
+// ui/serve.py actually loads 24Q4. Rendering the literal during a live run put
+// 24Q4 numbers under a 24Q2 label, so every place this project once wrote
+// "DepMap 24Q2" by hand now reads GATE.release once a run has reported one,
+// and only falls back to the literal before that — which is also the correct
+// label for the recorded data.json run, so the fallback is not a lie either.
+const depmapRelease = () => GATE ? `DepMap ${GATE.release}` : 'DepMap 24Q2';
 // live-run state. data.json only seeds a cold page; a run replaces both.
 let pts = D.landscape, C = D.candidates;
 let liveContext = D.landscape_context;
@@ -896,6 +924,13 @@ const STAGES = [
 $('#stages').innerHTML = STAGES.map(([id,nm])=>
   `<div class="stage" id="st-${id}" data-s="pending"><div class="dot"></div>
     <div class="nm">${nm}</div><div class="dt"></div><div class="nt"></div></div>`).join('');
+// Both counts on the landing page used to be typed in by hand and drifted:
+// STAGES grew to nine entries while the copy still said eight, and the TF
+// count was whatever data.json's Lung landscape happened to have. Derived
+// here instead. "Cell lines" had no honest source in loaded data, so it is
+// gone rather than guessed.
+$('#landTF').textContent = pts.length.toLocaleString();
+$('#landStages').textContent = STAGES.length;
 
 const NAMED_STATES = {ambiguous:'ambiguous', abstained:'abstained', blocked:'blocked'};
 function setStage({id,state,detail,note}){
@@ -911,7 +946,11 @@ function setStage({id,state,detail,note}){
   el.querySelector('.dt').textContent = detail||'';
   el.querySelector('.nt').textContent = note||'';
 }
-/* sources rail: collapses to a spine so the plot can have the width */
+/* sources rail: collapses to a spine so the plot can have the width.
+   Collapsed by default — most of what a run found is already in Reasoning and
+   Pipeline, and opening this rail on every first visit cost width whether or
+   not the reader ever looked at it. A stored preference from an earlier visit
+   still wins, in either direction. */
 {
   const body=document.querySelector('.body'), btn=$('#srcToggle');
   const apply=off=>{
@@ -921,7 +960,7 @@ function setStage({id,state,detail,note}){
     btn.title = off ? 'Show sources' : 'Hide sources';
     if(booted){ sizePlot(); draw(); }
   };
-  apply(localStorage.dsSrc === 'off');
+  apply(localStorage.dsSrc !== 'on');
   btn.onclick = () => { const off = body.dataset.src !== 'off';
     localStorage.dsSrc = off ? 'off' : 'on'; apply(off);
     // Resize the 3D panel explicitly too. A ResizeObserver alone is not enough:
@@ -1046,6 +1085,7 @@ function run(q, predict){
   STAGES.forEach(([id])=>setStage({id,state:'pending',detail:'',note:''}));
   $('#papers').innerHTML=''; $('#srcCount').textContent=''; resetReady();
   resetThinking(); resetAnswer();
+  SITE = null; SCREEN = null;   // this run's own box and pose counts, not the last run's
   document.querySelectorAll('.ask .caveat').forEach(n=>n.remove());
   const asked=$('#askq');
   asked.textContent = q || 'no question given';
@@ -1057,13 +1097,41 @@ function run(q, predict){
                                + (predict ? '&predict='+encodeURIComponent(predict) : ''));
   es = live;
   let got=false;
-  live.addEventListener('stage', e => { got=true; setStage(JSON.parse(e.data)); });
+  live.addEventListener('stage', e => {
+    got=true;
+    const d = JSON.parse(e.data);
+    // `setStage` only draws the four fields every stage shares. `site` and
+    // `screening` both report more than that — the box's own coordinates, and
+    // the scored/clean pose counts baked into `screening`'s prose — and both
+    // are captured here, once, where the full payload actually arrives.
+    if(d.id === 'site') SITE = (d.state === 'done' && d.center)
+      ? {center: d.center, size: d.size, residues: d.residues || []} : null;
+    if(d.id === 'screening'){
+      // Structured fields when the run sends them, which it now does. The
+      // regex behind it reads the same numbers out of the sentence and is kept
+      // only for a recorded run emitted by an older build — recovering a count
+      // by parsing prose is one rewording away from a wrong number on screen,
+      // and this interface has been bitten by that twice already.
+      if(d.docked != null)
+        SCREEN = {scored:d.scored, docked:d.docked, clean:d.clean_poses,
+                  shown:d.shown, best:d.best, verified:d.verified,
+                  bestVerified:d.best_verified};
+      else {
+        const m = /^(\d+)\/(\d+) compounds scored, (\d+) without geometry flags/.exec(d.detail || '');
+        SCREEN = m ? {scored:+m[1], docked:+m[2], clean:+m[3]} : null;
+      }
+    }
+    setStage(d);
+  });
   live.addEventListener('paper', e => addPaper(JSON.parse(e.data)));
   // The gate this run actually applied. data.json seeds the cold page with the
   // retired four-way AND; leaving it in place during a live run drew a shaded
   // "only region that passes" around a rule that was not in force, and a
   // specificity-first candidate then passed while sitting outside it.
-  live.addEventListener('thresholds', e => { GATE = JSON.parse(e.data); });
+  live.addEventListener('thresholds', e => {
+    GATE = JSON.parse(e.data);
+    $('#depmapBadge').textContent = depmapRelease();
+  });
   live.addEventListener('landscape', e => {          // the plot is this run's, not a cache
     const d = JSON.parse(e.data);
     pts = d.points; liveContext = d.context;
@@ -1116,7 +1184,7 @@ function replay(q){
     {id:'literature',state:'done',detail:`${C.reduce((n,c)=>n+c.claims.length,0)} claims already on file`,
      note:'Retrieved earlier and verified at source. Not a live search.'},
     {id:'discovery',state:'done',detail:`${land.length} screened in ${D.landscape_context}`,
-     note:'DepMap 24Q2 Chronos, Lambert TF catalogue.'},
+     note:`${depmapRelease()} Chronos, Lambert TF catalogue.`},
     {id:'ranking',state:passed.length?'done':'abstained',
      detail:`${passed.length} of ${land.length} clear every gate`,
      note:Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,2).map(([w,n])=>`${n} × ${w}`).join('; ')},
@@ -1315,7 +1383,7 @@ addEventListener('resize',()=>{sizePlot();draw();renderStructure?.();});
 
 function refreshSidebar(){
 const nPass=pts.filter(p=>p.pass).length;
-$('#lsub').textContent=`${liveContext} · DepMap 24Q2 Chronos`;
+$('#lsub').textContent=`${liveContext} · ${depmapRelease()} Chronos`;
 $('#nTF').textContent=pts.length.toLocaleString();
 $('#nPass').textContent=nPass; if(nPass) $('#nPass').classList.remove('zero');
 // Group by the reason, not by the numbers inside it. Each failure carries that
@@ -1358,7 +1426,7 @@ refreshSidebar();
 
 /* ══ CANDIDATES ═══════════════════════════════════════════ */
 function renderCandidates(){
-$('#csub').textContent=`${C.length} in ${liveContext||'DepMap 24Q2'} · dependency numbers joined to typed interface evidence`;
+$('#csub').textContent=`${C.length} in ${liveContext||depmapRelease()} · dependency numbers joined to typed interface evidence`;
 const dep=c=>c.awaiting?['p-await','awaiting data']:c.gate_pass?['p-pass','passes']:['p-fail','rejected'];
 /* "none found" claimed more than the run can support. Retrieval missing a paper
    and a contact not existing are different facts, and this column only ever
@@ -1479,18 +1547,67 @@ let MED23=null;
 let HIGHLIGHT={};
 fetch('./med23.json').then(r=>r.ok?r.json():null).then(m=>{ MED23=m; }).catch(()=>{});
 
-const legendReceptor = hl => `
+/* Which residues the amber layer draws, and what it is allowed to say about
+   them. This used to be M.pocket.residues unconditionally, captioned "ELK1-
+   binding cavity · observed" no matter what actually produced the docking
+   box — so a box built from a converged ensemble was shown as if it were the
+   deposited ELK1 complex. `calibration`/`site_basis`/`site_residues` arrive on
+   `highlight` once pipeline_api sends them (SCIENCE_BRIEF §16: experimental vs
+   predicted sites); this reads them defensively and falls back to the curated
+   pocket, which is the only site this interface knew about before there was a
+   way to tell the two apart. */
+function siteLayer(hl){
+  const curated = {residues: MED23?.pocket?.residues || [],
+                    label: MED23?.pocket?.label || 'ELK1-binding cavity',
+                    state: MED23?.pocket?.interpretation || 'observed',
+                    calibration: true};
+  if(!hl?.site_residues?.length) return curated;
+  const calibration = hl.calibration === true
+    || (typeof hl.site_basis === 'string' && hl.site_basis.startsWith('curated experimental:'));
+  return calibration
+    ? {residues: hl.site_residues, label: curated.label, state: curated.state, calibration: true}
+    : {residues: hl.site_residues, label: 'ensemble consensus', state: 'predicted', calibration: false};
+}
+
+const legendReceptor = hl => { const site = siteLayer(hl); return `
   <span><i style="background:var(--ink-3)"></i>MED23 backbone · observed</span>
-  <span><i style="background:var(--control)"></i>ELK1-binding cavity · observed</span>`
+  <span><i style="background:var(${site.calibration?'--control':'--fail'})"></i>${site.label} · ${site.state}</span>`
   + (hl?.residues?.length
      ? ` <span><i style="background:var(--fail)"></i>predicted interface · computed</span>` : '')
   + (hl?.ligands?.length
      ? ` <span><i style="background:var(--pass)"></i>${
          hl.ligands[Math.min(ligSel, hl.ligands.length-1)].name
-       } pose &amp; contacts · computed</span>` : '');
+       } pose &amp; contacts · computed</span>` : ''); };
+
+// `_read_screen` already dropped every pose that failed the pocket/box/clash
+// filter and truncated to MAX_POSES_SHOWN, so "N of N shown" was always true —
+// it hid both the cap and the drop. SCREEN, parsed off the `screening` stage's
+// own detail line (the only place pipeline_api reports these counts), gives
+// the real denominator when a screen has reported one; with no run reported,
+// or a detail line that does not match, this just says how many are on screen.
+const MAX_POSES_SHOWN = 3;   // mirrors pipeline_api.py's constant of the same name
+const dockedSummary = shown => {
+  if(!SCREEN)
+    // No parseable screening detail (older run, or the format changed): still
+    // honest about the cap rather than implying `shown` is the whole result.
+    return shown >= MAX_POSES_SHOWN
+      ? `${shown} shown, ranked by score — capped at ${MAX_POSES_SHOWN}, more may exist`
+      : `${shown} of ${shown} shown, ranked by score`;
+  const dropped = Math.max(0, SCREEN.scored - SCREEN.clean);
+  return `${shown} of ${SCREEN.clean} clean pose${SCREEN.clean===1?'':'s'} shown`
+       + ` · ${SCREEN.docked} docked`
+       + (dropped ? ` · ${dropped} dropped on geometry` : '');
+};
+// Every pose in `hl.ligands` already passed the pocket/box/clash filter in
+// _read_screen — inside_box is never false and clash is never true by the
+// time a pose gets here — so the per-pose "in the box · no clash" line this
+// panel used to render was decoration dressed up as a check performed on that
+// specific pose. Dropped below; distance from the box centre, rendered from
+// `l.offset` a few lines down, is the honest, non-constant number.
 
 function receptorPanel(M, c, hl){
   const gene=c?.gene||'this candidate';
+  const site=siteLayer(hl);
   return `<h3>${M.gene} <span class="muted">${M.pdb_id}</span></h3>
   <p class="sub">${M.method} · ${M.form} · ${M.residues_resolved}/${M.residues_total}
      residues (${Math.round(M.coverage*100)}%) · drag to rotate</p>
@@ -1501,6 +1618,9 @@ function receptorPanel(M, c, hl){
       <span class="muted">of 1–${M.residues_total}; ${M.n_atoms?.toLocaleString()||''}
       heavy atoms</span></dd>
     <dt>cavity</dt><dd>${(M.pocket.labels||M.pocket.residues).join(', ')}</dd>
+    ${SITE ? `<dt>docking box</dt><dd>${SITE.size.map(v=>v.toFixed(1)).join(' × ')} Å
+      <span class="muted">centred ${SITE.center.map(v=>v.toFixed(1)).join(', ')} ·
+      ${SITE.residues.length} residue${SITE.residues.length===1?'':'s'}, this run's own</span></dd>` : ''}
     ${M.pocket.polarity ? `<dt>chemistry</dt><dd>${Object.entries(M.pocket.polarity)
         .map(([k,v])=>`${v.length} ${k}`).join(', ')}
       <span class="muted">— a greasy groove is what a small molecule can sit in;
@@ -1512,7 +1632,7 @@ function receptorPanel(M, c, hl){
     <dt>${gene} interface</dt><dd>${hl?.residues?.length
         ? hl.residues.join(', ') : '<span class="muted">not predicted</span>'}</dd>
     <dt>docked</dt><dd>${hl?.ligands?.length
-        ? `${hl.ligands.length} of ${hl.ligands.length} shown, ranked by score`
+        ? dockedSummary(hl.ligands.length)
         : '<span class="muted">no screen run</span>'}</dd></dl></div>
   ${(hl?.ligands||[]).map((l,i)=>`<div class="lig" data-lig="${i}"
        aria-current="${i===Math.min(ligSel,(hl.ligands.length-1))}"
@@ -1524,8 +1644,6 @@ function receptorPanel(M, c, hl){
                                 : '<span class="muted">none in the cavity</span>'}</div>
       ${l.closest!=null?`<div class="k">closest approach ${l.closest} Å${
           l.offset!=null?` · ${l.offset} Å from box centre`:''}</div>`:''}
-      <div class="k geo">${l.inside_box===false?'<b class="bad">outside the box</b>'
-        :'in the box'} · ${l.clash?'<b class="bad">clash</b>':'no clash'}</div>
       ${l.identity?.status ? `<div class="k id-${l.identity.status}">${
           l.identity.status==='verified'
             ? `identity verified · PubChem ${l.identity.cid} ${l.identity.name||''}`
@@ -1541,13 +1659,17 @@ function receptorPanel(M, c, hl){
     <span class="muted">Three Boltz-2 seeds on Modal, co-folding both full-length
       chains. Minutes, and it spends GPU time. The residues it agrees on become
       the site a compound would have to occupy to keep ${c.gene} off it.</span></p>`}
-  <p class="note">The cavity shown is where <b>ELK1</b> binds, from the deposited
+  ${site.calibration ? `<p class="note">The cavity shown is where <b>ELK1</b> binds, from the deposited
     complex — an interaction that depends on ELK1 being phosphorylated at Ser383,
     a modification the current prediction path does not transmit. It is not a
     site established for ${gene}.
     ${hl?.residues?.length
       ? 'The red residues are a computational prediction for this candidate — a hypothesis, not a contact.'
-      : 'No interface has been predicted for this candidate, so nothing is highlighted for it.'}</p>
+      : 'No interface has been predicted for this candidate, so nothing is highlighted for it.'}</p>`
+    : `<p class="note">The box shown is <b>${gene}</b>'s own predicted site — receptor-side
+    residues an ensemble converged on this run, not the cavity ELK1 binds. A converged
+    hypothesis is not a contact: it does not establish that ${gene} uses the site ELK1
+    uses.</p>`}
   <p class="note">${M.limitations.join(' ')}</p>`;
 }
 async function glContext(){
@@ -1679,7 +1801,8 @@ async function paintMol(M, hl){
              pred:css('--fail'), lig:css('--pass')};
     const ligs=hl?.ligands||[];
     const shown=ligs.length ? ligs[Math.min(ligSel, ligs.length-1)] : null;
-    const pocket=M.pocket?.residues||[], pred=hl?.residues||[],
+    const site=siteLayer(hl);
+    const pocket=site.residues, pred=hl?.residues||[],
           lig=shown?.residues||[];
     molv.clear();
     molv.addModel(molCif,'cif');
@@ -1687,11 +1810,14 @@ async function paintMol(M, hl){
     else if(molRep==='surface') molv.setStyle({}, {cartoon:{color:C.body, thickness:.2}});
     else molv.setStyle({}, {sphere:{color:C.body, scale:.85}});
 
-    // Highlights last so they sit over the body in every representation.
+    // Highlights last so they sit over the body in every representation. The
+    // amber colour is reserved for the curated cavity; a box built from an
+    // ensemble instead draws in the same colour the predicted-interface layer
+    // uses, so a reader sees "predicted" rather than "observed" at a glance.
     const mark=(resi,color)=>{ if(resi.length) molv.addStyle({resi},
       molRep==='atoms' ? {sphere:{color, scale:.9}}
                        : {stick:{color, radius:.34}, sphere:{color, scale:.32}}); };
-    mark(pocket, C.pocket); mark(lig, C.lig); mark(pred, C.pred);
+    mark(pocket, site.calibration ? C.pocket : C.pred); mark(lig, C.lig); mark(pred, C.pred);
 
     if(molRep==='surface')
       molv.addSurface($3.SurfaceType.VDW, {opacity:.62, color:C.body}, {});
@@ -1729,7 +1855,11 @@ async function paintReceptorThree(M, highlight){
   // spans differ by an order of magnitude — is exactly wrong here, because
   // there is only ever one receptor and its atoms are the size they are.
   const R={body:1.5, back:.85, pocket:2.0, pred:2.0, lig:2.0, atom:1.5, bond:.3};
-  const pocket=new Set(M.pocket?.residues||[]);
+  // Fallback renderer for when 3Dmol fails to load — same box, same rule as
+  // paintMol: draw this run's own site when one was reported, the curated
+  // cavity otherwise, and never caption a predicted box as the observed one.
+  const site=siteLayer(highlight);
+  const pocket=new Set(site.residues);
   const pred=new Set(highlight?.residues||[]);
   // Every resolved heavy atom, minus the residues that get their own colour —
   // drawing a highlighted residue twice leaves the grey copy z-fighting with
@@ -1782,7 +1912,7 @@ async function paintReceptorThree(M, highlight){
     // shown as one sphere at its Cα is a dot buried in the body, where the
     // same residue drawn as its atoms is a patch on the surface.
     const ofRes=set=>(M.atoms||A).filter(p=>set.has(p[0]));
-    balls(ofRes(pocket),CO.pocket,R.pocket);
+    balls(ofRes(pocket), site.calibration?CO.pocket:CO.pred, R.pocket);
     if(lig.size) balls(ofRes(lig),CO.lig,R.lig);
     if(pred.size) balls(ofRes(pred),CO.pred,R.pred);
     // The docked molecules, as the atoms and bonds that were scored rather

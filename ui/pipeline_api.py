@@ -710,7 +710,16 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
                          f"{s_['seed']}. Every structure was standardized and "
                          "identity-checked against PubChem by InChIKey before "
                          "docking. Vina scores rank poses — not affinities, not "
-                         "evidence of binding.")})
+                         "evidence of binding."),
+                # The same numbers the detail sentence states, as fields. A
+                # reader parsing prose to recover a count is one rewording away
+                # from a wrong number on screen, and this file has already been
+                # bitten by exactly that twice.
+                "docked": s_["docked"], "scored": s_["scored"],
+                "clean_poses": s_["clean_poses"], "shown": len(poses),
+                "best": s_["best"], "verified": s_.get("verified"),
+                "best_verified": s_.get("best_verified"),
+                })
     else:
         s, poses = screen
         emit("stage", {
@@ -723,7 +732,11 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
                      "the box depends on the receptor, not the context. Approved-drug "
                      "control library: a machinery check, not a designed screen. Vina "
                      "scores rank poses — they are not affinities and not evidence of "
-                     "binding.")})
+                     "binding."),
+            "docked": s["docked"], "scored": s["scored"],
+            "clean_poses": s["clean_poses"], "shown": len(poses),
+            "best": s["best"], "verified": s.get("verified"),
+            "best_verified": s.get("best_verified")})
 
     # What the 3D view highlights on MED23 for each shortlisted candidate. The
     # two layers are different kinds of claim and stay separate: `ligands` are

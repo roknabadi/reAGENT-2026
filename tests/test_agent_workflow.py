@@ -1110,7 +1110,12 @@ class StructureTests(TempRunCase):
             output_hash="o2", chain_map={"A": "target"},
         )
         comparison = compare_models("c", boltz, [esm])
-        self.assertEqual(comparison.verdict, "consistent")
+        # One interface model and one monomer check is not an agreement. ESMFold2
+        # does not vote — both docstrings in structure.py say so — so there is
+        # nothing here for Boltz2 to agree with, and a verdict of "consistent"
+        # would rest on a single ipTM clearing a threshold. That is the reading
+        # this test's own name warns against, and it used to be what it asserted.
+        self.assertEqual(comparison.verdict, "insufficient")
         self.assertIn("not experimental validation", comparison.caveat)
         self.assertEqual(str(comparison.interpretation), "predicted")
 
@@ -1280,7 +1285,11 @@ class WorkflowTests(TempRunCase):
         comparison = orchestrator.run_structure()
         self.assertIsNotNone(comparison)
         assert comparison is not None
-        self.assertIn(comparison.verdict, {"consistent", "inconsistent"})
+        # Boltz2 alone by default, so there is no second interface model to
+        # corroborate against and the honest verdict is "insufficient". What this
+        # test is about is that a cached result runs the stage at all without
+        # live Modal; the verdict value is incidental to that.
+        self.assertIn(comparison.verdict, {"consistent", "inconsistent", "insufficient"})
 
         results = [
             json.loads(p.read_text())
