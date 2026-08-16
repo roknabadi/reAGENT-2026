@@ -59,10 +59,17 @@ def build_input(elk1: str, med23: str, samples: int, seed: int):
             {"id": "B", "sequence": tad, "entity_type": "protein"},
         ],
     }]
-    # device="modal" marks this as remote; dispatch_to_modal swaps it for the
-    # container's physical device. Without it the config would carry "cuda",
+    # `diffusion_samples` does NOT give an ensemble. proto_tools documents it as
+    # "Independent structure samples per complex; the best by confidence is
+    # returned" — 5 are generated internally and 1 comes back. The control asks
+    # whether *independent samples agree*, which that parameter cannot answer.
+    # Each ensemble member is therefore its own dispatch with its own seed, and
+    # this builds the config for one of them.
+    #
+    # device="modal" marks the request remote; dispatch_to_modal swaps it for
+    # the container's physical device. Without it the config carries "cuda",
     # which is meaningless on the caller's machine.
-    cfg = Boltz2Config(diffusion_samples=samples, include_pae_matrix=True,
+    cfg = Boltz2Config(diffusion_samples=1, include_pae_matrix=True,
                        seed=seed, device="modal")
     return Boltz2Input(complexes=complexes), cfg, tad
 
@@ -98,39 +105,64 @@ def main() -> int:
     from proto_tools.modal.client import dispatch_to_modal
     OUT.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    print("\ndispatching to Modal ...")
-    try:
-        result = dispatch_to_modal("boltz2-prediction", inp, cfg)
-    except Exception as e:
-        print(f"\nFAILED after {time.time()-t0:.0f}s: {type(e).__name__}: {e}")
-        return 1
-    dt = time.time() - t0
-    print(f"returned in {dt:.0f}s ({dt/max(a.samples,1):.0f}s per sample)")
 
-    payload = result.model_dump(mode="json")
+    # One dispatch per ensemble member, each with its own seed. Seeds are
+    # derived from the base seed so the ensemble is reproducible.
+    seeds = [a.seed + i for i in range(a.samples)]
+    records = []
+    for i, seed_i in enumerate(seeds):
+        inp_i, cfg_i, _ = build_input(elk1, med23, 1, seed_i)
+        print(f"\ndispatching sample {i + 1}/{a.samples} (seed {seed_i}) ...")
+        try:
+            result = dispatch_to_modal("boltz2-prediction", inp_i, cfg_i)
+        except Exception as e:
+            print(f"FAILED after {time.time()-t0:.0f}s: {type(e).__name__}: {e}")
+            return 1
+        records.append(result.model_dump(mode="json"))
+    dt = time.time() - t0
+    print(f"\nreturned in {dt:.0f}s ({dt/max(a.samples,1):.0f}s per sample)")
+
+    # Every dispatch's record is kept whole — execution_time, warnings and
+    # errors are per-dispatch — and the structures are indexed across them, so
+    # sample i is what seed[i] produced.
+    payload = {"seeds": seeds, "dispatches": records}
+    structures = [s for r in records for s in (r.get("structures") or [])]
+
     # Write structures and PAE beside the record. Truncating one giant JSON
-    # corrupts it, and a corrupt artifact is worse than a large one.
-    structs = payload.get("structures") or []
-    for i, st in enumerate(structs):
+    # corrupts it, and a corrupt artifact is worse than a large one. Note that
+    # PAE arrives nested under structure["metrics"], not at the top of the
+    # structure, and it is what actually makes the file large: the first
+    # 5-sample run left 183 MB of PAE inline because only the top level was
+    # checked. `parse_mmcif` in interface.py takes paths, so the .cif files are
+    # also the shape the consensus module consumes.
+    for i, st in enumerate(structures):
         for field in ("structure", "cif", "pdb", "content"):
             blob = st.get(field)
             if isinstance(blob, str) and len(blob) > 2000:
                 (OUT / f"sample_{i}.cif").write_text(blob)
                 st[field] = f"<written to sample_{i}.cif>"
+                print(f"wrote {OUT / f'sample_{i}.cif'}  ({len(blob):,} chars)")
                 break
-        if st.get("pae") is not None:
-            (OUT / f"sample_{i}_pae.json").write_text(json.dumps(st["pae"]))
-            st["pae"] = f"<written to sample_{i}_pae.json>"
+        for holder in (st, st.get("metrics")):
+            if isinstance(holder, dict) and holder.get("pae") is not None:
+                (OUT / f"sample_{i}_pae.json").write_text(
+                    json.dumps(holder["pae"]))
+                holder["pae"] = f"<written to sample_{i}_pae.json>"
     (OUT / f"boltz_{a.samples}x.json").write_text(json.dumps(payload, indent=2))
     print(f"wrote {OUT / f'boltz_{a.samples}x.json'}")
 
-    # Surface the interface-specific numbers, not the global ones (spec section 8).
-    for key in ("iptm", "pair_chains_iptm", "protein_iptm", "complex_plddt",
+    # Surface the interface-specific numbers, not the global ones (spec section
+    # 8). They live under structure["metrics"]; a top-level lookup matches
+    # nothing and prints nothing. Report the spread too — a control that asks
+    # whether independent samples agree should show whether they did.
+    rows = [st.get("metrics") or {} for st in structures]
+    for key in ("iptm", "protein_iptm", "ptm", "complex_plddt",
                 "complex_iplddt", "complex_pde", "complex_ipde"):
-        for blob in [payload, *(payload.get("results") or [])]:
-            if isinstance(blob, dict) and key in blob:
-                print(f"  {key:20s} {blob[key]}")
-                break
+        vals = [m[key] for m in rows if isinstance(m.get(key), (int, float))]
+        if not vals:
+            continue
+        spread = f"   [{min(vals):.3f} - {max(vals):.3f}]" if len(vals) > 1 else ""
+        print(f"  {key:20s} {sum(vals) / len(vals):.3f}{spread}")
     return 0
 
 
