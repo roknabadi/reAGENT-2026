@@ -81,6 +81,12 @@ class AxisResult(BaseModel):
     axis: str
     query: str
     n_papers: int
+    n_on_target: int = 0
+    """Retrieved papers that actually name the gene. Paperclip's search is
+    semantic and always returns the nearest matches, so a query for a gene that
+    does not exist still comes back full. Without this the interface reports
+    "6/6 axes hit" for GENEDOESNOTEXIST, which is precisely the false confidence
+    the project exists to prevent."""
     accessions: list[str] = Field(default_factory=list)
     titles: list[str] = Field(default_factory=list)
     suggested_support: dict[str, int] = Field(default_factory=dict)
@@ -89,7 +95,8 @@ class AxisResult(BaseModel):
 
     @property
     def empty(self) -> bool:
-        return self.n_papers == 0
+        """Empty means nothing on target, not nothing returned."""
+        return self.n_on_target == 0
 
 
 class CandidateEvidence(BaseModel):
@@ -114,6 +121,19 @@ class CandidateEvidence(BaseModel):
     def has_coactivator_lead(self) -> bool:
         a = self.axes.get("coactivator")
         return bool(a and not a.empty)
+
+
+def mentions(paper: "Paper", gene: str) -> bool:
+    """Does this record actually name the gene, as a word rather than a substring?
+
+    Substring matching would let TP53 match TP53BP1 and ELK1 match ELK1L, so the
+    match is bounded by non-alphanumerics on both sides.
+    """
+    g = (gene or "").strip()
+    if len(g) < 2:
+        return False
+    return re.search(rf"(?<![A-Za-z0-9]){re.escape(g)}(?![A-Za-z0-9])",
+                     f"{paper.title} {paper.abstract}", re.I) is not None
 
 
 def _parse(stdout: str, axis: str, query: str) -> list[Paper]:
@@ -187,19 +207,26 @@ def gather(gene: str, context: str, partner: str = "MED23", *,
             if on_axis:
                 on_axis(axis, 0, err)
             continue
+        on_target = [p for p in papers if mentions(p, gene)]
         tally: dict[str, int] = {}
-        for p in papers:
+        for p in on_target:
             tally[p.suggested_support] = tally.get(p.suggested_support, 0) + 1
             key = p.accession or p.title
             if key not in seen:
                 seen.add(key)
                 collected.append(p)
+        if on_target:
+            note = ""
+        elif papers:
+            note = (f"{len(papers)} paper(s) returned, none naming {gene}: semantic "
+                    "retrieval returns nearest matches, and nearest is not relevant")
+        else:
+            note = "no match in the indexed corpus for this axis"
         ev.axes[axis] = AxisResult(
-            axis=axis, query=q, n_papers=len(papers),
-            accessions=[p.accession for p in papers if p.accession],
-            titles=[p.title for p in papers],
-            suggested_support=tally,
-            note="" if papers else "no match in the indexed corpus for this axis")
+            axis=axis, query=q, n_papers=len(papers), n_on_target=len(on_target),
+            accessions=[p.accession for p in on_target if p.accession],
+            titles=[p.title for p in on_target],
+            suggested_support=tally, note=note)
         if on_axis:
-            on_axis(axis, len(papers), "")
+            on_axis(axis, len(on_target), "")
     return ev, collected, errors

@@ -120,11 +120,48 @@ class AxisCoverageTests(unittest.TestCase):
     def test_empty_and_populated_axes_are_both_reported(self):
         ev = CandidateEvidence(gene="X", context="Y", partner="MED23")
         from reagent_workflow.literature import AxisResult
-        ev.axes["a"] = AxisResult(axis="a", query="q", n_papers=3)
-        ev.axes["b"] = AxisResult(axis="b", query="q", n_papers=0)
+        # "hit" means on-target, not merely returned: semantic search always
+        # returns something, so n_papers alone is not evidence of coverage.
+        ev.axes["a"] = AxisResult(axis="a", query="q", n_papers=3, n_on_target=2)
+        ev.axes["b"] = AxisResult(axis="b", query="q", n_papers=3, n_on_target=0)
         self.assertEqual(ev.axes_with_hits, ["a"])
         self.assertEqual(ev.axes_empty, ["b"])
 
+
+
+class OnTargetRelevanceTests(unittest.TestCase):
+    """Paperclip's search is semantic: it returns the nearest papers, never
+    nothing. Counting everything it returns as a hit means a query for a gene
+    that does not exist reports full coverage across every axis — the exact
+    false confidence this project exists to prevent."""
+
+    def test_a_paper_that_never_names_the_gene_is_not_on_target(self):
+        from reagent_workflow.literature import Paper, mentions
+        p = Paper(title="Structural basis of Mediator recruitment",
+                  abstract="We solve a structure of MED23 with Elk-1.")
+        self.assertTrue(mentions(p, "MED23"))
+        self.assertFalse(mentions(p, "GENEDOESNOTEXIST"))
+
+    def test_matching_is_word_bounded_not_substring(self):
+        """Substring matching would let TP53 match TP53BP1 and quietly credit a
+        paper about a different protein to the candidate under review."""
+        from reagent_workflow.literature import Paper, mentions
+        p = Paper(title="TP53BP1 recruits repair factors", abstract="")
+        self.assertFalse(mentions(p, "TP53"))
+        self.assertTrue(mentions(Paper(title="TP53 mutation", abstract=""), "TP53"))
+
+    def test_an_empty_or_one_character_gene_matches_nothing(self):
+        from reagent_workflow.literature import Paper, mentions
+        p = Paper(title="A paper about a protein", abstract="with an abstract")
+        for g in ("", " ", "a"):
+            self.assertFalse(mentions(p, g), f"{g!r} must not match")
+
+    def test_an_axis_with_returns_but_no_on_target_paper_is_empty(self):
+        from reagent_workflow.literature import AxisResult
+        a = AxisResult(axis="x", query="q", n_papers=4, n_on_target=0)
+        self.assertTrue(a.empty, "4 irrelevant papers is not a hit")
+        self.assertFalse(AxisResult(axis="x", query="q", n_papers=4,
+                                    n_on_target=1).empty)
 
 if __name__ == "__main__":
     unittest.main()

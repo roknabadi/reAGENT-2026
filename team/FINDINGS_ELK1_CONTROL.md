@@ -49,16 +49,19 @@ what chance predicts.
 
 ## Boltz2 says so itself
 
+Mean across the five samples, with the range:
+
 | global — looks fine | | interface — does not | |
 |---|---|---|---|
-| `ptm` | 0.783 | **`iptm`** | **0.283** |
-| `complex_plddt` | 0.737 | `complex_iplddt` | 0.600 |
-| `complex_pde` | 1.22 | `complex_ipde` | 14.20 |
+| `ptm` | 0.783 [0.781–0.787] | **`iptm`** | **0.267 [0.245–0.284]** |
+| `complex_plddt` | 0.738 [0.735–0.742] | `complex_iplddt` | 0.604 [0.582–0.625] |
+| `complex_pde` | 1.23 [1.22–1.24] | `complex_ipde` | 14.45 [14.15–14.90] |
 
 Exactly the gap the handoff predicted: MED23 is a large well-folded HEAT-repeat
 solenoid, so the global scores reflect MED23 folding correctly, not the
-interface being right. ipTM 0.283 is far below the 0.60 floor. **The model was
-not confident and was not correct, and it reported the former.**
+interface being right. **No sample reaches half the 0.60 ipTM floor**, and the
+spread is narrow — this is not one unlucky seed. **The model was not confident
+and was not correct, and it reported the former.**
 
 ## What this changes
 
@@ -87,9 +90,10 @@ record that:
 - Larger ensembles, `step_scale` tuning for diversity, or submitting a shorter
   ELK1 window were not tried.
 
-## Three bugs fixed to get here
+## Four bugs fixed to get here
 
-All in `scripts/elk1_control.py` (PR #12):
+All in `scripts/elk1_control.py`. The first two were found independently by Vraj
+and by me and are already on `main`; the rest follow in PR #13.
 
 1. **It never dispatched to Modal.** Printed "dispatching to Modal" then called
    `run_boltz2()`, which runs locally and dies on Apple silicon —
@@ -97,10 +101,20 @@ All in `scripts/elk1_control.py` (PR #12):
    Modal from any Mac.
 2. **The artifact was unparseable.** `json.dumps(payload)[:20_000_000]` cut the
    file mid-token, and because the payload leads with a multi-megabyte mmCIF
-   string, the metrics were exactly what got destroyed.
+   string, the metrics were exactly what got destroyed. Structures and PAE now
+   write beside the record. PAE arrives nested under
+   `structure["metrics"]["pae"]`, not at the top of the structure, so a
+   top-level check misses it — that nesting left 183 MB of PAE inline on the
+   first five-sample run.
 3. **The ensemble was not an ensemble.** `diffusion_samples=5` returns "the best
    by confidence" — one structure. `build_consensus` was being handed a single
    sample no matter what was requested.
+4. **The confidence summary printed nothing.** It looked for `iptm` and friends
+   at the top of the payload; they live under `structure["metrics"]`. The run
+   that produced this document printed no metrics at all — they were recovered
+   from the artifact afterwards. It now reports the mean and range across the
+   ensemble, which is what a control asking "do independent samples agree?"
+   should show on its face.
 
 Reproduce:
 
@@ -108,6 +122,10 @@ Reproduce:
 proto-tools deploy --apps boltz2 --test
 python scripts/elk1_control.py --samples 5
 ```
+
+Artifacts land in `runs/elk1_control/` (gitignored): `sample_<i>.cif` for each
+seed, `sample_<i>_pae.json` beside it, and `boltz_5x.json` — the five dispatch
+records with those two fields replaced by pointers, 7 KB and parseable.
 
 `downloads/seqs.json` regenerates from UniProt via `proto_tools`; that fetch
 reconfirms P19419 residues 374–384 read `PSIHFWSTLSP`.

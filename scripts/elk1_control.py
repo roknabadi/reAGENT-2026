@@ -108,9 +108,9 @@ def main() -> int:
 
     # One dispatch per ensemble member, each with its own seed. Seeds are
     # derived from the base seed so the ensemble is reproducible.
-    payloads = []
-    for i in range(a.samples):
-        seed_i = a.seed + i
+    seeds = [a.seed + i for i in range(a.samples)]
+    records = []
+    for i, seed_i in enumerate(seeds):
         inp_i, cfg_i, _ = build_input(elk1, med23, 1, seed_i)
         print(f"\ndispatching sample {i + 1}/{a.samples} (seed {seed_i}) ...")
         try:
@@ -118,50 +118,51 @@ def main() -> int:
         except Exception as e:
             print(f"FAILED after {time.time()-t0:.0f}s: {type(e).__name__}: {e}")
             return 1
-        payloads.append(result.model_dump(mode="json"))
+        records.append(result.model_dump(mode="json"))
     dt = time.time() - t0
     print(f"\nreturned in {dt:.0f}s ({dt/max(a.samples,1):.0f}s per sample)")
 
-    payload = {"structures": [s for p in payloads
-                              for s in (p.get("structures") or [])]}
+    # Every dispatch's record is kept whole — execution_time, warnings and
+    # errors are per-dispatch — and the structures are indexed across them, so
+    # sample i is what seed[i] produced.
+    payload = {"seeds": seeds, "dispatches": records}
+    structures = [s for r in records for s in (r.get("structures") or [])]
 
-    # Each predicted structure goes out as its own .cif, and the metrics as a
-    # small JSON beside them. Writing one combined blob and slicing it to 20MB
-    # produced a file truncated mid-token: unparseable, and the metrics — which
-    # sit after the mmCIF text — were the part that got cut. `parse_mmcif` in
-    # interface.py wants paths anyway, so this is also the shape the consensus
-    # module consumes.
-    structures = payload.get("structures") or []
-    cif_paths = []
-    for i, s in enumerate(structures):
-        text = s.get("structure") if isinstance(s, dict) else None
-        if not text:
-            continue
-        p = OUT / f"sample_{i}.cif"
-        p.write_text(text)
-        cif_paths.append(p)
-        print(f"wrote {p}  ({len(text):,} chars)")
-
-    def strip_structures(obj):
-        """Metrics only — the coordinates already went to the .cif files."""
-        if isinstance(obj, dict):
-            return {k: strip_structures(v) for k, v in obj.items()
-                    if k != "structure"}
-        if isinstance(obj, list):
-            return [strip_structures(v) for v in obj]
-        return obj
-
-    metrics_path = OUT / f"metrics_{a.samples}x.json"
-    metrics_path.write_text(json.dumps(strip_structures(payload), indent=2))
-    print(f"wrote {metrics_path}")
-
-    # Surface the interface-specific numbers, not the global ones (spec section 8).
-    for key in ("iptm", "pair_chains_iptm", "protein_iptm", "complex_plddt",
-                "complex_iplddt", "complex_pde", "complex_ipde"):
-        for blob in [payload, *(payload.get("results") or [])]:
-            if isinstance(blob, dict) and key in blob:
-                print(f"  {key:20s} {blob[key]}")
+    # Write structures and PAE beside the record. Truncating one giant JSON
+    # corrupts it, and a corrupt artifact is worse than a large one. Note that
+    # PAE arrives nested under structure["metrics"], not at the top of the
+    # structure, and it is what actually makes the file large: the first
+    # 5-sample run left 183 MB of PAE inline because only the top level was
+    # checked. `parse_mmcif` in interface.py takes paths, so the .cif files are
+    # also the shape the consensus module consumes.
+    for i, st in enumerate(structures):
+        for field in ("structure", "cif", "pdb", "content"):
+            blob = st.get(field)
+            if isinstance(blob, str) and len(blob) > 2000:
+                (OUT / f"sample_{i}.cif").write_text(blob)
+                st[field] = f"<written to sample_{i}.cif>"
+                print(f"wrote {OUT / f'sample_{i}.cif'}  ({len(blob):,} chars)")
                 break
+        for holder in (st, st.get("metrics")):
+            if isinstance(holder, dict) and holder.get("pae") is not None:
+                (OUT / f"sample_{i}_pae.json").write_text(
+                    json.dumps(holder["pae"]))
+                holder["pae"] = f"<written to sample_{i}_pae.json>"
+    (OUT / f"boltz_{a.samples}x.json").write_text(json.dumps(payload, indent=2))
+    print(f"wrote {OUT / f'boltz_{a.samples}x.json'}")
+
+    # Surface the interface-specific numbers, not the global ones (spec section
+    # 8). They live under structure["metrics"]; a top-level lookup matches
+    # nothing and prints nothing. Report the spread too — a control that asks
+    # whether independent samples agree should show whether they did.
+    rows = [st.get("metrics") or {} for st in structures]
+    for key in ("iptm", "protein_iptm", "ptm", "complex_plddt",
+                "complex_iplddt", "complex_pde", "complex_ipde"):
+        vals = [m[key] for m in rows if isinstance(m.get(key), (int, float))]
+        if not vals:
+            continue
+        spread = f"   [{min(vals):.3f} - {max(vals):.3f}]" if len(vals) > 1 else ""
+        print(f"  {key:20s} {sum(vals) / len(vals):.3f}{spread}")
     return 0
 
 

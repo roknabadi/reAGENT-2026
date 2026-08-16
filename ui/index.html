@@ -454,7 +454,10 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
 const $ = s => document.querySelector(s);
 const fmt = (v,d=2) => v===null||v===undefined ? '—' : v.toFixed(d);
 const D = await (await fetch('./data.json')).json();
-const T = D.thresholds, pts = D.landscape, C = D.candidates;
+const T = D.thresholds;
+// live-run state. data.json only seeds a cold page; a run replaces both.
+let pts = D.landscape, C = D.candidates;
+let liveContext = D.landscape_context;
 
 /* theme — declared before setTheme runs, or the first call hits the TDZ */
 let booted=false, renderStructure=null, heroRetheme=null, showPair=null;
@@ -739,6 +742,14 @@ function run(q){
   let got=false;
   live.addEventListener('stage', e => { got=true; setStage(JSON.parse(e.data)); });
   live.addEventListener('paper', e => addPaper(JSON.parse(e.data)));
+  live.addEventListener('landscape', e => {          // the plot is this run's, not a cache
+    const d = JSON.parse(e.data);
+    pts = d.points; liveContext = d.context;
+    recomputeExtent(); draw(); refreshSidebar();
+  });
+  live.addEventListener('candidates', e => {         // the table is this run's too
+    C = JSON.parse(e.data).rows; renderCandidates();
+  });
   live.addEventListener('done', () => live.close());
   live.onerror = () => { live.close(); if(!got) replay(q); };
 }
@@ -791,9 +802,10 @@ function replay(q){
 const cv=$('#plot'), ctx=cv.getContext('2d'), tip=$('#tip');
 let view=null, drag=null, hover=-1, touched=false;   // touched: the reader zoomed or panned
 const X=p=>p.sel, Y=p=>p.median;
-const EXT=(()=>{ const xs=pts.map(X), ys=pts.map(Y), pd=v=>(Math.max(...v)-Math.min(...v))*0.06;
+let EXT=(()=>{ const xs=pts.map(X), ys=pts.map(Y), pd=v=>(Math.max(...v)-Math.min(...v))*0.06;
   return { x0:Math.min(...xs)-pd(xs), x1:Math.max(Math.max(...xs),T.selectivity_delta*1.25)+pd(xs),
            y0:Math.min(...ys)-pd(ys), y1:Math.max(Math.max(...ys),T.median_target_effect*0.4)+pd(ys) };})();
+const recomputeExtent=()=>{ EXT=(()=>{const xs=pts.map(X), ys=pts.map(Y), pd=v=>(Math.max(...v)-Math.min(...v))*0.06;return { x0:Math.min(...xs)-pd(xs), x1:Math.max(Math.max(...xs),T.selectivity_delta*1.25)+pd(xs),y0:Math.min(...ys)-pd(ys), y1:Math.max(Math.max(...ys),T.median_target_effect*0.4)+pd(ys) };})(); view=null; sizePlot(); };
 const STEP=(lo,hi)=>{const raw=(hi-lo)/7,m=10**Math.floor(Math.log10(raw));
   return [1,2,2.5,5,10].map(s=>s*m).find(s=>s>=raw)||m*10;};
 const M={l:56,r:16,t:16,b:48};
@@ -913,8 +925,9 @@ $('#zout').onclick=()=>{view.kx/=1.5;view.ky/=1.5;touched=true;draw();};
 $('#zrst').onclick=()=>{touched=false;resetView();draw();};
 addEventListener('resize',()=>{sizePlot();draw();renderStructure?.();});
 
+function refreshSidebar(){
 const nPass=pts.filter(p=>p.pass).length;
-$('#lsub').textContent=`${D.landscape_context} · DepMap 24Q2 Chronos`;
+$('#lsub').textContent=`${liveContext} · DepMap 24Q2 Chronos`;
 $('#nTF').textContent=pts.length.toLocaleString();
 $('#nPass').textContent=nPass; if(nPass) $('#nPass').classList.remove('zero');
 const tally={}; pts.forEach(p=>p.why.forEach(w=>tally[w]=(tally[w]||0)+1));
@@ -929,9 +942,12 @@ $('#thr').innerHTML=`<dt>median effect ≤</dt><dd>${T.median_target_effect}</dd
 $('#lnote').innerHTML=`<b>Amber</b> marks fewer than ${T.confidence_floor} cell lines — measured
   too sparsely to trust, whatever the effect size. <b>The shaded corner is the only region that
   passes</b>, and in this lineage it is empty. Other lineages do contain hits.`;
+}
+refreshSidebar();
 
 /* ══ CANDIDATES ═══════════════════════════════════════════ */
-$('#csub').textContent=`${C.length} across DepMap 24Q2 lineages · dependency numbers joined to typed interface evidence`;
+function renderCandidates(){
+$('#csub').textContent=`${C.length} in ${liveContext||'DepMap 24Q2'} · dependency numbers joined to typed interface evidence`;
 const dep=c=>c.awaiting?['p-await','awaiting data']:c.gate_pass?['p-pass','passes']:['p-fail','rejected'];
 const con=c=>c.control?['p-ctrl','control']:c.involvement==='direct'?['p-pass','direct']
   :c.involvement==='unknown'?['p-fail','none found']:['p-await',c.involvement];
@@ -942,6 +958,9 @@ $('#rows').innerHTML=C.map((c,i)=>{const [dc,dl]=dep(c),[cc,cl]=con(c);
   <td><span class="pill ${cc}"><i></i>${cl}</span>${c.partner?` <span class="ctx">${c.partner}</span>`:''}</td>
   <td class="num">${c.score===null?'—':fmt(c.score,3)}</td></tr>`;}).join('');
 let selIdx=null;
+}
+renderCandidates();
+
 function select(i){
   selIdx=+i;
   document.querySelectorAll('#rows tr').forEach(r=>r.setAttribute('aria-selected',r.dataset.i==i));
