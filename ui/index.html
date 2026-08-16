@@ -484,7 +484,8 @@ tbody tr[aria-selected=true]{background:var(--sunk);box-shadow:inset 2px 0 0 var
   padding:3px 8px;border-radius:999px;font-size:10.5px;
   border:1px solid var(--line-2)}
 .inspect .tag i{width:7px;height:7px;border-radius:2px;display:inline-block}
-.inspect .hint{color:var(--ink-3);font-size:10.5px;margin-top:9px}
+.inspect .rest{position:static;color:var(--ink-3);font-size:10.5px;
+  margin-top:9px;line-height:1.4}
 .leg{position:absolute;left:18px;bottom:16px;font-size:11.5px;background:var(--glass);
   backdrop-filter:blur(9px);border:1px solid var(--line);border-radius:12px;
   padding:10px 13px;display:flex;flex-direction:column;gap:6px}
@@ -1929,8 +1930,12 @@ async function paintMol(M, hl){
     }
     // Frame the site rather than the whole protein: MED23 is 1,258 residues
     // and the thing being claimed is seven of them.
-    molv.zoomTo(pocket.length ? {resi:pocket} : {});
-    molv.zoom(.55);
+    // Frame the whole subunit, not the site. Fitting seven residues fills the
+    // canvas with a wall of ribbon and loses the fold, which is the one thing a
+    // reader needs to orient against before any highlight means anything. The
+    // site is found by its colour, and the inspector names it on contact.
+    molv.zoomTo();
+    molv.zoom(.92);
 
     // Everything the cursor can land on, resolved once per paint so the hover
     // handler stays a lookup rather than a search. A residue can belong to
@@ -1970,7 +1975,7 @@ function inspectRest(M, site, shown){
       <dt>site</dt><dd>${site.residues.length} residues · ${site.state}</dd>
       ${shown ? `<dt>compound</dt><dd>${shown.name} ${shown.score.toFixed(2)} kcal/mol</dd>` : ''}
     </dl>
-    <div class="hint">Point at the structure to inspect a residue.</div>`;
+    <div class="rest">Point at the structure to inspect a residue.</div>`;
 }
 
 /* One atom, and what it belongs to. `resn`/`resi`/`chain` come from the
@@ -2007,7 +2012,7 @@ function inspectAtom(atom, M, layers, SS, shown){
     ${hits.length
       ? hits.map(h => `<div class="tag"><i style="background:var(${h.colour})"></i>${
           h.label} · ${h.state}</div>`).join('')
-      : '<div class="hint">Not in any highlighted set.</div>'}`;
+      : '<div class="rest">Not in any highlighted set.</div>'}`;
 }
 
 function hideMol(){
