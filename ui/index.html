@@ -2276,10 +2276,22 @@ async function paintMol(M, hl){
     for(const {resi,color} of patches)
       molv.addSurface($3.SurfaceType.VDW, {opacity:.55, color}, {resi});
 
+    // The compound wears the receptor's material, not a chemistry diagram's:
+    // one claim-colour and a VDW skin, the same treatment the highlighted
+    // residues get. Element colouring drew a structural formula pasted over
+    // the structure — white hydrogens and CPK heteroatoms belong on the 2D
+    // depiction in the strip, not on the one object that has to read as
+    // sitting in the groove. Green is still what tells it from the grey body.
     if(shown?.sdf){
       const m=molv.addModel(shown.sdf,'sdf');
-      m.setStyle({}, {stick:{colorscheme:'greenCarbon', radius:.18},
-                      sphere:{colorscheme:'greenCarbon', scale:.22}});
+      m.setStyle({}, {stick:{color:C.lig, radius:.25},
+                      sphere:{color:C.lig, scale:.3}});
+      // Opaque, where the receptor's patches are translucent films: the
+      // compound is the one solid object in the frame, and that is what tells
+      // it from the contact residues it is sitting on, which wear the same
+      // green because they are the same claim. The sticks underneath stay as
+      // the fallback for when the surface worker cannot build.
+      molv.addSurface($3.SurfaceType.VDW, {opacity:1, color:C.lig}, {model:m});
     }
     // Centre on the site, then pull back until the fold is around it. Framing
     // the whole subunit put the cavity wherever it happened to fall — usually
