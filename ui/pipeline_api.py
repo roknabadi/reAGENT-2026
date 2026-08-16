@@ -499,11 +499,26 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
     # never start a GPU job, and a job that already ran must never be repeated
     # because someone asked the same question twice.
     predict_note = ""
-    if predict and predict.upper() in {g.upper() for g in genes} \
-            and predict.upper() not in predicted:
-        got, predict_note = _predict_interface(predict.upper(), emit)
-        if got is not None:
-            predicted[predict.upper()] = got
+    if predict and predict.upper() in {g.upper() for g in genes}:
+        if predict.upper() in predicted:
+            # It already ran. Refusing to pay for it twice is right; doing that
+            # silently is not — the button spins, the run repeats, the screen is
+            # identical, and the only honest reading available to the reader is
+            # that the thing is broken.
+            done, _rec = predicted[predict.upper()]
+            emit("stage", {
+                "id": "structure", "state": "running",
+                "detail": f"{predict.upper()}: an ensemble is already on disk",
+                "note": (f"Status {done.status}, {done.dominant_cluster_samples}/"
+                         f"{done.total_samples} samples agree. Nothing was "
+                         "dispatched and nothing was charged. Delete "
+                         f"runs/interfaces/{predict.upper()}_{cfg.partner_gene}/ "
+                         "to fold it again, or add seeds with "
+                         "scripts/predict_med23_interface.py.")})
+        else:
+            got, predict_note = _predict_interface(predict.upper(), emit)
+            if got is not None:
+                predicted[predict.upper()] = got
     converged = {g: (c, r) for g, (c, r) in predicted.items() if c.converged}
     # One site is boxed per run. It used to be read from genes[0] alone, so a
     # second candidate's converged ensemble was computed and then thrown away
@@ -767,8 +782,18 @@ def _structure_site_and_screen(emit, cfg, genes: list[str],
         elif screen and site_owner and g != site_owner:
             note += (f" The site here was boxed for {site_owner}, not {g}; no "
                      "poses are shown for this candidate.")
+        ensemble = predicted.get(g)
         emit("highlight", {
             "gene": g, "residues": residues,
+            # Whether an ensemble has been run for this candidate at all, and
+            # what it decided. Without this the panel can only offer to start
+            # one, including for a candidate whose ensemble already ran and
+            # refused — which is the state that makes the button look dead.
+            "ensemble_status": ensemble[0].status if ensemble else None,
+            "ensemble_support": (round(ensemble[0].ensemble_support, 2)
+                                 if ensemble else None),
+            "ensemble_samples": ensemble[0].total_samples if ensemble else None,
+            "ensemble_blockers": list(ensemble[0].blockers) if ensemble else [],
             "ligands": own_poses,
             # The union of what the shown poses contact. Computed, not
             # predicted and not observed: these are the residues a compound

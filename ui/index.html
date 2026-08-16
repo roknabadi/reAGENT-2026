@@ -296,6 +296,9 @@ nav button[aria-current=true]{background:var(--sunk);border-color:var(--line);
   transition:border-color .15s,color .15s}
 .predict-btn:hover:not(:disabled){border-color:var(--ink-3)}
 .predict-btn:disabled{opacity:.6;cursor:progress}
+/* A verdict, not an invitation. */
+.ran{display:block;font-size:11.5px;color:var(--ink);margin-bottom:5px}
+.note code{font-family:var(--mono);font-size:10.5px;color:var(--ink-2)}
 /* A docked compound, shown as a molecule rather than as a row in a table:
    the 2D structure a chemist reads, its score, the residues it touches, and
    the SMILES the screen was actually run on. */
@@ -1694,6 +1697,33 @@ const dockedSummary = shown => {
 // specific pose. Dropped below; distance from the box centre, rendered from
 // `l.offset` a few lines down, is the honest, non-constant number.
 
+/* Offer to fold, report what folding decided, or say nothing — three states,
+   because the button used to be shown in all of them. A candidate whose
+   ensemble has already run and refused was still offered a "predict" button
+   that could only re-run the query, change nothing, and read as broken. */
+function predictBlock(M, c, hl){
+  if(!c?.gene || hl?.residues?.length) return '';
+  const status = hl?.ensemble_status;
+  if(!status) return `<p class="note">
+    <button class="predict-btn" data-gene="${c.gene}">Predict ${c.gene}–${M.gene}
+      interface on GPU</button>
+    <span class="muted">Three Boltz-2 seeds on Modal, co-folding both full-length
+      chains. Around ten minutes, and it spends GPU time. This does not make a
+      molecule: it decides <em>where</em> on ${M.gene} ${c.gene} sits. Only if the
+      seeds agree does that surface become a site, and only then can compounds be
+      proposed and docked into it.</span></p>`;
+  const words = {converged: 'converged', ambiguous: 'did not settle',
+                 refused: 'did not converge'};
+  return `<p class="note"><span class="ran">Ensemble already run · ${
+      words[status] || status}</span>
+    <span class="muted">${hl.ensemble_support != null
+      ? `${Math.round(hl.ensemble_support*100)}% of ${hl.ensemble_samples} seeds
+         agreed on one interface. ` : ''}${
+      (hl.ensemble_blockers || []).join('; ') || ''} Nothing further was
+      dispatched and nothing was charged. More seeds are the next step:
+      <code>scripts/predict_med23_interface.py ${c.gene} --dispatch</code>.</span></p>`;
+}
+
 function receptorPanel(M, c, hl){
   const gene=c?.gene||'this candidate';
   const site=siteLayer(hl);
@@ -1742,12 +1772,7 @@ function receptorPanel(M, c, hl){
       ${l.rationale ? `<div class="k why">${l.rationale}</div>` : ''}
       <div class="smi" title="${l.smiles||''}">${l.smiles||''}</div>
     </div></div>`).join('')}
-  ${hl?.residues?.length || !c?.gene ? '' : `<p class="note">
-    <button class="predict-btn" data-gene="${c.gene}">Predict ${c.gene}–${M.gene}
-      interface on GPU</button>
-    <span class="muted">Three Boltz-2 seeds on Modal, co-folding both full-length
-      chains. Minutes, and it spends GPU time. The residues it agrees on become
-      the site a compound would have to occupy to keep ${c.gene} off it.</span></p>`}
+  ${predictBlock(M, c, hl)}
   ${site.calibration ? `<p class="note">The cavity shown is where <b>ELK1</b> binds, from the deposited
     complex — an interaction that depends on ELK1 being phosphorylated at Ser383,
     a modification the current prediction path does not transmit. It is not a
