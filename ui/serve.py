@@ -278,6 +278,7 @@ class Handler(SimpleHTTPRequestHandler):
                         # it would run a screen the original request forbade, which
                         # is a gate weakened by nothing but the passage of time.
                         require_site=bool(session.record.get("require_site")))
+                    SESSIONS.save(session)
                 else:
                     # A full run replaces the session's state rather than adding
                     # to it: this question resolved its own context, and merging
@@ -302,6 +303,11 @@ class Handler(SimpleHTTPRequestHandler):
                         runtime=fresh,
                     )
                     session.runtime = fresh
+                    # On disk before the reply ends. A conversation that
+                    # survives the next restart is the whole point; a record
+                    # only written at shutdown is a record that is never there
+                    # when it matters.
+                    SESSIONS.save(session)
             except (BrokenPipeError, ConnectionResetError):
                 raise
             except Exception as e:
