@@ -86,11 +86,22 @@ class _Recorder:
                                  "ofrac", "n", "q", "route")}
                                for r in payload.get("rows", [])]
         elif event == "highlight":
+            # Both lists, and the SMILES with them. The reader is looking at the
+            # structures on the canvas while the answer is being written, and an
+            # answer that says the compounds are not in its record — while the
+            # panel beside it lists them — is describing a different run. The
+            # site's owner travels too, so the model can say whose cavity these
+            # were docked into rather than implying they are the candidate's.
             self.highlights.append(
                 {"gene": payload.get("gene"),
                  "predicted_partner_residues": payload.get("residues"),
-                 "compounds": [{k: c.get(k) for k in ("name", "score", "residues")}
-                               for c in payload.get("ligands", [])]})
+                 "compounds": [{k: c.get(k) for k in
+                                ("name", "score", "smiles", "residues")}
+                               for c in payload.get("ligands", [])],
+                 "compounds_docked_into_this_site": [
+                     {k: c.get(k) for k in ("name", "score", "smiles", "residues")}
+                     for c in payload.get("site_ligands", [])],
+                 "site_belongs_to": payload.get("site_owner")})
         elif event == "paper":
             self.papers += 1
         self._emit(event, payload)

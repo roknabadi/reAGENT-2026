@@ -1269,7 +1269,17 @@ function run(q, predict){
     const h = JSON.parse(e.data);
     HIGHLIGHT[h.gene] = h;
     const sel = C[selIdx];
-    if(sel && sel.gene === h.gene) showPair?.(sel);
+    if(sel && sel.gene === h.gene){ showPair?.(sel); return; }
+    // A run that docked compounds should open on the candidate it docked them
+    // for. The structure view defaults to a solved pair, which is the right
+    // choice when nothing was computed and the wrong one the moment something
+    // was: the screen would report twelve compounds and the canvas would show
+    // a different protein. Only claims the selection while it is still the
+    // default one — a row the reader picked is never taken away from them.
+    if(!picked && ligandsOf(h).length){
+      const i = C.findIndex(c => c.gene === h.gene);
+      if(i >= 0) select(i);
+    }
   });
   // The payload is `{trace: {...}}`; the trace is what has `calls` on it.
   // Passing the envelope meant `trace.calls` was always undefined, so the
@@ -1578,12 +1588,13 @@ $('#rows').innerHTML=C.map((c,i)=>{const [dc,dl]=dep(c),[cc,cl]=con(c);
           : 'the documented partner'}">${c.involvement==='unknown'?'vs ':''}${c.partner}</span>`
       : ''}</td>
   <td class="num">${c.score===null?'—':fmt(c.score,3)}</td></tr>`;}).join('');
-  selIdx = null;          // a new table invalidates the old selection
+  selIdx = null; picked = false;   // a new table invalidates the old selection
 }
 // module scope: select() and initStructure() both read this. Declared inside
 // renderCandidates() it threw ReferenceError and the Structure tab rendered
 // nothing, silently.
 let selIdx = null;
+let picked = false;      // did a reader choose this row, or did the run?
 renderCandidates();
 
 function select(i){
@@ -1615,7 +1626,8 @@ function select(i){
       documented coactivator contact.</p>`}`;
   $('#detail').scrollTop=0;
 }
-$('#rows').addEventListener('click',e=>{const r=e.target.closest('tr'); if(r) select(r.dataset.i);});
+$('#rows').addEventListener('click',e=>{const r=e.target.closest('tr');
+  if(r){ picked = true; select(r.dataset.i); }});
 $('#rows').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){
   const r=e.target.closest('tr'); if(r){e.preventDefault();select(r.dataset.i);}}});
 
