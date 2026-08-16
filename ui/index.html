@@ -2255,20 +2255,31 @@ async function paintMol(M, hl){
     else molv.setStyle({}, {sphere:{color:C.body, scale:.85}});
 
     // Residues of the receptor are drawn ON the receptor — the ribbon thickens
-    // and takes the colour, with a translucent patch over it. They used to be
-    // drawn as sticks and balls, which is the universal convention for a bound
-    // ligand, and they read as exactly that: a reader who knows this project
-    // saw a molecule sitting in MED23 on a run where nothing had been docked
-    // and the panel said "no screen run". Sticks now mean a compound and
-    // nothing else, which is the only way the picture can be read at a glance.
+    // and takes the colour, with a translucent patch over it. A layer that is
+    // only a claim about which residues matter stays there: sticks on a run
+    // where nothing had been docked read as a bound molecule, and a reader saw
+    // one sitting in MED23 while the panel said "no screen run".
+    //
+    // The residues a shown compound actually contacts are the exception, and
+    // are drawn as sticks facing the pose's own sticks — the interaction is
+    // between two molecules and the picture should be able to say so. It costs
+    // nothing against the rule above, because that set is empty unless a
+    // compound is on screen: sticks still appear only where one has been
+    // docked. `mark` takes the receptor's side of the contact, `shown.sdf`
+    // below draws the compound's.
     const patches=[];
-    const mark=(resi,color)=>{
+    const mark=(resi,color,contact)=>{
       if(!resi.length) return;
-      if(molRep==='atoms'){ molv.addStyle({resi},{sphere:{color, scale:.95}}); }
-      else { molv.addStyle({resi},{cartoon:{color, thickness:.9}});
-             patches.push({resi, color}); }
+      if(molRep==='atoms'){ molv.addStyle({resi},{sphere:{color, scale:.95}}); return; }
+      molv.addStyle({resi},{cartoon:{color, thickness:.9}});
+      // Only under the cartoon. The other two representations already cover
+      // the site in their own geometry — a stick inside the whole-protein
+      // surface is a stick nobody can see — so there the patch stays.
+      if(contact && molRep==='cartoon') molv.addStyle({resi},{stick:{color, radius:.16}});
+      else patches.push({resi, color});
     };
-    mark(pocket, site.calibration ? C.pocket : C.pred); mark(lig, C.lig); mark(pred, C.pred);
+    mark(pocket, site.calibration ? C.pocket : C.pred);
+    mark(lig, C.lig, true); mark(pred, C.pred);
 
     if(molRep==='surface')
       molv.addSurface($3.SurfaceType.VDW, {opacity:.62, color:C.body}, {});
@@ -2277,22 +2288,10 @@ async function paintMol(M, hl){
     for(const {resi,color} of patches)
       molv.addSurface($3.SurfaceType.VDW, {opacity:.55, color}, {resi});
 
-    // The compound wears the receptor's material, not a chemistry diagram's:
-    // one claim-colour and a VDW skin, the same treatment the highlighted
-    // residues get. Element colouring drew a structural formula pasted over
-    // the structure — white hydrogens and CPK heteroatoms belong on the 2D
-    // depiction in the strip, not on the one object that has to read as
-    // sitting in the groove. Green is still what tells it from the grey body.
     if(shown?.sdf){
       const m=molv.addModel(shown.sdf,'sdf');
-      m.setStyle({}, {stick:{color:C.lig, radius:.25},
-                      sphere:{color:C.lig, scale:.3}});
-      // Opaque, where the receptor's patches are translucent films: the
-      // compound is the one solid object in the frame, and that is what tells
-      // it from the contact residues it is sitting on, which wear the same
-      // green because they are the same claim. The sticks underneath stay as
-      // the fallback for when the surface worker cannot build.
-      molv.addSurface($3.SurfaceType.VDW, {opacity:1, color:C.lig}, {model:m});
+      m.setStyle({}, {stick:{colorscheme:'greenCarbon', radius:.18},
+                      sphere:{colorscheme:'greenCarbon', scale:.22}});
     }
     // Centre on the site, then pull back until the fold is around it. Framing
     // the whole subunit put the cavity wherever it happened to fall — usually
