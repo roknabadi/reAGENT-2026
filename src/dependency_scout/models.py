@@ -203,14 +203,57 @@ class RankedCandidate(BaseModel):
 
     @property
     def shortlistable(self) -> tuple[bool, str | None]:
-        """Whether this may enter the top-N, and why not if it may not."""
+        """Whether this may enter the top-N, and why not if it may not.
+
+        A DepMap gate failure is overridden by a genuinely mapped, direct
+        Mediator contact (2026-08-16, ports the same override Kevin's
+        discover.py applies from the literature cache) -- DepMap fitness and
+        Mediator contact are independent questions, and ELK1-MED23 is the
+        proof case: a cryo-EM-mapped contact with zero DepMap dependency
+        signal anywhere. Filtering it out of every shortlist because it
+        fails a fitness screen it was never expected to pass would hide the
+        pipeline's own calibration case from itself.
+
+        The override never fires for a pan-essential gene, even with a
+        mapped direct contact -- see `_absent_not_broad_dependency`.
+        A mapped contact does not make a housekeeping gene a safe target;
+        it only excuses a *lack* of in-context signal, not out-of-context
+        breadth. `calibration_only` is checked first and always wins, so
+        this can never surface ELK1/ELF3 themselves -- see
+        `inclusion_reason` for which path let a candidate through.
+        """
         if self.mediator.calibration_only:
             return False, "calibration control, never a result"
         if self.awaiting_dependency_data:
             return False, "awaiting quantitative dependency data"
         if self.gate and not self.gate.eligible:
+            if self.mediator.involvement is Involvement.DIRECT and self._absent_not_broad_dependency():
+                return True, None
             return False, "; ".join(self.gate.failures)
         return True, None
+
+    def _absent_not_broad_dependency(self) -> bool:
+        """True only when the gate failure is a lack of in-context signal,
+        never when it is out-of-context breadth (pan-essentiality). Kept
+        deliberately separate from the median/specificity gate thresholds in
+        ranking.py -- this decides whether contact evidence may excuse a
+        DepMap failure at all, not whether DepMap itself passed."""
+        from .ranking import MEDIAN_OTHER_EFFECT_MIN, SPECIFICITY_MAX_OTHER_FRACTION
+        if self.dependency is None:
+            return False
+        return (self.dependency.other_dependent_fraction <= SPECIFICITY_MAX_OTHER_FRACTION
+                and self.dependency.median_other_effect > MEDIAN_OTHER_EFFECT_MIN)
+
+    @property
+    def inclusion_reason(self) -> str | None:
+        """Which path made this candidate shortlistable, when it is. Never
+        distinguishes further -- e.g. does not imply DepMap passed when it
+        did not, see `gate.failures` for that. `None` when not shortlistable."""
+        if not self.shortlistable[0]:
+            return None
+        if self.gate and not self.gate.eligible:
+            return "mediator_literature_override"
+        return "dependency_gate"
 
 
 class Shortlist(BaseModel):

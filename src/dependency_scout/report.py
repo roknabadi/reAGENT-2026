@@ -51,6 +51,8 @@ def render_markdown(sl: Shortlist) -> str:
         else:
             gate, delta = "pass", f"{c.dependency.selectivity_delta:.2f}"
         mark = " **<-- shortlist**" if i in sl.shortlist_indices else ""
+        if i in sl.shortlist_indices and c.gate and not c.gate.eligible:
+            mark = " **<-- shortlist (Mediator/literature override -- DepMap gate FAILED, see gate column)**"
         if c.mediator.calibration_only:
             mark = " *(control)*"
         out.append(f"| {i} | {c.name}{mark} | {c.disease_context} | "
@@ -88,6 +90,10 @@ def render_markdown(sl: Shortlist) -> str:
         if not c.mediator.ready_for_structural_modeling:
             notes.insert(0, f"{sl.partner_gene} contact is "
                             f"'{c.mediator.involvement.value}', no mapped interacting region")
+        if c.gate and not c.gate.eligible:
+            notes.insert(0, "no DepMap dependency evidence passed the gate in this run "
+                            f"-- included via Mediator/literature evidence instead: "
+                            f"{'; '.join(c.gate.failures)}")
         blocker = f" — {'; '.join(notes)}" if notes else ""
         out.append(f"- **{c.name}** ({c.disease_context}){blocker}")
 

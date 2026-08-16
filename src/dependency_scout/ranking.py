@@ -28,10 +28,10 @@ def gate(e: DependencyEvidence, *, min_models: int = 5) -> GateResult:
       that a pooled-subtype median dilutes away -- e.g. ASCL1/POU2F3 in
       SCLC, where the group is four mutually exclusive molecular subtypes
       and pooling them hides a real subtype-defining dependency.
-    `min_models` defaults to 5, the statistical floor below which n=3-4
-    hits are noise (see team/FINDINGS_DEPMAP_ROUND01.md #3) -- 15 is full
-    confidence but is not enforced here as a hard failure, only as a
-    separate confidence flag upstream."""
+    `min_models` defaults to 5, the statistical floor below which n=3-4 hits
+    are noise (team/FINDINGS_DEPMAP_ROUND01.md #3). Vraj/Amir already fixed
+    the fixture this broke (6c6dcc7) rather than lowering the floor back --
+    the fixture now has a fifth Lung model instead."""
     failures = []
     if e.n_target_models < min_models:
         failures.append(f"fewer than {min_models} target-context models")
@@ -45,13 +45,23 @@ def gate(e: DependencyEvidence, *, min_models: int = 5) -> GateResult:
         and e.other_dependent_fraction <= SPECIFICITY_MAX_OTHER_FRACTION
     )
     if not (median_path or specificity_path):
-        failures.append(
-            "fails both the median-dependency path (target median <= "
-            f"{MEDIAN_TARGET_EFFECT_MAX} and other median > {MEDIAN_OTHER_EFFECT_MIN}) "
-            "and the specificity-first path (target-dependent fraction >= "
-            f"{SPECIFICITY_MIN_TARGET_FRACTION:.0%} and other-dependent fraction <= "
-            f"{SPECIFICITY_MAX_OTHER_FRACTION:.0%})"
-        )
+        # Granular reasons, not just "both paths failed" -- callers and tests
+        # inspect individual phrases (e.g. "too broad") to tell a pan-essential
+        # rejection apart from a merely-weak one.
+        reasons = []
+        if e.median_target_effect > MEDIAN_TARGET_EFFECT_MAX:
+            reasons.append(f"weak median dependency (must be <= {MEDIAN_TARGET_EFFECT_MAX})")
+        if e.median_other_effect <= MEDIAN_OTHER_EFFECT_MIN:
+            reasons.append("dependency is too broad outside the target context "
+                            f"(other median must be > {MEDIAN_OTHER_EFFECT_MIN})")
+        if e.target_dependent_fraction < SPECIFICITY_MIN_TARGET_FRACTION:
+            reasons.append("dependency occurs in too few target models to call it specific "
+                            f"(must be >= {SPECIFICITY_MIN_TARGET_FRACTION:.0%})")
+        if e.other_dependent_fraction > SPECIFICITY_MAX_OTHER_FRACTION:
+            reasons.append("dependency is too broad outside the target context "
+                            f"(must be <= {SPECIFICITY_MAX_OTHER_FRACTION:.0%} of other models)")
+        failures.append("fails both the median-dependency path and the specificity-first "
+                         "path: " + "; ".join(reasons))
     return GateResult(eligible=not failures, failures=failures)
 
 
